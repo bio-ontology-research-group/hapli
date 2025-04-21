@@ -1,17 +1,16 @@
 """
 Parser for Graphical Fragment Assembly (GFA) files.
-Uses the PyGFA library to handle GFA format parsing.
+Uses the GFApy library to handle GFA format parsing.
 """
 import os
 import logging
 from typing import Dict, List, Optional, Set, Tuple, Any
-import pygfa
-from pygfa.graph_element.parser import header, segment, link, path, line
+import gfapy
 
 class GFAParser:
     """
     Parser for Graphical Fragment Assembly (GFA) files.
-    Handles both GFA1 and GFA2 formats through PyGFA.
+    Handles both GFA1 and GFA2 formats through GFApy.
     """
     
     def __init__(self):
@@ -21,9 +20,9 @@ class GFAParser:
         self._segments = {}
         self._paths = {}
 
-    def parse(self, filepath: str) -> pygfa.graph.GraphicalFragmentAssembly:
+    def parse(self, filepath: str) -> gfapy.Gfa:
         """
-        Parse a GFA file and return the PyGFA graph object.
+        Parse a GFA file and return the GFApy graph object.
         
         Args:
             filepath: Path to the GFA file
@@ -41,42 +40,17 @@ class GFAParser:
         self.logger.info(f"Parsing GFA file: {filepath}")
         
         try:
-            # Create a new GFA object
-            self.gfa = pygfa.graph.GraphicalFragmentAssembly()
+            # Parse the GFA file using gfapy
+            self.gfa = gfapy.Gfa.from_file(filepath)
             
-            # Parse the file line by line to handle potential format issues
-            with open(filepath, 'r') as gfa_file:
-                line_count = 0
-                for line_num, line_str in enumerate(gfa_file, 1):
-                    line_str = line_str.strip()
-                    if not line_str or line_str.startswith('#'):
-                        continue
-                        
-                    line_count += 1
-                    fields = line_str.split('\t')
-                    if not fields:
-                        continue
-                        
-                    # Process based on record type
-                    record_type = fields[0]
-                    try:
-                        if record_type == 'H':
-                            header_line = header.Header.from_string(line_str)
-                            self.gfa.add_header(header_line)
-                        elif record_type == 'S':
-                            seg = segment.SegmentV1.from_string(line_str)
-                            self.gfa.add_segment(seg)
-                            self._segments[seg.name] = seg
-                        elif record_type == 'L':
-                            link_line = link.Link.from_string(line_str)
-                            self.gfa.add_edge(link_line)
-                        elif record_type == 'P':
-                            path_line = path.Path.from_string(line_str)
-                            self.gfa.add_path(path_line)
-                            self._paths[path_line.name] = path_line
-                        # Add support for other record types as needed
-                    except Exception as e:
-                        self.logger.warning(f"Error parsing line {line_num}: {e}")
+            # Index segments and paths for quick access
+            line_count = 0
+            for line in self.gfa.segments:
+                self._segments[line.name] = line
+                line_count += 1
+                
+            for line in self.gfa.paths:
+                self._paths[line.name] = line
                 
             if line_count == 0:
                 raise ValueError("Empty or invalid GFA file")
