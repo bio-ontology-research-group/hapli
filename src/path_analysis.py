@@ -57,11 +57,29 @@ class PathAnalyzer:
         paths = {}
         
         # Handle different GFA versions and edge cases
-        if hasattr(self.gfa, 'paths') and self.gfa.paths:
-            paths.update(self.gfa.paths)
-        elif hasattr(self.gfa, 'ordered_groups') and self.gfa.ordered_groups:
-            # GFA2 uses ordered groups (O lines) for paths
-            paths.update(self.gfa.ordered_groups)
+        if hasattr(self.gfa, 'paths'):
+            # GFA1 style - In gfapy these are often Line objects
+            if hasattr(self.gfa.paths, 'items'):
+                # If it's a dict-like object
+                for path_id, path in self.gfa.paths.items():
+                    paths[path_id] = path
+            else:
+                # If it's an iterable of path objects
+                for path in self.gfa.paths:
+                    if hasattr(path, 'name'):
+                        paths[path.name] = path
+        
+        # GFA2 uses ordered groups (O lines) for paths
+        if hasattr(self.gfa, 'ordered_groups'):
+            if hasattr(self.gfa.ordered_groups, 'items'):
+                # If it's a dict-like object
+                for path_id, path in self.gfa.ordered_groups.items():
+                    paths[path_id] = path
+            else:
+                # If it's an iterable of path objects
+                for path in self.gfa.ordered_groups:
+                    if hasattr(path, 'name'):
+                        paths[path.name] = path
         
         logger.info(f"Extracted {len(paths)} paths from GFA")
         return paths
@@ -233,11 +251,28 @@ class PathAnalyzer:
             
         path = self.paths[path_id]
         
-        # Handle different GFA versions
+        # Handle different GFA versions and implementations
         if hasattr(path, 'segment_names'):
             return path.segment_names
         elif hasattr(path, 'items'):
-            return [item.name for item in path.items]
+            if callable(path.items):
+                items = path.items()
+            else:
+                items = path.items
+            return [item.name if hasattr(item, 'name') else item for item in items]
+        elif hasattr(path, 'segment_names_list'):
+            return path.segment_names_list()
+        elif hasattr(path, 'ordered_segment_names'):
+            return path.ordered_segment_names
+        # For gfapy objects that have path_object.path - typically used in "P" lines
+        elif hasattr(path, 'path'):
+            # Extract segment names from path string (format: "seg1+,seg2-,...")
+            path_str = path.path
+            # The path might be a string like "seg1+,seg2-,..." or a list of objects
+            if isinstance(path_str, str):
+                return [s.rstrip('+-') for s in path_str.split(',')]
+            else:
+                return [s.name if hasattr(s, 'name') else str(s).rstrip('+-') for s in path_str]
         else:
             logger.warning(f"Unsupported path structure for {path_id}")
             return []

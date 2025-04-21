@@ -336,10 +336,19 @@ class TestPathAnalysis(unittest.TestCase):
     
     def test_edge_case_single_path(self):
         """Test with a GFA that has only a single path."""
-        # Create a mock GFA with a single path
+        # Create a mock GFA with a single path (setting up as a dict with items method)
         single_path_gfa = MagicMock()
-        single_path_gfa.paths = {'ref_chr1': MagicMock()}
-        single_path_gfa.paths['ref_chr1'].segment_names = ['seg1', 'seg2', 'seg3']
+        mock_path = MagicMock()
+        mock_path.segment_names = ['seg1', 'seg2', 'seg3']
+        
+        # Set up paths as a mock dictionary with items() method that returns a list of tuples
+        mock_paths_dict = {'ref_chr1': mock_path}
+        
+        def mock_items():
+            return mock_paths_dict.items()
+            
+        single_path_gfa.paths = MagicMock()
+        single_path_gfa.paths.items = mock_items
         
         # Analyze the paths
         self.analyzer.load_gfa(single_path_gfa)
