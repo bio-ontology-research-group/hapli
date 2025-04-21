@@ -4,12 +4,12 @@ import argparse
 import os
 import random
 import sys
-import subprocess # Added import
+import subprocess # For optional validation call
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio.SeqFeature import SeqFeature, FeatureLocation
 from BCBio import GFF # To write GFF3
-import gfapy
+# import gfapy # Removed gfapy import
 
 # --- Default Settings ---
 DEFAULT_REF_LENGTH = 1000
@@ -75,115 +75,118 @@ def generate_data(ref_length: int, num_features: int, paired_haplotypes: bool, o
         mrna_id = f"mrna{i+1}"
 
         # Place gene start, ensuring space
-        gene_start = random.randint(current_pos, max(current_pos, ref_length - min_feature_len * 2 - min_feature_gap * 3))
+        # Use 0-based coords internally, convert to 1-based for GFF output if needed by BCBio.GFF
+        gene_start_0based = random.randint(current_pos, max(current_pos, ref_length - min_feature_len * 2 - min_feature_gap * 3))
         gene_len = random.randint(min_feature_len, max_feature_len)
-        gene_end = min(ref_length, gene_start + gene_len)
-        if gene_end <= gene_start: continue # Skip if too close to end
+        gene_end_0based = min(ref_length, gene_start_0based + gene_len)
+        if gene_end_0based <= gene_start_0based: continue # Skip if too close to end
 
         strand = random.choice([1, -1])
 
-        # Create Gene feature (1-based coords for GFF)
+        # Create Gene feature (using 0-based for FeatureLocation)
         gene_qual = {"source": ["generate_script"]}
-        gene_feat = create_gff_feature(REF_SEQ_ID, gene_start, gene_end, strand, "gene", gene_id, gene_qual)
+        gene_feat = create_gff_feature(REF_SEQ_ID, gene_start_0based, gene_end_0based, strand, "gene", gene_id, gene_qual)
 
         # Create mRNA feature within gene
         mrna_qual = {"Parent": [gene_id], "source": ["generate_script"]}
-        mrna_feat = create_gff_feature(REF_SEQ_ID, gene_start, gene_end, strand, "mRNA", mrna_id, mrna_qual)
+        mrna_feat = create_gff_feature(REF_SEQ_ID, gene_start_0based, gene_end_0based, strand, "mRNA", mrna_id, mrna_qual)
 
         # Create Exon features within mRNA
         exon1_id = f"{mrna_id}_exon1"
         exon2_id = f"{mrna_id}_exon2"
-        exon_len = max(10, (gene_end - gene_start) // 3)
-        exon1_start = gene_start
-        exon1_end = min(gene_end, exon1_start + exon_len)
-        exon2_start = max(exon1_end + 5, gene_end - exon_len)
-        exon2_end = gene_end
+        exon_len = max(10, (gene_end_0based - gene_start_0based) // 3)
+        exon1_start_0based = gene_start_0based
+        exon1_end_0based = min(gene_end_0based, exon1_start_0based + exon_len)
+        exon2_start_0based = max(exon1_end_0based + 5, gene_end_0based - exon_len)
+        exon2_end_0based = gene_end_0based
 
-        if exon1_end <= exon1_start or exon2_end <= exon2_start or exon2_start >= exon2_end: continue # Skip if exons invalid
+        if exon1_end_0based <= exon1_start_0based or exon2_end_0based <= exon2_start_0based or exon2_start_0based >= exon2_end_0based: continue # Skip if exons invalid
 
         exon_qual = {"Parent": [mrna_id], "source": ["generate_script"]}
-        exon1_feat = create_gff_feature(REF_SEQ_ID, exon1_start, exon1_end, strand, "exon", exon1_id, exon_qual.copy())
-        exon2_feat = create_gff_feature(REF_SEQ_ID, exon2_start, exon2_end, strand, "exon", exon2_id, exon_qual.copy())
+        exon1_feat = create_gff_feature(REF_SEQ_ID, exon1_start_0based, exon1_end_0based, strand, "exon", exon1_id, exon_qual.copy())
+        exon2_feat = create_gff_feature(REF_SEQ_ID, exon2_start_0based, exon2_end_0based, strand, "exon", exon2_id, exon_qual.copy())
 
-        # Add features (BCBio expects SeqRecord containing features)
-        # Note: BCBio might handle parent/child nesting automatically if structured correctly,
-        # but providing them flat might also work if Parent tags are present.
-        # Let's add them flat first.
         gff_features.extend([gene_feat, mrna_feat, exon1_feat, exon2_feat])
 
-        current_pos = gene_end + min_feature_gap # Update position for next feature
+        current_pos = gene_end_0based + min_feature_gap # Update position for next feature
 
     # Create a SeqRecord for GFF writing
     gff_seq_record = SeqRecord(Seq(""), id=REF_SEQ_ID) # Sequence itself not needed here
     gff_seq_record.features = gff_features
 
     with open(gff_path, "w") as gff_out:
+        # BCBio.GFF handles the conversion to 1-based GFF3 format during writing
         GFF.write([gff_seq_record], gff_out)
 
 
-    # 3. Generate GFA2 using gfapy
+    # 3. Generate GFA2 Manually as Strings
     print(f"  Generating GFA2: {gfa_path}")
-    gfa = gfapy.Gfa()
-    # gfa.add_version_header(version="2.0") # Incorrect method
-    gfa.add_line("H\tVN:Z:2.0") # Correct way to add header
+    gfa_lines = []
+    gfa_lines.append("H\tVN:Z:2.0") # GFA2 Header
 
     # Create segments based on reference, introducing a variation point
     num_segments = (ref_length + SEGMENT_LEN - 1) // SEGMENT_LEN
-    segments = []
+    segments = [] # List of segment IDs
+    segment_lengths = {} # Dict mapping seg_id -> length
     variation_point_idx = num_segments // 2 # Introduce variation around the middle
     alt_segment_id = None
+    alt_segment_len = 0
 
     for i in range(num_segments):
         seg_id = f"s{i+1}"
-        seg_start = i * SEGMENT_LEN
-        seg_end = min(ref_length, (i + 1) * SEGMENT_LEN)
-        seg_len = seg_end - seg_start
+        seg_start_0based = i * SEGMENT_LEN
+        seg_end_0based = min(ref_length, (i + 1) * SEGMENT_LEN)
+        seg_len = seg_end_0based - seg_start_0based
         if seg_len <= 0: continue
 
-        seg_seq = ref_seq_str[seg_start:seg_end]
-
-        # Add reference segment
-        gfa.add_line(f"S\t{seg_id}\t{seg_len}\t{seg_seq}")
-        # Add Fragment line linking segment to reference
-        # F <sid:id> <external:ref> <sbeg:pos> <send:pos> <fbeg:pos> <fend:pos> <alignment>
-        # Coords: 0-based start, end? gfapy docs needed. Assuming 0-based start, length-based end?
-        # Let's assume 0-based start, exclusive end for external coords.
-        gfa.add_line(f"F\t{seg_id}\t{REF_SEQ_ID}+\t{seg_start}\t{seg_end}\t0\t{seg_len}\t*")
+        seg_seq = ref_seq_str[seg_start_0based:seg_end_0based]
+        segment_lengths[seg_id] = seg_len
         segments.append(seg_id)
+
+        # Add reference segment line
+        gfa_lines.append(f"S\t{seg_id}\t{seg_len}\t{seg_seq}")
+        # Add Fragment line linking segment to reference
+        # F <sid> <external> <sbeg> <send> <fbeg> <fend> <alignment>
+        # Using 0-based, exclusive-end coordinates for external reference (sbeg, send)
+        # Using 0-based, exclusive-end coordinates for segment (fbeg, fend)
+        gfa_lines.append(f"F\t{seg_id}\t{REF_SEQ_ID}+\t{seg_start_0based}\t{seg_end_0based}\t0\t{seg_len}\t*")
 
         # Create alternative segment at variation point
         if i == variation_point_idx:
             alt_segment_id = f"s{i+1}_alt"
-            alt_seq = generate_random_sequence(seg_len)
+            alt_segment_len = seg_len # Use same length for simplicity
+            alt_seq = generate_random_sequence(alt_segment_len)
             # Ensure alt_seq is different from original
-            while alt_seq == seg_seq and seg_len > 0:
-                alt_seq = generate_random_sequence(seg_len)
-            gfa.add_line(f"S\t{alt_segment_id}\t{seg_len}\t{alt_seq}")
-            # Fragment line for alt segment (maps to same reference region)
-            gfa.add_line(f"F\t{alt_segment_id}\t{REF_SEQ_ID}+\t{seg_start}\t{seg_end}\t0\t{seg_len}\t*")
+            while alt_seq == seg_seq and alt_segment_len > 0:
+                alt_seq = generate_random_sequence(alt_segment_len)
+
+            # Add alternative segment line
+            gfa_lines.append(f"S\t{alt_segment_id}\t{alt_segment_len}\t{alt_seq}")
+            # Add Fragment line for alt segment (maps to same reference region)
+            gfa_lines.append(f"F\t{alt_segment_id}\t{REF_SEQ_ID}+\t{seg_start_0based}\t{seg_end_0based}\t0\t{alt_segment_len}\t*")
 
 
     # Create Edges linking consecutive reference segments
     for i in range(len(segments) - 1):
         from_seg = segments[i]
         to_seg = segments[i+1]
-        # E <eid:opt_id> <sid1:ref> <sid2:ref> <beg1:pos> <end1:pos> <beg2:pos> <end2:pos> <alignment>
-        # Assuming end-to-start link: beg1=end1=slen1, beg2=end2=0
-        # gfapy uses 1-based coordinates for pos? Let's try segment length ($) and 0.
-        # gfapy seems to expect '$' for end coord.
-        gfa.add_line(f"E\t*\t{from_seg}+\t{to_seg}+\t$\t$\t0\t0\t*")
+        from_seg_len = segment_lengths[from_seg]
+        # E <eid> <sid1> <sid2> <beg1> <end1> <beg2> <end2> <alignment>
+        # End-to-start link: Use segment length for end position on sid1, 0 for start on sid2. Removed '$'.
+        gfa_lines.append(f"E\t*\t{from_seg}+\t{to_seg}+\t{from_seg_len}\t{from_seg_len}\t0\t0\t*")
 
         # Add edges for the variation
-        if i == variation_point_idx - 1 and alt_segment_id: # Link before variation point to alt
-             gfa.add_line(f"E\t*\t{from_seg}+\t{alt_segment_id}+\t$\t$\t0\t0\t*")
-        if i == variation_point_idx and alt_segment_id: # Link alt to segment after variation point
+        if i == variation_point_idx - 1 and alt_segment_id: # Link segment before variation point to alt segment
+             gfa_lines.append(f"E\t*\t{from_seg}+\t{alt_segment_id}+\t{from_seg_len}\t{from_seg_len}\t0\t0\t*")
+        if i == variation_point_idx and alt_segment_id: # Link alt segment to segment after variation point
              from_alt_seg = alt_segment_id
-             gfa.add_line(f"E\t*\t{from_alt_seg}+\t{to_seg}+\t$\t$\t0\t0\t*")
+             # Need length of the alt segment
+             gfa_lines.append(f"E\t*\t{from_alt_seg}+\t{to_seg}+\t{alt_segment_len}\t{alt_segment_len}\t0\t0\t*")
 
 
     # Create Ordered Groups (Paths)
     ref_path_elements = [f"{s}+" for s in segments]
-    gfa.add_line(f"O\t{REF_SEQ_ID}\t{' '.join(ref_path_elements)}") # Reference path
+    gfa_lines.append(f"O\t{REF_SEQ_ID}\t{' '.join(ref_path_elements)}") # Reference path
 
     # Sample paths
     sample1_path = list(ref_path_elements) # Sample 1 follows reference
@@ -192,24 +195,23 @@ def generate_data(ref_length: int, num_features: int, paired_haplotypes: bool, o
         sample2_path[variation_point_idx] = f"{alt_segment_id}+"
 
     if paired_haplotypes:
-        gfa.add_line(f"O\tsample1_h1\t{' '.join(sample1_path)}")
-        gfa.add_line(f"O\tsample1_h2\t{' '.join(sample1_path)}") # Both follow ref
-        gfa.add_line(f"O\tsample2_h1\t{' '.join(sample1_path)}") # H1 follows ref
-        gfa.add_line(f"O\tsample2_h2\t{' '.join(sample2_path)}") # H2 uses variation
+        gfa_lines.append(f"O\tsample1_h1\t{' '.join(sample1_path)}")
+        gfa_lines.append(f"O\tsample1_h2\t{' '.join(sample1_path)}") # Both follow ref
+        gfa_lines.append(f"O\tsample2_h1\t{' '.join(sample1_path)}") # H1 follows ref
+        gfa_lines.append(f"O\tsample2_h2\t{' '.join(sample2_path)}") # H2 uses variation
     else:
-        gfa.add_line(f"O\tsample1\t{' '.join(sample1_path)}")
-        gfa.add_line(f"O\tsample2\t{' '.join(sample2_path)}")
+        gfa_lines.append(f"O\tsample1\t{' '.join(sample1_path)}")
+        gfa_lines.append(f"O\tsample2\t{' '.join(sample2_path)}")
 
 
-    # Write GFA file using gfapy
+    # Write GFA file
     try:
-        gfa.to_file(gfa_path)
+        with open(gfa_path, "w") as f_out:
+            for line in gfa_lines:
+                f_out.write(line + "\n")
     except Exception as e:
-         print(f"Error writing GFA file using gfapy: {e}")
-         # Fallback to simple string writing if gfapy fails (less robust)
-         # with open(gfa_path, "w") as f_out:
-         #     for line in gfa.lines:
-         #         f_out.write(str(line) + "\n")
+         print(f"Error writing GFA file: {e}")
+         sys.exit(1) # Exit if writing fails
 
     print("Data generation complete.")
 
