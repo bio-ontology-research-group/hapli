@@ -26,6 +26,39 @@ The application uses a dedicated `Config` class (`src/config.py`) to manage conf
     2.  Adding a corresponding `add_argument` call in `_setup_argparser`.
     3.  Adding the parameter key to `REQUIRED_PARAMS` if it's mandatory.
 
+### Path Analysis Module (`src/path_analysis.py`)
+
+The Path Analysis module provides functionality to:
+
+1. Extract paths from a parsed GFA file
+2. Identify potential haplotype relationships between paths
+3. Group paths by sample based on naming conventions or metadata
+4. Select specific paths for annotation
+
+**Key Components:**
+
+- **PathAnalyzer Class:** The main class that handles all path analysis.
+  - **load_gfa()**: Loads paths from a GFA object
+  - **group_paths_by_sample()**: Groups paths by inferred sample name
+  - **identify_haplotypes()**: Identifies potential haplotype relationships
+  - **select_paths()**: Selects paths based on sample, haplotype, or direct path IDs
+  - **get_path_segments()**: Retrieves segments for a specific path
+
+**Haplotype Naming Patterns:**
+
+The module recognizes several common naming patterns for haplotypes in GFA paths:
+- `sample_hap1`, `sample_hap2`
+- `sample_h1`, `sample_h2`
+- `sample.1`, `sample.2`, `sample_1`, `sample_2`
+- `hap1_sample`, `hap2_sample`
+- `h1_sample`, `h2_sample`
+
+**Sample and Haplotype Inference:**
+
+- Sample names are extracted from path IDs based on the above patterns
+- Paths without recognizable patterns are considered as their own sample group
+- The module also looks for metadata tags (SM for sample, HP for haplotype) if available
+
 ### Parsers Module (`src/parsers/`)
 
 The application uses a dedicated parsers module to handle various input file formats:
@@ -62,6 +95,7 @@ The codebase is organized into the following structure:
 ```
 src/
 ├── config.py          # Configuration management
+├── path_analysis.py   # Path and haplotype analysis
 ├── parsers/           # Input file parsers
 │   ├── __init__.py
 │   ├── gfa_parser.py  # GFA file parser
@@ -76,6 +110,7 @@ src/
 Each module has corresponding unit tests in the `tests/` directory:
 
 * `tests/test_config.py` - Tests for configuration management
+* `tests/test_path_analysis.py` - Tests for path/haplotype analysis
 * `tests/test_gfa_parser.py` - Tests for GFA parsing
 * `tests/test_gff_parser.py` - Tests for GFF3 parsing
 * `tests/test_fasta_parser.py` - Tests for FASTA parsing

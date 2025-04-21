@@ -33,6 +33,38 @@ Or using a configuration file:
 python -m src.main --config-file src/config.yaml
 ```
 
+## Path Selection
+
+The tool allows you to select specific paths (haplotypes) for annotation:
+
+### By Sample Name
+
+```bash
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --sample-names sample1,sample2
+```
+
+### By Haplotype
+
+```bash
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --haplotype-ids 1
+```
+
+### By Specific Path IDs
+
+```bash
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --path-ids path1,path2
+```
+
+### Combined Selection
+
+You can combine selection criteria:
+
+```bash
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --sample-names sample1,sample2 --haplotype-ids 1
+```
+
+This will select haplotype 1 from both sample1 and sample2.
+
 ## Configuration
 
 The tool uses a hierarchical configuration system:
@@ -63,6 +95,15 @@ These parameters *must* be provided either via the configuration file or command
 *   `log_level`: Sets the logging verbosity. Options: DEBUG, INFO, WARNING, ERROR, CRITICAL. (Default: INFO)
     *   CLI: `--log-level DEBUG`
     *   YAML: `log_level: DEBUG`
+*   `sample_names`: Comma-separated list of sample names to include.
+    *   CLI: `--sample-names sample1,sample2`
+    *   YAML: `sample_names: [sample1, sample2]`
+*   `haplotype_ids`: Comma-separated list of haplotype IDs to include.
+    *   CLI: `--haplotype-ids 1,2`
+    *   YAML: `haplotype_ids: [1, 2]`
+*   `path_ids`: Comma-separated list of specific path IDs to include.
+    *   CLI: `--path-ids path1,path2`
+    *   YAML: `path_ids: [path1, path2]`
 
 **Example YAML Configuration File (`config.yaml`):**
 
@@ -72,5 +113,7 @@ gff3_file: data/example.gff3
 reference_fasta: data/reference.fasta
 output_file: output/annotations.tsv
 log_level: INFO
+sample_names: [sample1, sample2]
+haplotype_ids: [1]
 ```
 

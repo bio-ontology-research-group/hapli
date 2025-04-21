@@ -1,0 +1,241 @@
+from typing import Dict, List, Set, Optional, Tuple, Any
+import re
+import logging
+from collections import defaultdict
+
+logger = logging.getLogger(__name__)
+
+class PathAnalyzer:
+    """
+    Analyzes paths in a GFA graph to identify haplotypes and sample relationships.
+    
+    This class provides functionality to:
+    1. Extract paths from a parsed GFA file
+    2. Identify potential haplotype relationships between paths
+    3. Group paths by sample based on naming conventions or metadata
+    4. Select specific paths for annotation
+    """
+    
+    # Common naming patterns for haplotypes in GFA paths
+    HAPLOTYPE_PATTERNS = [
+        r'(.+)_hap(\d+)',  # sample_hap1, sample_hap2
+        r'(.+)_h(\d+)',     # sample_h1, sample_h2
+        r'(.+)[._](\d+)',   # sample.1, sample.2, sample_1, sample_2
+        r'hap(\d+)_(.+)',   # hap1_sample, hap2_sample
+        r'h(\d+)_(.+)',     # h1_sample, h2_sample
+    ]
+    
+    def __init__(self):
+        """Initialize the PathAnalyzer."""
+        self.gfa = None
+        self.paths = {}
+        self.path_groups = defaultdict(list)
+        self.haplotype_groups = defaultdict(list)
+    
+    def load_gfa(self, gfa) -> Dict[str, Any]:
+        """
+        Load paths from a parsed GFA object.
+        
+        Args:
+            gfa: A parsed GFA object (from gfapy)
+            
+        Returns:
+            Dictionary of path IDs to path objects
+        """
+        self.gfa = gfa
+        self.paths = self._extract_paths()
+        return self.paths
+    
+    def _extract_paths(self) -> Dict[str, Any]:
+        """
+        Extract paths from the loaded GFA file.
+        
+        Returns:
+            Dictionary mapping path IDs to path objects
+        """
+        paths = {}
+        if hasattr(self.gfa, 'paths'):
+            for path_id, path in self.gfa.paths.items():
+                paths[path_id] = path
+        elif hasattr(self.gfa, 'ordered_groups'):
+            # GFA2 uses ordered groups (O lines) for paths
+            for path_id, o_group in self.gfa.ordered_groups.items():
+                paths[path_id] = o_group
+        
+        logger.info(f"Extracted {len(paths)} paths from GFA")
+        return paths
+    
+    def group_paths_by_sample(self) -> Dict[str, List[str]]:
+        """
+        Group paths by sample based on naming conventions.
+        
+        This method attempts to identify paths that belong to the same sample
+        by examining path names for common patterns like sample_hap1, sample_hap2.
+        
+        Returns:
+            Dictionary mapping sample names to lists of path IDs
+        """
+        path_groups = defaultdict(list)
+        
+        # Try each haplotype pattern
+        for path_id in self.paths:
+            sample_name = self._extract_sample_name(path_id)
+            path_groups[sample_name].append(path_id)
+        
+        self.path_groups = path_groups
+        logger.info(f"Grouped paths into {len(path_groups)} samples")
+        return dict(path_groups)
+    
+    def _extract_sample_name(self, path_id: str) -> str:
+        """
+        Extract the sample name from a path ID based on common naming patterns.
+        
+        Args:
+            path_id: The path identifier
+            
+        Returns:
+            The extracted sample name, or the original path_id if no pattern matches
+        """
+        # Check for haplotype patterns
+        for pattern in self.HAPLOTYPE_PATTERNS:
+            match = re.match(pattern, path_id)
+            if match:
+                # Different patterns have sample name in different groups
+                if match.group(1).startswith('hap') or match.group(1).startswith('h'):
+                    return match.group(2)  # For patterns like hap1_sample
+                return match.group(1)  # For patterns like sample_hap1
+        
+        # Check if there's metadata in the path that indicates the sample
+        if hasattr(self.paths[path_id], 'get_tag'):
+            sample_tag = self.paths[path_id].get_tag('SM')
+            if sample_tag:
+                return sample_tag
+        
+        # If no pattern matches, use the whole path_id as the sample name
+        # (meaning it's its own group)
+        return path_id
+    
+    def identify_haplotypes(self) -> Dict[str, List[Tuple[str, str]]]:
+        """
+        Identify potential haplotype relationships between paths.
+        
+        This method looks for paths that likely represent different 
+        haplotypes of the same sample.
+        
+        Returns:
+            Dictionary mapping sample names to lists of (path_id, haplotype_id) tuples
+        """
+        haplotype_groups = defaultdict(list)
+        
+        for sample, path_ids in self.path_groups.items():
+            for path_id in path_ids:
+                haplotype_id = self._extract_haplotype_id(path_id)
+                haplotype_groups[sample].append((path_id, haplotype_id))
+        
+        self.haplotype_groups = haplotype_groups
+        return dict(haplotype_groups)
+    
+    def _extract_haplotype_id(self, path_id: str) -> str:
+        """
+        Extract the haplotype identifier from a path ID.
+        
+        Args:
+            path_id: The path identifier
+            
+        Returns:
+            The haplotype identifier, or '1' if none is found
+        """
+        for pattern in self.HAPLOTYPE_PATTERNS:
+            match = re.match(pattern, path_id)
+            if match:
+                if match.group(1).startswith('hap') or match.group(1).startswith('h'):
+                    return match.group(1).replace('hap', '').replace('h', '')
+                return match.group(2)
+                
+        # Check if there's metadata in the path that indicates the haplotype
+        if hasattr(self.paths[path_id], 'get_tag'):
+            hap_tag = self.paths[path_id].get_tag('HP')
+            if hap_tag:
+                return hap_tag
+                
+        # Default to haplotype '1' if we can't extract a specific ID
+        return '1'
+    
+    def select_paths(self, 
+                    sample_names: Optional[List[str]] = None, 
+                    haplotype_ids: Optional[List[str]] = None,
+                    path_ids: Optional[List[str]] = None) -> List[str]:
+        """
+        Select specific paths based on sample, haplotype, or direct path IDs.
+        
+        Args:
+            sample_names: List of sample names to include
+            haplotype_ids: List of haplotype IDs to include
+            path_ids: List of specific path IDs to include
+            
+        Returns:
+            List of selected path IDs
+        """
+        selected_paths = set()
+        
+        # If specific path IDs are provided, use those
+        if path_ids:
+            for path_id in path_ids:
+                if path_id in self.paths:
+                    selected_paths.add(path_id)
+        
+        # If sample names are provided, add all paths for those samples
+        if sample_names:
+            for sample in sample_names:
+                if sample in self.path_groups:
+                    selected_paths.update(self.path_groups[sample])
+        
+        # If haplotype IDs are provided, filter to include only those haplotypes
+        if haplotype_ids:
+            if not sample_names:  # If no samples specified, look across all samples
+                for sample, haplotypes in self.haplotype_groups.items():
+                    for path_id, hap_id in haplotypes:
+                        if hap_id in haplotype_ids:
+                            selected_paths.add(path_id)
+            else:  # Filter within the already selected samples
+                temp_paths = set()
+                for path_id in selected_paths:
+                    # Find which sample this path belongs to
+                    for sample, paths in self.path_groups.items():
+                        if path_id in paths and sample in sample_names:
+                            # Check if this path has one of the desired haplotype IDs
+                            for s, haplotypes in self.haplotype_groups.items():
+                                if s != sample:
+                                    continue
+                                for p, h in haplotypes:
+                                    if p == path_id and h in haplotype_ids:
+                                        temp_paths.add(path_id)
+                selected_paths = temp_paths
+        
+        logger.info(f"Selected {len(selected_paths)} paths for analysis")
+        return list(selected_paths)
+    
+    def get_path_segments(self, path_id: str) -> List[str]:
+        """
+        Get the list of segment IDs that make up a path.
+        
+        Args:
+            path_id: The path identifier
+            
+        Returns:
+            List of segment IDs in the path
+        """
+        if path_id not in self.paths:
+            logger.warning(f"Path {path_id} not found")
+            return []
+            
+        path = self.paths[path_id]
+        
+        # Handle different GFA versions
+        if hasattr(path, 'segment_names'):
+            return path.segment_names
+        elif hasattr(path, 'items'):
+            return [item.name for item in path.items]
+        else:
+            logger.warning(f"Unsupported path structure for {path_id}")
+            return []
