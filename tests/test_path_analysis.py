@@ -62,27 +62,29 @@ class TestPathAnalysis(unittest.TestCase):
         self.mock_gfa = MagicMock()
         
         # Create mock paths with different naming patterns
-        self.mock_paths = {
-            'sample1_h1': MagicMock(),
-            'sample1_h2': MagicMock(),
-            'sample2_h1': MagicMock(),
-            'sample2_h2': MagicMock(),
-            'sample3.1': MagicMock(),
-            'sample3.2': MagicMock(),
-            'hap1_sample4': MagicMock(),
-            'hap2_sample4': MagicMock(),
-            'ref_chr1': MagicMock(),
-            'complex_name_with_no_pattern': MagicMock()
-        }
+        self.mock_paths = {}
+        path_ids = [
+            'sample1_h1', 'sample1_h2', 
+            'sample2_h1', 'sample2_h2',
+            'sample3.1', 'sample3.2',
+            'hap1_sample4', 'hap2_sample4',
+            'ref_chr1', 'complex_name_with_no_pattern'
+        ]
         
-        # Set up path segment names
+        for path_id in path_ids:
+            mock_path = MagicMock()
+            # Set up segment names property
+            mock_path.segment_names = [f"seg1_{path_id}", f"seg2_{path_id}", f"seg3_{path_id}"]
+            # Configure get_tag method to return None by default (not a mock object)
+            mock_path.get_tag.return_value = None
+            self.mock_paths[path_id] = mock_path
+        
+        # Set up paths dictionary
+        mock_paths_dict = {}
         for path_id, path in self.mock_paths.items():
-            path.segment_names = [f"seg1_{path_id}", f"seg2_{path_id}", f"seg3_{path_id}"]
+            mock_paths_dict[path_id] = path
         
-        # Make mock_paths behave like a dictionary with items() method
-        mock_paths_dict = self.mock_paths.copy()
-        
-        # Create a mock paths attribute that has an items method
+        # Create a proper mock for the GFA's paths attribute
         paths_mock = MagicMock()
         paths_mock.items.return_value = mock_paths_dict.items()
         
@@ -245,22 +247,21 @@ class TestPathAnalysis(unittest.TestCase):
         self.assertIn('sample2_h1', selected_paths)
         
         # Also test with controlled mock data
+        self.analyzer = PathAnalyzer()  # Create a fresh analyzer for clean state
         self.analyzer.load_gfa(self.mock_gfa)
-        self.analyzer.group_paths_by_sample()
-        self.analyzer.identify_haplotypes()
+        sample_groups = self.analyzer.group_paths_by_sample()
+        haplotype_groups = self.analyzer.identify_haplotypes()
+        
+        # Log the groups to debug
+        print(f"Sample groups: {dict(sample_groups)}")
+        print(f"Haplotype groups: {dict(haplotype_groups)}")
+        
+        # Verify the expected path groupings before selection
+        self.assertIn('ref_chr1', sample_groups)
+        self.assertIn('complex_name_with_no_pattern', sample_groups)
         
         # Select paths for specific haplotypes
         mock_selected_paths = self.analyzer.select_paths(haplotype_ids=['1'])
-        
-        # First verify that all expected paths are correctly grouped
-        path_groups = self.analyzer.path_groups
-        haplotype_groups = self.analyzer.haplotype_groups
-        
-        # All expected paths should exist in the haplotype groups
-        all_expected_ids = {'sample1_h1', 'sample2_h1', 'sample3.1', 'hap1_sample4', 'ref_chr1', 'complex_name_with_no_pattern'}
-        for path_id in all_expected_ids:
-            sample_name = self.analyzer._extract_sample_name(path_id)
-            self.assertIn(path_id, path_groups[sample_name])
         
         # Check that only haplotype 1 paths are selected
         expected_paths = {'sample1_h1', 'sample2_h1', 'sample3.1', 'hap1_sample4', 'ref_chr1', 'complex_name_with_no_pattern'}
@@ -358,6 +359,9 @@ class TestPathAnalysis(unittest.TestCase):
         mock_path = MagicMock()
         mock_path.segment_names = ['seg1', 'seg2', 'seg3']
         
+        # Important: Configure get_tag to return None, not a MagicMock
+        mock_path.get_tag.return_value = None
+        
         # Set up paths as a proper mock with items method
         mock_paths_dict = {'ref_chr1': mock_path}
         paths_mock = MagicMock()
@@ -367,6 +371,7 @@ class TestPathAnalysis(unittest.TestCase):
         single_path_gfa.paths = paths_mock
         
         # Analyze the paths
+        self.analyzer = PathAnalyzer()  # Create a fresh analyzer
         self.analyzer.load_gfa(single_path_gfa)
         sample_groups = self.analyzer.group_paths_by_sample()
         

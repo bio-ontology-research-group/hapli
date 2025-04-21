@@ -122,12 +122,13 @@ class PathAnalyzer:
                 return match.group(sample_group)
         
         # Check if there's metadata in the path that indicates the sample
-        if hasattr(self.paths[path_id], 'get_tag'):
+        if path_id in self.paths and hasattr(self.paths[path_id], 'get_tag'):
             try:
                 sample_tag = self.paths[path_id].get_tag('SM')
-                if sample_tag:
+                # For mock objects, the get_tag might be a mock itself
+                if isinstance(sample_tag, str) and sample_tag:
                     return sample_tag
-            except (AttributeError, ValueError):
+            except (AttributeError, ValueError, TypeError):
                 pass  # In case get_tag raises an exception
         
         # If no pattern matches, use the whole path_id as the sample name
@@ -170,12 +171,13 @@ class PathAnalyzer:
                 return match.group(haplotype_group)
                 
         # Check if there's metadata in the path that indicates the haplotype
-        if hasattr(self.paths[path_id], 'get_tag'):
+        if path_id in self.paths and hasattr(self.paths[path_id], 'get_tag'):
             try:
                 hap_tag = self.paths[path_id].get_tag('HP')
-                if hap_tag:
+                # For mock objects, the get_tag might be a mock itself
+                if isinstance(hap_tag, str) and hap_tag:
                     return hap_tag
-            except (AttributeError, ValueError):
+            except (AttributeError, ValueError, TypeError):
                 pass  # In case get_tag raises an exception
                 
         # Default to haplotype '1' if we can't extract a specific ID
