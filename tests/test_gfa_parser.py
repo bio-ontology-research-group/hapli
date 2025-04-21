@@ -54,12 +54,16 @@ class TestGFAParser(unittest.TestCase):
             
     def test_malformed_file(self):
         """Test parsing a malformed file."""
-        # Should not raise exception but log warnings
+        # Don't log to stdout during tests
+        import logging
+        logging.getLogger('src.parsers.gfa_parser').setLevel(logging.CRITICAL)
+        
+        # Should not raise exception but return minimal GFA object
         gfa = self.parser.parse(self.malformed_file)
         self.assertIsNotNone(gfa)
         
-        # We're just checking the parser doesn't crash with malformed content
-        # No need to check for edges since our test data might not have valid ones
+        # Reset log level
+        logging.getLogger('src.parsers.gfa_parser').setLevel(logging.WARNING)
         
     def test_get_segment_sequence(self):
         """Test retrieving segment sequences."""

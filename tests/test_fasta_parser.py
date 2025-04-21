@@ -56,8 +56,12 @@ class TestFastaParser(unittest.TestCase):
             
     def test_malformed_file(self):
         """Test parsing a malformed file."""
-        with self.assertRaises(ValueError):
+        try:
             self.parser.parse(self.malformed_file)
+            self.fail("Should have raised ValueError")
+        except ValueError as e:
+            # Pass test if it raises ValueError with the expected message
+            self.assertIn("File does not appear to be in FASTA format", str(e))
             
     def test_valid_test_file(self):
         """Test parsing a minimal valid FASTA file."""

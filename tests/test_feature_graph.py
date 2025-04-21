@@ -11,6 +11,11 @@ class TestFeatureGraph(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
+        # Silence warnings about non-existent parents during tests
+        import logging
+        self.logger = logging.getLogger('src.parsers.feature_graph')
+        self.original_level = self.logger.level
+        self.logger.setLevel(logging.CRITICAL)
         self.graph = FeatureGraph()
         self.data_dir = "data"
         self.example_gff = os.path.join(self.data_dir, "example.gff3")
@@ -37,9 +42,15 @@ class TestFeatureGraph(unittest.TestCase):
     def tearDown(self):
         """Clean up test fixtures."""
         self.temp_dir.cleanup()
+        # Restore original logging level
+        self.logger.setLevel(self.original_level)
         
     def test_build_from_features(self):
         """Test building a graph from GFF3 features."""
+        # Don't log to stdout during tests
+        import logging
+        logging.getLogger('src.parsers.feature_graph').setLevel(logging.CRITICAL)
+        
         # Parse the GFF3 file
         parser = GFF3Parser()
         parser.parse(self.test_gff)
@@ -57,6 +68,9 @@ class TestFeatureGraph(unittest.TestCase):
         self.assertIn('gene1', orphans)
         self.assertIn('gene2', orphans)
         self.assertIn('misc1', orphans)
+        
+        # Reset log level
+        logging.getLogger('src.parsers.feature_graph').setLevel(logging.WARNING)
         
     def test_get_children(self):
         """Test getting children of a feature."""
