@@ -1,6 +1,7 @@
 import argparse
 import yaml
 import os
+import sys # Import the sys module
 from typing import Dict, Any, Optional, List
 
 # Default configuration values
@@ -40,7 +41,10 @@ class Config:
                   If None, sys.argv[1:] will be used.
         """
         parser = self._setup_argparser()
-        parsed_args = parser.parse_args(args)
+        # Use sys.argv[1:] if args is None, otherwise use provided args
+        cli_args = args if args is not None else sys.argv[1:]
+        parsed_args = parser.parse_args(cli_args)
+
 
         # 1. Load from config file if specified
         if parsed_args.config_file:
@@ -59,10 +63,13 @@ class Config:
 
         # 2. Override with CLI arguments (only those explicitly provided)
         cli_overrides = {
+            # Use cli_args for iterating over what was actually passed
             key: value for key, value in vars(parsed_args).items()
-            if value is not None and key != 'config_file' # Exclude config_file itself
+            # Check if the argument was actually provided in cli_args or has a default value that isn't None
+            if value is not None and key != 'config_file'
         }
         self._settings.update(cli_overrides)
+
 
         # 3. Validate required parameters
         self._validate_required()
@@ -108,6 +115,8 @@ class Config:
             "--log-level",
             type=str,
             choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+            # Default is now handled by DEFAULT_CONFIG, avoid setting default here
+            # to distinguish between explicitly set and default values.
             help="Logging level."
         )
 
@@ -122,6 +131,7 @@ class Config:
         # Additional validation: Check if files exist
         for param in REQUIRED_PARAMS:
              filepath = self._settings.get(param)
+             # Make sure filepath is not None before checking existence
              if filepath and not os.path.exists(filepath):
                  # Warning might be better than error, depending on tool stage
                  # For now, raise error if required file doesn't exist after config load
@@ -136,6 +146,7 @@ class Config:
 
     def get(self, key: str, default: Any = None) -> Any:
         """Retrieves a configuration value."""
+        # Use the internal settings dictionary, falling back to the provided default
         return self._settings.get(key, default)
 
     def get_all(self) -> Dict[str, Any]:
@@ -153,7 +164,8 @@ class Config:
 if __name__ == "__main__":
     try:
         config_manager = Config()
-        config_manager.load() # Loads from sys.argv
+        # Pass sys.argv explicitly to load method for clarity
+        config_manager.load(sys.argv[1:]) # Loads from arguments passed to the script
         print("Configuration loaded successfully:")
         print(config_manager.get_all())
         print("\nResource files:")
@@ -164,6 +176,7 @@ if __name__ == "__main__":
         print(f"\nGFA File: {gfa}")
 
     except ConfigurationError as e:
+        # Use sys.stderr correctly now that sys is imported
         print(f"Configuration Error: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
