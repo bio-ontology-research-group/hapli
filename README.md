@@ -4,6 +4,35 @@
 
 This tool annotates features (like genes, exons) onto haplotypes represented within a Graphical Fragment Assembly (GFA) file. It uses a reference genome annotation (GFF3) and the GFA structure to project annotations onto specific paths within the graph.
 
+## Installation
+
+### Dependencies
+
+The tool requires the following Python packages:
+- PyGFA (for GFA parsing)
+- Biopython (for GFF3 and FASTA parsing)
+- NetworkX (for feature relationship graphs)
+- PyYAML (for configuration files)
+- argparse (for command-line arguments)
+
+Install dependencies using:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Usage
+
+```bash
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta
+```
+
+Or using a configuration file:
+
+```bash
+python -m src.main --config-file src/config.yaml
+```
+
 ## Configuration
 
 The tool uses a hierarchical configuration system:
@@ -36,4 +65,12 @@ These parameters *must* be provided either via the configuration file or command
     *   YAML: `log_level: DEBUG`
 
 **Example YAML Configuration File (`config.yaml`):**
+
+```yaml
+gfa_file: data/example.gfa
+gff3_file: data/example.gff3
+reference_fasta: data/reference.fasta
+output_file: output/annotations.tsv
+log_level: INFO
+```
 
