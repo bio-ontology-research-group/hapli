@@ -20,12 +20,12 @@ class TestGFAParser(unittest.TestCase):
         with open(self.empty_file, 'w') as f:
             pass
             
-        # Malformed file (missing required fields)
+        # Malformed file (missing required fields) - GFA2 format
         self.malformed_file = os.path.join(self.temp_dir.name, "malformed.gfa")
         with open(self.malformed_file, 'w') as f:
-            f.write("H\tVN:Z:1.0\n")
+            f.write("H\tVN:Z:2.0\n")
             f.write("S\n")  # Missing required fields
-            f.write("L\ts1\t+\ts2\t+\t0M\n")
+            f.write("E\t*\ts1+\ts2+\t10\t10\t0\t0\t*\n")
             
     def tearDown(self):
         """Clean up test fixtures."""

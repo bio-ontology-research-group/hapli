@@ -9,7 +9,7 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio.SeqFeature import SeqFeature, FeatureLocation
 from BCBio import GFF # To write GFF3
-# import gfapy # Removed gfapy import
+import gfapy # Using gfapy for GFA2 generation
 
 # --- Default Settings ---
 DEFAULT_REF_LENGTH = 1000
@@ -119,11 +119,12 @@ def generate_data(ref_length: int, num_features: int, paired_haplotypes: bool, o
         GFF.write([gff_seq_record], gff_out)
 
 
-    # 3. Generate GFA (GFA1 for compatibility with most parsers)
-    print(f"  Generating GFA: {gfa_path}")
-    gfa_lines = []
-    gfa_lines.append("H\tVN:Z:1.0") # GFA1 Header
-
+    # 3. Generate GFA2 using gfapy
+    print(f"  Generating GFA2: {gfa_path}")
+    
+    # Create a new GFA2 object
+    gfa = gfapy.Gfa(version="gfa2")
+    
     # Create segments based on reference, introducing a variation point
     num_segments = (ref_length + SEGMENT_LEN - 1) // SEGMENT_LEN
     segments = [] # List of segment IDs
@@ -143,8 +144,15 @@ def generate_data(ref_length: int, num_features: int, paired_haplotypes: bool, o
         segment_lengths[seg_id] = seg_len
         segments.append(seg_id)
 
-        # Add reference segment line - GFA1 format: S <sid> <sequence>
-        gfa_lines.append(f"S\t{seg_id}\t{seg_seq}")
+        # Add segment - GFA2 format: S <sid> <slen> <sequence> [tags]
+        try:
+            gfa.add_line(f"S\t{seg_id}\t{seg_len}\t{seg_seq}")
+            
+            # Add fragment line linking segment to reference (GFA2 specific)
+            # F <sid> <external> <sbeg> <send> <fbeg> <fend> <alignment>
+            gfa.add_line(f"F\t{seg_id}\t{REF_SEQ_ID}+\t{seg_start_0based}\t{seg_end_0based}\t0\t{seg_len}\t*")
+        except Exception as e:
+            print(f"Warning: Error adding segment {seg_id}: {e}")
         
         # Create alternative segment at variation point
         if i == variation_point_idx:
@@ -156,26 +164,48 @@ def generate_data(ref_length: int, num_features: int, paired_haplotypes: bool, o
                 alt_seq = generate_random_sequence(alt_segment_len)
 
             # Add alternative segment line
-            gfa_lines.append(f"S\t{alt_segment_id}\t{alt_seq}")
+            try:
+                gfa.add_line(f"S\t{alt_segment_id}\t{alt_segment_len}\t{alt_seq}")
+                
+                # Add Fragment line for alt segment (maps to same reference region)
+                gfa.add_line(f"F\t{alt_segment_id}\t{REF_SEQ_ID}+\t{seg_start_0based}\t{seg_end_0based}\t0\t{alt_segment_len}\t*")
+            except Exception as e:
+                print(f"Warning: Error adding alt segment {alt_segment_id}: {e}")
 
-
-    # Create Links (GFA1) connecting consecutive reference segments
+    # Create Edges (GFA2) connecting consecutive reference segments
     for i in range(len(segments) - 1):
         from_seg = segments[i]
         to_seg = segments[i+1]
-        # L <sid1> <dir1> <sid2> <dir2> <CIGAR>
-        gfa_lines.append(f"L\t{from_seg}\t+\t{to_seg}\t+\t0M")
+        from_seg_len = segment_lengths[from_seg]
+        
+        # E <eid> <sid1> <sid2> <beg1> <end1> <beg2> <end2> <alignment>
+        # End-to-start link
+        try:
+            gfa.add_line(f"E\t*\t{from_seg}+\t{to_seg}+\t{from_seg_len}\t{from_seg_len}\t0\t0\t*")
+        except Exception as e:
+            print(f"Warning: Error adding edge {from_seg} to {to_seg}: {e}")
 
-        # Add links for the variation
-        if i == variation_point_idx - 1 and alt_segment_id: # Link segment before variation point to alt segment
-             gfa_lines.append(f"L\t{from_seg}\t+\t{alt_segment_id}\t+\t0M")
-        if i == variation_point_idx and alt_segment_id: # Link alt segment to segment after variation point
-             from_alt_seg = alt_segment_id
-             gfa_lines.append(f"L\t{from_alt_seg}\t+\t{to_seg}\t+\t0M")
+        # Add edges for the variation
+        if i == variation_point_idx - 1 and alt_segment_id: 
+            # Link segment before variation point to alt segment
+            try:
+                gfa.add_line(f"E\t*\t{from_seg}+\t{alt_segment_id}+\t{from_seg_len}\t{from_seg_len}\t0\t0\t*")
+            except Exception as e:
+                print(f"Warning: Error adding edge {from_seg} to {alt_segment_id}: {e}")
+                
+        if i == variation_point_idx and alt_segment_id: 
+            # Link alt segment to segment after variation point
+            try:
+                gfa.add_line(f"E\t*\t{alt_segment_id}+\t{to_seg}+\t{alt_segment_len}\t{alt_segment_len}\t0\t0\t*")
+            except Exception as e:
+                print(f"Warning: Error adding edge {alt_segment_id} to {to_seg}: {e}")
 
-    # Create Paths (GFA1)
+    # Create Ordered Groups (Paths) - GFA2 uses 'O' lines
     ref_path_elements = [f"{s}+" for s in segments]
-    gfa_lines.append(f"P\t{REF_SEQ_ID}\t{','.join(ref_path_elements)}\t*") # Reference path
+    try:
+        gfa.add_line(f"O\t{REF_SEQ_ID}\t{' '.join(ref_path_elements)}")
+    except Exception as e:
+        print(f"Warning: Error adding path {REF_SEQ_ID}: {e}")
 
     # Sample paths
     sample1_path = list(ref_path_elements) # Sample 1 follows reference
@@ -184,20 +214,23 @@ def generate_data(ref_length: int, num_features: int, paired_haplotypes: bool, o
         sample2_path[variation_point_idx] = f"{alt_segment_id}+"
 
     if paired_haplotypes:
-        gfa_lines.append(f"P\tsample1_h1\t{','.join(sample1_path)}\t*")
-        gfa_lines.append(f"P\tsample1_h2\t{','.join(sample1_path)}\t*") # Both follow ref
-        gfa_lines.append(f"P\tsample2_h1\t{','.join(sample1_path)}\t*") # H1 follows ref
-        gfa_lines.append(f"P\tsample2_h2\t{','.join(sample2_path)}\t*") # H2 uses variation
+        try:
+            gfa.add_line(f"O\tsample1_h1\t{' '.join(sample1_path)}")
+            gfa.add_line(f"O\tsample1_h2\t{' '.join(sample1_path)}") # Both follow ref
+            gfa.add_line(f"O\tsample2_h1\t{' '.join(sample1_path)}") # H1 follows ref
+            gfa.add_line(f"O\tsample2_h2\t{' '.join(sample2_path)}") # H2 uses variation
+        except Exception as e:
+            print(f"Warning: Error adding haplotype paths: {e}")
     else:
-        gfa_lines.append(f"P\tsample1\t{','.join(sample1_path)}\t*")
-        gfa_lines.append(f"P\tsample2\t{','.join(sample2_path)}\t*")
+        try:
+            gfa.add_line(f"O\tsample1\t{' '.join(sample1_path)}")
+            gfa.add_line(f"O\tsample2\t{' '.join(sample2_path)}")
+        except Exception as e:
+            print(f"Warning: Error adding sample paths: {e}")
 
-
-    # Write GFA file
+    # Write GFA2 file using gfapy
     try:
-        with open(gfa_path, "w") as f_out:
-            for line in gfa_lines:
-                f_out.write(line + "\n")
+        gfa.to_file(gfa_path)
     except Exception as e:
          print(f"Error writing GFA file: {e}")
          sys.exit(1) # Exit if writing fails
