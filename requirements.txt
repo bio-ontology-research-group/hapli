@@ -1,7 +1,7 @@
 # Project dependencies
-PyYAML
-gfapy
-bcbio-gff
-biopython
-networkx
-pytest
+PyYAML>=6.0
+gfapy>=1.0.0
+bcbio-gff>=0.6.9
+biopython>=1.80
+networkx>=3.0
+pytest>=7.0.0
