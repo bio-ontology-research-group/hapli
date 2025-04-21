@@ -46,7 +46,7 @@ class MinimapAligner:
                 raise ValueError("Empty sequence dictionary provided")
                 
             seq_id = next(iter(reference_seq))
-            logger.warning(f"Mappy doesn't support dictionary input directly. Using sequence: {seq_id}")
+            logger.debug(f"Mappy doesn't support dictionary input directly. Using sequence: {seq_id}")
             self.aligner = mp.Aligner(seq=str(reference_seq[seq_id].seq), preset=self.preset, **self.kwargs)
         elif isinstance(reference_seq, SeqRecord):
             # Single SeqRecord

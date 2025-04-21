@@ -284,27 +284,62 @@ class TestAlignmentProcessorWithMockData(unittest.TestCase):
             self.assertEqual(result["path1"]["exon1"][0].location.end, 8)
             self.assertEqual(result["path1"]["exon1"][0].qualifiers["parent_feature"][0], "gene1")
 
-@unittest.skipIf(not os.path.exists(TEST_GFA) or 
-                not os.path.exists(TEST_GFF) or 
-                not os.path.exists(TEST_FASTA),
-                "Test data files not found")
-class TestAlignmentProcessorWithRealData(unittest.TestCase):
-    """Tests for the Alignment Processor with real data files."""
+class TestAlignmentProcessorWithSyntheticData(unittest.TestCase):
+    """Tests for the Alignment Processor with synthetic data."""
     
     def setUp(self):
-        """Set up test data."""
+        """Set up synthetic test data that doesn't rely on external files."""
+        self.temp_dir = tempfile.TemporaryDirectory()
+        
+        # Create synthetic files for testing
+        self.gfa_file = os.path.join(self.temp_dir.name, "test.gfa")
+        self.gff_file = os.path.join(self.temp_dir.name, "test.gff3")
+        self.fasta_file = os.path.join(self.temp_dir.name, "test.fasta")
+        
+        # Create a simple FASTA with two sequences
+        with open(self.fasta_file, 'w') as f:
+            f.write(">ref_chr1\n")
+            f.write("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT\n")
+            f.write("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT\n")
+            f.write(">ref_chr2\n")
+            f.write("TGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA\n")
+            f.write("TGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA\n")
+        
+        # Create a simple GFF3 with a gene and exons
+        with open(self.gff_file, 'w') as f:
+            f.write("##gff-version 3\n")
+            f.write("ref_chr1\t.\tgene\t10\t60\t.\t+\t.\tID=gene1;Name=Gene1\n")
+            f.write("ref_chr1\t.\texon\t10\t30\t.\t+\t.\tID=exon1;Parent=gene1\n")
+            f.write("ref_chr1\t.\texon\t40\t60\t.\t+\t.\tID=exon2;Parent=gene1\n")
+            f.write("ref_chr1\t.\tgene\t80\t120\t.\t+\t.\tID=gene2;Name=Gene2\n")
+            f.write("ref_chr1\t.\texon\t80\t100\t.\t+\t.\tID=exon3;Parent=gene2\n")
+            f.write("ref_chr1\t.\texon\t105\t120\t.\t+\t.\tID=exon4;Parent=gene2\n")
+        
+        # Create a simple GFA with paths
+        with open(self.gfa_file, 'w') as f:
+            f.write("H\tVN:Z:1.0\n")
+            f.write("S\tseg1\tACGTACGTACGTACGTACGT\n")
+            f.write("S\tseg2\tTGCATGCATGCATGCATGCA\n")
+            f.write("S\tseg3\tACGTACGTACGTACGTACGT\n")
+            f.write("P\tpath1\tseg1+,seg2+\t*\n")
+            f.write("P\tpath2\tseg1+,seg3+\t*\n")
+        
+        # Set up the processor with our synthetic data
         self.processor = AlignmentProcessor()
         
-        # Load test data
+        # Use test-friendly aligner settings
+        self.processor.aligner = MinimapAligner(preset="map-ont", k=5)
+        
+        # Load the data
         try:
-            self.processor.load_data(TEST_GFA, TEST_GFF, TEST_FASTA)
-            
-            # Extract some path IDs for testing
-            self.path_ids = list(self.processor.gfa_parser.get_paths().keys())[:2]
-            if not self.path_ids:
-                self.skipTest("No paths found in test GFA file")
+            self.processor.load_data(self.gfa_file, self.gff_file, self.fasta_file)
+            self.path_ids = ["path1", "path2"]
         except Exception as e:
-            self.skipTest(f"Failed to load test data: {e}")
+            self.fail(f"Failed to load synthetic test data: {e}")
+    
+    def tearDown(self):
+        """Clean up temporary files."""
+        self.temp_dir.cleanup()
     
     def test_extract_path_sequences(self):
         """Test extracting path sequences."""
@@ -316,10 +351,66 @@ class TestAlignmentProcessorWithRealData(unittest.TestCase):
     
     def test_align_features_to_paths(self):
         """Test aligning features to paths."""
-        result = self.processor.align_features_to_paths(self.path_ids, feature_types=["gene"])
-        self.assertIsInstance(result, dict)
-        
-        # At a minimum, we can check if the processor runs without errors
-        # Even if no features align, we should have entries for the paths
-        for path_id in self.path_ids:
-            self.assertIn(path_id, result)
+        # Mock the alignment to ensure we get expected results
+        with patch.object(MinimapAligner, 'align_sequence') as mock_align:
+            # Create a mock alignment result
+            mock_alignment = MagicMock()
+            mock_alignment.q_st = 0
+            mock_alignment.q_en = 50
+            mock_alignment.r_st = 10
+            mock_alignment.r_en = 60
+            mock_alignment.mapq = 60
+            mock_alignment.cigar_str = "50M"
+            
+            # Return this alignment for any alignment attempt
+            mock_align.return_value = [mock_alignment]
+            
+            # Run the alignment process
+            result = self.processor.align_features_to_paths(self.path_ids, feature_types=["gene"])
+            
+            # Check the results
+            self.assertIsInstance(result, dict)
+            for path_id in self.path_ids:
+                self.assertIn(path_id, result)
+                # Since we mocked the alignment, we should have gene1 and gene2 aligned
+                self.assertIn("gene1", result[path_id])
+                self.assertIn("gene2", result[path_id])
+    
+    def test_feature_duplications(self):
+        """Test handling of feature duplications."""
+        # We have two genes in our synthetic data, test aligning both
+        with patch.object(MinimapAligner, 'align_sequence') as mock_align:
+            # Create different mock alignments for each gene
+            gene1_alignment = MagicMock()
+            gene1_alignment.q_st = 0
+            gene1_alignment.q_en = 50
+            gene1_alignment.r_st = 10
+            gene1_alignment.r_en = 60
+            gene1_alignment.mapq = 60
+            gene1_alignment.cigar_str = "50M"
+            
+            gene2_alignment = MagicMock()
+            gene2_alignment.q_st = 0
+            gene2_alignment.q_en = 40
+            gene2_alignment.r_st = 20
+            gene2_alignment.r_en = 60
+            gene2_alignment.mapq = 50
+            gene2_alignment.cigar_str = "40M"
+            
+            # Return different alignments for each gene
+            mock_align.side_effect = [[gene1_alignment], [gene2_alignment], 
+                                     [], []]  # No child alignments for simplicity
+            
+            # Run the alignment with both genes
+            result = self.processor.align_features_to_paths(["path1"], feature_types=["gene"])
+            
+            # Check the results for both genes
+            self.assertIn("path1", result)
+            self.assertIn("gene1", result["path1"])
+            self.assertIn("gene2", result["path1"])
+            
+            # Check the alignments have different coordinates
+            self.assertEqual(result["path1"]["gene1"][0].location.start, 10)
+            self.assertEqual(result["path1"]["gene1"][0].location.end, 60)
+            self.assertEqual(result["path1"]["gene2"][0].location.start, 20)
+            self.assertEqual(result["path1"]["gene2"][0].location.end, 60)

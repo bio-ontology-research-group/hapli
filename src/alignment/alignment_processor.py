@@ -173,7 +173,7 @@ class AlignmentProcessor:
                 alignments = self.aligner.align_sequence(feature_seq)
                 
                 if not alignments:
-                    logger.warning(f"No alignments found for feature {feature.id} on path {path_id}")
+                    logger.debug(f"No alignments found for feature {feature.id} on path {path_id}")
                     continue
                 
                 # Create aligned features for each alignment
