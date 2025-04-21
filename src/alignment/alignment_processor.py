@@ -93,13 +93,45 @@ class AlignmentProcessor:
             segments = []
             
             # Handle different GFA versions
-            if hasattr(path, 'segment_names'):
-                # GFApy path representation
-                segments = [seg_name.strip('+').strip('-') for seg_name in path.segment_names]
-            elif hasattr(path, 'items'):
-                # Direct access to segment items
-                segments = [item.name.strip('+').strip('-') for item in path.items]
-            else:
+            try:
+                # GFApy has different representations for GFA1 and GFA2
+                if hasattr(path, 'segment_names'):
+                    # For string segment names
+                    segments = []
+                    for seg_name in path.segment_names:
+                        if isinstance(seg_name, str):
+                            # String segment name
+                            segments.append(seg_name.strip('+').strip('-'))
+                        elif hasattr(seg_name, 'name'):
+                            # GFA1 segment object
+                            segments.append(str(seg_name.name))
+                        else:
+                            # Try converting to string
+                            seg_str = str(seg_name)
+                            # Remove orientation if present
+                            segments.append(seg_str.strip('+').strip('-'))
+                elif hasattr(path, 'items'):
+                    # Direct access to segment items
+                    segments = []
+                    for item in path.items:
+                        if hasattr(item, 'name'):
+                            segments.append(str(item.name).strip('+').strip('-'))
+                        else:
+                            # Try as string
+                            segments.append(str(item).strip('+').strip('-'))
+                else:
+                    # Try with path.path_name if available (some GFA implementations)
+                    segments = []
+                    path_str = getattr(path, 'path_name', str(path))
+                    if isinstance(path_str, str) and ',' in path_str:
+                        # Parse comma-separated path
+                        for seg in path_str.split(','):
+                            # Remove orientation characters if present
+                            segments.append(seg.strip('+').strip('-'))
+            except Exception as e:
+                logger.warning(f"Error extracting segments from path {path_id}: {e}")
+                
+            if not segments:
                 logger.warning(f"Unknown path format for {path_id}, cannot extract segments")
                 continue
                 
@@ -118,13 +150,22 @@ class AlignmentProcessor:
                         seg_seq = self.gfa_parser.get_segment_sequence(seg_id)
                     # Try getting the segment and then its sequence
                     elif hasattr(self.gfa_parser, 'get_segments'):
-                        segments = self.gfa_parser.get_segments()
-                        if seg_id in segments:
-                            seg = segments[seg_id]
-                            if hasattr(seg, 'sequence'):
-                                seg_seq = seg.sequence
-                            elif hasattr(seg, 'seq'):
-                                seg_seq = seg.seq
+                        segments_dict = self.gfa_parser.get_segments()
+                        if seg_id in segments_dict:
+                            seg = segments_dict[seg_id]
+                            # Try different attribute names for sequence
+                            for attr in ['sequence', 'seq', 'sequence_str']:
+                                if hasattr(seg, attr):
+                                    seg_seq = getattr(seg, attr)
+                                    if seg_seq:
+                                        break
+                    
+                    # Try direct GFApy segment access if available
+                    if not seg_seq and hasattr(self.gfa_parser.gfa, 'segment'):
+                        seg = self.gfa_parser.gfa.segment(seg_id)
+                        if seg and hasattr(seg, 'sequence'):
+                            seg_seq = seg.sequence
+                
                 except Exception as e:
                     logger.warning(f"Error getting sequence for segment {seg_id}: {e}")
                 
