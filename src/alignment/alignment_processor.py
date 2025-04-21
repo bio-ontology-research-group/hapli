@@ -213,8 +213,12 @@ class AlignmentProcessor:
                 
             path_seq = self.path_sequences[path_id]
             
+            # Create a copy of parent IDs to avoid dictionary modification during iteration
+            parent_ids = list(self.aligned_features[path_id].keys())
+            
             # For each aligned parent feature
-            for parent_id, aligned_parents in self.aligned_features[path_id].items():
+            for parent_id in parent_ids:
+                aligned_parents = self.aligned_features[path_id][parent_id]
                 # Get the children of this parent
                 children_ids = self.feature_graph.get_children(parent_id)
                 if not children_ids:
