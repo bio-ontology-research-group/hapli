@@ -404,17 +404,23 @@ class TestAlignmentProcessorWithSyntheticData(unittest.TestCase):
             gene2_alignment.mapq = 50
             gene2_alignment.cigar_str = "40M"
             
-            # Return different alignments for each gene and each child
-            # Define side effects to return different values for each call
-            side_effects = [
-                [gene1_alignment],  # First gene
-                [gene2_alignment],  # Second gene
-                [],  # First child (empty for simplicity)
-                []   # Second child (empty for simplicity)
-            ]
+            # Create a side_effect function instead of a fixed list
+            # This provides more flexibility for an arbitrary number of calls
+            def side_effect_func(*args, **kwargs):
+                # First two calls are for parent genes
+                nonlocal mock_align
+                call_count = mock_align.call_count
+                
+                if call_count == 1:  # First call - gene1
+                    return [gene1_alignment]
+                elif call_count == 2:  # Second call - gene2
+                    return [gene2_alignment]
+                else:
+                    # All subsequent calls (children) return empty list for simplicity
+                    return []
             
-            # Set the side effect
-            mock_align.side_effect = side_effects
+            # Set the side effect to use our function
+            mock_align.side_effect = side_effect_func
             
             # Run the alignment with both genes
             result = self.processor.align_features_to_paths(["path1"], feature_types=["gene"])
