@@ -17,16 +17,17 @@ class TestPathAnalysis(unittest.TestCase):
         self.mock_gfa = MagicMock()
         
         # Create mock paths with different naming patterns
+        # Using naming patterns that match our sample data generator
         self.mock_paths = {
-            'sample1_hap1': MagicMock(),
-            'sample1_hap2': MagicMock(),
+            'sample1_h1': MagicMock(),
+            'sample1_h2': MagicMock(),
             'sample2_h1': MagicMock(),
             'sample2_h2': MagicMock(),
             'sample3.1': MagicMock(),
             'sample3.2': MagicMock(),
             'hap1_sample4': MagicMock(),
             'hap2_sample4': MagicMock(),
-            'reference': MagicMock(),  # A path without haplotype designation
+            'ref_chr1': MagicMock(),  # Reference sequence path (matches REF_SEQ_ID in the generator)
             'complex_name_with_no_pattern': MagicMock()
         }
         
@@ -56,17 +57,17 @@ class TestPathAnalysis(unittest.TestCase):
         sample_groups = self.analyzer.group_paths_by_sample()
         
         # Check that we have the expected number of groups
-        expected_samples = {'sample1', 'sample2', 'sample3', 'sample4', 'reference', 'complex_name_with_no_pattern'}
+        expected_samples = {'sample1', 'sample2', 'sample3', 'sample4', 'ref_chr1', 'complex_name_with_no_pattern'}
         self.assertEqual(len(sample_groups), len(expected_samples))
         
         # Check that each group contains the correct paths
-        self.assertEqual(set(sample_groups['sample1']), {'sample1_hap1', 'sample1_hap2'})
+        self.assertEqual(set(sample_groups['sample1']), {'sample1_h1', 'sample1_h2'})
         self.assertEqual(set(sample_groups['sample2']), {'sample2_h1', 'sample2_h2'})
         self.assertEqual(set(sample_groups['sample3']), {'sample3.1', 'sample3.2'})
         self.assertEqual(set(sample_groups['sample4']), {'hap1_sample4', 'hap2_sample4'})
         
         # Paths without a recognizable pattern should be in their own group
-        self.assertEqual(sample_groups['reference'], ['reference'])
+        self.assertEqual(sample_groups['ref_chr1'], ['ref_chr1'])
         self.assertEqual(sample_groups['complex_name_with_no_pattern'], ['complex_name_with_no_pattern'])
     
     def test_identify_haplotypes(self):
@@ -77,8 +78,8 @@ class TestPathAnalysis(unittest.TestCase):
         
         # Check that haplotypes are correctly identified for each sample
         sample1_haplotypes = dict(haplotype_groups['sample1'])
-        self.assertEqual(sample1_haplotypes['sample1_hap1'], '1')
-        self.assertEqual(sample1_haplotypes['sample1_hap2'], '2')
+        self.assertEqual(sample1_haplotypes['sample1_h1'], '1')
+        self.assertEqual(sample1_haplotypes['sample1_h2'], '2')
         
         sample2_haplotypes = dict(haplotype_groups['sample2'])
         self.assertEqual(sample2_haplotypes['sample2_h1'], '1')
@@ -93,8 +94,8 @@ class TestPathAnalysis(unittest.TestCase):
         self.assertEqual(sample4_haplotypes['hap2_sample4'], '2')
         
         # Paths without a recognizable haplotype pattern should default to haplotype "1"
-        reference_haplotypes = dict(haplotype_groups['reference'])
-        self.assertEqual(reference_haplotypes['reference'], '1')
+        reference_haplotypes = dict(haplotype_groups['ref_chr1'])
+        self.assertEqual(reference_haplotypes['ref_chr1'], '1')
         
         complex_haplotypes = dict(haplotype_groups['complex_name_with_no_pattern'])
         self.assertEqual(complex_haplotypes['complex_name_with_no_pattern'], '1')
@@ -122,7 +123,7 @@ class TestPathAnalysis(unittest.TestCase):
         selected_paths = self.analyzer.select_paths(haplotype_ids=['1'])
         
         # Check that only haplotype 1 paths are selected
-        expected_paths = {'sample1_hap1', 'sample2_h1', 'sample3.1', 'hap1_sample4', 'reference', 'complex_name_with_no_pattern'}
+        expected_paths = {'sample1_h1', 'sample2_h1', 'sample3.1', 'hap1_sample4', 'ref_chr1', 'complex_name_with_no_pattern'}
         self.assertEqual(set(selected_paths), expected_paths)
     
     def test_select_paths_by_sample_and_haplotype(self):
@@ -169,8 +170,8 @@ class TestPathAnalysis(unittest.TestCase):
         """Test with a GFA that has only a single path."""
         # Create a mock GFA with a single path
         single_path_gfa = MagicMock()
-        single_path_gfa.paths = {'reference': MagicMock()}
-        single_path_gfa.paths['reference'].segment_names = ['seg1', 'seg2', 'seg3']
+        single_path_gfa.paths = {'ref_chr1': MagicMock()}
+        single_path_gfa.paths['ref_chr1'].segment_names = ['seg1', 'seg2', 'seg3']
         
         # Analyze the paths
         self.analyzer.load_gfa(single_path_gfa)
@@ -178,7 +179,7 @@ class TestPathAnalysis(unittest.TestCase):
         
         # Check that we have only one group
         self.assertEqual(len(sample_groups), 1)
-        self.assertEqual(sample_groups['reference'], ['reference'])
+        self.assertEqual(sample_groups['ref_chr1'], ['ref_chr1'])
     
     def test_edge_case_no_paths(self):
         """Test with a GFA that has no paths."""
