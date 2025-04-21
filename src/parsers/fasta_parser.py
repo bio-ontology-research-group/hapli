@@ -38,8 +38,24 @@ class FastaParser:
             
         self.logger.info(f"Parsing FASTA file: {filepath}")
         
+        # Check if file is empty
+        if os.path.getsize(filepath) == 0:
+            raise ValueError("Empty FASTA file")
+            
         try:
-            self.sequences = SeqIO.to_dict(SeqIO.parse(filepath, "fasta"))
+            # Use a context manager to properly close the file handle
+            with open(filepath, 'r') as fasta_file:
+                # Check for valid FASTA format (should start with '>')
+                first_line = fasta_file.readline().strip()
+                if not first_line.startswith('>'):
+                    raise ValueError("File does not appear to be in FASTA format")
+                
+                # Reset file pointer to beginning
+                fasta_file.seek(0)
+                
+                # Parse the file
+                records = SeqIO.parse(fasta_file, "fasta")
+                self.sequences = SeqIO.to_dict(records)
             
             if not self.sequences:
                 raise ValueError("No sequences found in FASTA file")
@@ -47,8 +63,13 @@ class FastaParser:
             self.logger.info(f"Successfully parsed FASTA with {len(self.sequences)} sequences")
             return self.sequences
             
+        except ValueError as e:
+            self.logger.error(f"Failed to parse FASTA file: {e}")
+            self.sequences = {}  # Reset sequences to empty dict
+            raise
         except Exception as e:
             self.logger.error(f"Failed to parse FASTA file: {e}")
+            self.sequences = {}  # Reset sequences to empty dict
             raise
     
     def get_sequence(self, seq_id: str) -> Optional[SeqRecord]:
