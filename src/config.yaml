@@ -1,23 +1,22 @@
 # Configuration template for the Haplotype Annotation Tool
 
-# Input files
-input:
-  gfa_file: data/example.gfa          # Path to the input GFA graph file
-  gff_file: data/example.gff3         # Path to the input GFF3 annotation file
-  reference_fasta: data/reference.fasta # Path to the reference FASTA (optional, may be needed for sequence context)
+# Input files (Required)
+gfa_file: data/example.gfa          # Path to the input GFA graph file
+gff_file: data/example.gff3         # Path to the input GFF3 annotation file
+fasta_file: data/reference.fasta # Path to the reference FASTA (optional, may be needed for sequence context)
 
-# Output settings
-output:
-  # Define output file paths or formats here
-  annotated_gfa: output/annotated_graph.gfa # Example output path
-  report_file: output/annotation_report.tsv # Example report path
+# Output settings (Example - Define actual output paths as needed by the tool)
+# annotated_gfa: output/annotated_graph.gfa # Example output path
+# report_file: output/annotation_report.tsv # Example report path
 
-# Tool parameters
-parameters:
-  min_overlap: 10       # Minimum overlap required for annotation projection (example)
-  feature_types:        # List of feature types to annotate (e.g., gene, exon)
-    - gene
-    - exon
-  samples:              # Optional: List specific samples/paths to annotate (default: all)
-    # - sample1
-    # - sample2
+# Tool parameters (Example - Define actual parameters needed by the tool)
+# min_overlap: 10       # Minimum overlap required for annotation projection (example)
+# feature_types:        # List of feature types to annotate (e.g., gene, exon)
+#   - gene
+#   - exon
+# samples:              # Optional: List specific samples/paths to annotate (default: all)
+#   # - sample1
+#   # - sample2
+
+# Add other parameters here, directly at the top level, e.g.:
+# log_level: INFO

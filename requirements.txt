@@ -1,6 +1,6 @@
 # Project dependencies
 # Add libraries needed for the tool, e.g.:
-# pyyaml
+PyYAML # For parsing config.yaml
 # biopython
 # networkx
 pytest # For running tests
