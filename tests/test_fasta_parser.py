@@ -25,6 +25,12 @@ class TestFastaParser(unittest.TestCase):
         with open(self.malformed_file, 'w') as f:
             f.write("This is not a FASTA file\n")
             
+        # Create a minimal valid FASTA for tests
+        self.valid_test_file = os.path.join(self.temp_dir.name, "valid_test.fasta")
+        with open(self.valid_test_file, 'w') as f:
+            f.write(">test_seq\n")
+            f.write("ACGTACGTACGT\n")
+            
     def tearDown(self):
         """Clean up test fixtures."""
         self.temp_dir.cleanup()
@@ -52,6 +58,13 @@ class TestFastaParser(unittest.TestCase):
         """Test parsing a malformed file."""
         with self.assertRaises(ValueError):
             self.parser.parse(self.malformed_file)
+            
+    def test_valid_test_file(self):
+        """Test parsing a minimal valid FASTA file."""
+        sequences = self.parser.parse(self.valid_test_file)
+        self.assertIsNotNone(sequences)
+        self.assertEqual(len(sequences), 1)
+        self.assertIn('test_seq', sequences)
         
     def test_get_sequence(self):
         """Test retrieving a sequence by ID."""

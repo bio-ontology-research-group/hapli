@@ -119,10 +119,10 @@ def generate_data(ref_length: int, num_features: int, paired_haplotypes: bool, o
         GFF.write([gff_seq_record], gff_out)
 
 
-    # 3. Generate GFA2 Manually as Strings
-    print(f"  Generating GFA2: {gfa_path}")
+    # 3. Generate GFA (GFA1 for compatibility with most parsers)
+    print(f"  Generating GFA: {gfa_path}")
     gfa_lines = []
-    gfa_lines.append("H\tVN:Z:2.0") # GFA2 Header
+    gfa_lines.append("H\tVN:Z:1.0") # GFA1 Header
 
     # Create segments based on reference, introducing a variation point
     num_segments = (ref_length + SEGMENT_LEN - 1) // SEGMENT_LEN
@@ -143,14 +143,9 @@ def generate_data(ref_length: int, num_features: int, paired_haplotypes: bool, o
         segment_lengths[seg_id] = seg_len
         segments.append(seg_id)
 
-        # Add reference segment line
-        gfa_lines.append(f"S\t{seg_id}\t{seg_len}\t{seg_seq}")
-        # Add Fragment line linking segment to reference
-        # F <sid> <external> <sbeg> <send> <fbeg> <fend> <alignment>
-        # Using 0-based, exclusive-end coordinates for external reference (sbeg, send)
-        # Using 0-based, exclusive-end coordinates for segment (fbeg, fend)
-        gfa_lines.append(f"F\t{seg_id}\t{REF_SEQ_ID}+\t{seg_start_0based}\t{seg_end_0based}\t0\t{seg_len}\t*")
-
+        # Add reference segment line - GFA1 format: S <sid> <sequence>
+        gfa_lines.append(f"S\t{seg_id}\t{seg_seq}")
+        
         # Create alternative segment at variation point
         if i == variation_point_idx:
             alt_segment_id = f"s{i+1}_alt"
@@ -161,32 +156,26 @@ def generate_data(ref_length: int, num_features: int, paired_haplotypes: bool, o
                 alt_seq = generate_random_sequence(alt_segment_len)
 
             # Add alternative segment line
-            gfa_lines.append(f"S\t{alt_segment_id}\t{alt_segment_len}\t{alt_seq}")
-            # Add Fragment line for alt segment (maps to same reference region)
-            gfa_lines.append(f"F\t{alt_segment_id}\t{REF_SEQ_ID}+\t{seg_start_0based}\t{seg_end_0based}\t0\t{alt_segment_len}\t*")
+            gfa_lines.append(f"S\t{alt_segment_id}\t{alt_seq}")
 
 
-    # Create Edges linking consecutive reference segments
+    # Create Links (GFA1) connecting consecutive reference segments
     for i in range(len(segments) - 1):
         from_seg = segments[i]
         to_seg = segments[i+1]
-        from_seg_len = segment_lengths[from_seg]
-        # E <eid> <sid1> <sid2> <beg1> <end1> <beg2> <end2> <alignment>
-        # End-to-start link: Use segment length for end position on sid1, 0 for start on sid2. Removed '$'.
-        gfa_lines.append(f"E\t*\t{from_seg}+\t{to_seg}+\t{from_seg_len}\t{from_seg_len}\t0\t0\t*")
+        # L <sid1> <dir1> <sid2> <dir2> <CIGAR>
+        gfa_lines.append(f"L\t{from_seg}\t+\t{to_seg}\t+\t0M")
 
-        # Add edges for the variation
+        # Add links for the variation
         if i == variation_point_idx - 1 and alt_segment_id: # Link segment before variation point to alt segment
-             gfa_lines.append(f"E\t*\t{from_seg}+\t{alt_segment_id}+\t{from_seg_len}\t{from_seg_len}\t0\t0\t*")
+             gfa_lines.append(f"L\t{from_seg}\t+\t{alt_segment_id}\t+\t0M")
         if i == variation_point_idx and alt_segment_id: # Link alt segment to segment after variation point
              from_alt_seg = alt_segment_id
-             # Need length of the alt segment
-             gfa_lines.append(f"E\t*\t{from_alt_seg}+\t{to_seg}+\t{alt_segment_len}\t{alt_segment_len}\t0\t0\t*")
+             gfa_lines.append(f"L\t{from_alt_seg}\t+\t{to_seg}\t+\t0M")
 
-
-    # Create Ordered Groups (Paths)
+    # Create Paths (GFA1)
     ref_path_elements = [f"{s}+" for s in segments]
-    gfa_lines.append(f"O\t{REF_SEQ_ID}\t{' '.join(ref_path_elements)}") # Reference path
+    gfa_lines.append(f"P\t{REF_SEQ_ID}\t{','.join(ref_path_elements)}\t*") # Reference path
 
     # Sample paths
     sample1_path = list(ref_path_elements) # Sample 1 follows reference
@@ -195,13 +184,13 @@ def generate_data(ref_length: int, num_features: int, paired_haplotypes: bool, o
         sample2_path[variation_point_idx] = f"{alt_segment_id}+"
 
     if paired_haplotypes:
-        gfa_lines.append(f"O\tsample1_h1\t{' '.join(sample1_path)}")
-        gfa_lines.append(f"O\tsample1_h2\t{' '.join(sample1_path)}") # Both follow ref
-        gfa_lines.append(f"O\tsample2_h1\t{' '.join(sample1_path)}") # H1 follows ref
-        gfa_lines.append(f"O\tsample2_h2\t{' '.join(sample2_path)}") # H2 uses variation
+        gfa_lines.append(f"P\tsample1_h1\t{','.join(sample1_path)}\t*")
+        gfa_lines.append(f"P\tsample1_h2\t{','.join(sample1_path)}\t*") # Both follow ref
+        gfa_lines.append(f"P\tsample2_h1\t{','.join(sample1_path)}\t*") # H1 follows ref
+        gfa_lines.append(f"P\tsample2_h2\t{','.join(sample2_path)}\t*") # H2 uses variation
     else:
-        gfa_lines.append(f"O\tsample1\t{' '.join(sample1_path)}")
-        gfa_lines.append(f"O\tsample2\t{' '.join(sample2_path)}")
+        gfa_lines.append(f"P\tsample1\t{','.join(sample1_path)}\t*")
+        gfa_lines.append(f"P\tsample2\t{','.join(sample2_path)}\t*")
 
 
     # Write GFA file
