@@ -2,36 +2,65 @@ import os
 import pytest
 
 # Define the paths relative to the project root
+# Assumes tests are run from the project root directory
 DATA_DIR = "data"
 GFA_FILE = os.path.join(DATA_DIR, "example.gfa")
 GFF_FILE = os.path.join(DATA_DIR, "example.gff3")
 FASTA_FILE = os.path.join(DATA_DIR, "reference.fasta")
 
+# List of files to check for convenience
+TEST_FILES = [GFA_FILE, GFF_FILE, FASTA_FILE]
+
+# Note: To see the print statements during test execution (even on pass),
+# run pytest with the '-s' flag: pytest -s
+
 def test_data_files_exist():
-    """Check if the basic test data files exist."""
-    assert os.path.exists(GFA_FILE), f"GFA file not found: {GFA_FILE}"
-    assert os.path.exists(GFF_FILE), f"GFF3 file not found: {GFF_FILE}"
-    assert os.path.exists(FASTA_FILE), f"FASTA file not found: {FASTA_FILE}"
+    """Check if the basic test data files exist and report their size."""
+    print("\n--- Checking File Existence and Size ---")
+    all_files_found = True
+    for file_path in TEST_FILES:
+        print(f"Checking: {file_path}")
+        if os.path.exists(file_path):
+            file_size = os.path.getsize(file_path)
+            print(f"  -> Found. Size: {file_size} bytes.")
+            assert True # Technically redundant, but confirms check
+        else:
+            print(f"  -> *** NOT FOUND ***")
+            all_files_found = False
+            # Fail assertion immediately if a file is missing
+            pytest.fail(f"Required data file not found: {file_path}")
 
-def test_can_read_data_files():
-    """Attempt to open and read a small part of each data file."""
-    try:
-        with open(GFA_FILE, 'r') as f:
-            f.readline()
-    except Exception as e:
-        pytest.fail(f"Could not read GFA file {GFA_FILE}: {e}")
+    if not all_files_found:
+         pytest.fail("One or more data files were not found.")
+    print("--- File Existence Check PASSED ---")
 
-    try:
-        with open(GFF_FILE, 'r') as f:
-            f.readline()
-    except Exception as e:
-        pytest.fail(f"Could not read GFF3 file {GFF_FILE}: {e}")
 
-    try:
-        with open(FASTA_FILE, 'r') as f:
-            f.readline()
-    except Exception as e:
-        pytest.fail(f"Could not read FASTA file {FASTA_FILE}: {e}")
+def test_read_and_stat_data_files():
+    """Attempt to open and read each data file, reporting line counts."""
+    print("\n--- Checking File Readability and Stats ---")
+    stats = {}
+    all_files_readable = True
+
+    for file_path in TEST_FILES:
+        print(f"Reading: {file_path}")
+        try:
+            with open(file_path, 'r') as f:
+                lines = f.readlines()
+                line_count = len(lines)
+                stats[file_path] = {'lines': line_count}
+                print(f"  -> Read successful. Lines: {line_count}")
+        except Exception as e:
+            print(f"  -> *** FAILED TO READ ***: {e}")
+            all_files_readable = False
+            # Fail assertion immediately if a file cannot be read
+            pytest.fail(f"Could not read data file {file_path}: {e}")
+
+    if not all_files_readable:
+        pytest.fail("One or more data files could not be read.")
+
+    print("--- File Readability Check PASSED ---")
+    print("Collected File Statistics:", stats)
+
 
 # Future tests could involve actual parsing using relevant libraries
 # def test_parse_gfa():
@@ -45,4 +74,3 @@ def test_can_read_data_files():
 # def test_parse_fasta():
 #     # Add code to parse FASTA_FILE using a FASTA parsing library (e.g., Biopython)
 #     pass
-
