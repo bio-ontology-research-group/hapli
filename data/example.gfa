@@ -3,10 +3,10 @@ S	1	1	A
 S	2	1	T
 S	3	1	C
 S	4	1	G
-S	5	1	X	# Alternative segment for sample2
-E	*	1+	2+	1$	1$	0	0	*
-E	*	2+	3+	1$	1$	0	0	*
-E	*	3+	4+	1$	1$	0	0	*
-E	*	2+	5+	1$	1$	0	0	*	# Link for sample2 variation
+S	5	1	X
+E	*	1+	2+	1	1	0	0	*
+E	*	2+	3+	1	1	0	0	*
+E	*	3+	4+	1	1	0	0	*
+E	*	2+	5+	1	1	0	0	*
 O	sample1	1+ 2+ 3+ 4+
 O	sample2	1+ 2+ 5+ 4+

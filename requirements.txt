@@ -1,6 +1,11 @@
 # Project dependencies
 # Add libraries needed for the tool, e.g.:
 PyYAML # For parsing config.yaml
-# biopython
-# networkx
+pygfa # For GFA parsing/writing (including GFA2)
+bcbio-gff # For parsing GFF3 files
+biopython # For parsing FASTA files and potentially GFF3 structure
+networkx # For building feature relationship graph
+# Add other analysis libraries as needed, e.g.:
+# pandas
+# numpy
 pytest # For running tests
