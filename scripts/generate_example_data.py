@@ -4,6 +4,7 @@ import argparse
 import os
 import random
 import sys
+import subprocess # Added import
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio.SeqFeature import SeqFeature, FeatureLocation
