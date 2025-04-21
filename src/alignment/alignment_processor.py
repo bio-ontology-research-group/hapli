@@ -61,7 +61,10 @@ class AlignmentProcessor:
         self.fasta_parser.parse(reference_fasta)
         
         # Build feature relationship graph
-        features = {f.id: f for f in self.gff_parser._indexed_features.values()}
+        # First call index_features to make sure features are indexed
+        self.gff_parser._index_features()
+        # Then access the indexed features
+        features = {f.id: f for f in self.gff_parser._features.values()}
         self.feature_graph.build_from_features(features)
         
     def extract_path_sequences(self, path_ids: List[str]):

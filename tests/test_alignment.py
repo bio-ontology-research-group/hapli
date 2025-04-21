@@ -321,6 +321,10 @@ class TestAlignmentProcessorWithSyntheticData(unittest.TestCase):
             f.write("S\tseg1\tACGTACGTACGTACGTACGT\n")
             f.write("S\tseg2\tTGCATGCATGCATGCATGCA\n")
             f.write("S\tseg3\tACGTACGTACGTACGTACGT\n")
+            # Add links between segments (required for paths in GFA1)
+            f.write("L\tseg1\t+\tseg2\t+\t0M\n")
+            f.write("L\tseg1\t+\tseg3\t+\t0M\n")
+            # Add paths
             f.write("P\tpath1\tseg1+,seg2+\t*\n")
             f.write("P\tpath2\tseg1+,seg3+\t*\n")
         
