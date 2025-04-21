@@ -63,8 +63,15 @@ class AlignmentProcessor:
         # Build feature relationship graph
         # First call index_features to make sure features are indexed
         self.gff_parser._index_features()
-        # Then access the indexed features
-        features = {f.id: f for f in self.gff_parser._features.values()}
+        
+        # Collect all features using public methods
+        all_types = self.gff_parser.get_all_feature_types()
+        all_features = []
+        for feat_type in all_types:
+            all_features.extend(self.gff_parser.get_features_by_type(feat_type))
+            
+        # Create a dictionary of features by ID
+        features = {f.id: f for f in all_features if hasattr(f, 'id') and f.id}
         self.feature_graph.build_from_features(features)
         
     def extract_path_sequences(self, path_ids: List[str]):
