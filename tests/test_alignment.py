@@ -311,12 +311,12 @@ class TestAlignmentProcessorWithSyntheticData(unittest.TestCase):
         # Create a simple GFF3 with a gene and exons
         with open(self.gff_file, 'w') as f:
             f.write("##gff-version 3\n")
-            f.write("ref_chr1\t.\tgene\t10\t60\t.\t+\t.\tID=gene1;Name=Gene1\n")
-            f.write("ref_chr1\t.\texon\t10\t30\t.\t+\t.\tID=exon1;Parent=gene1\n")
-            f.write("ref_chr1\t.\texon\t40\t60\t.\t+\t.\tID=exon2;Parent=gene1\n")
-            f.write("ref_chr1\t.\tgene\t80\t120\t.\t+\t.\tID=gene2;Name=Gene2\n")
-            f.write("ref_chr1\t.\texon\t80\t100\t.\t+\t.\tID=exon3;Parent=gene2\n")
-            f.write("ref_chr1\t.\texon\t105\t120\t.\t+\t.\tID=exon4;Parent=gene2\n")
+            f.write("ref_chr1\t.\tgene\t10\t60\t.\t+\t.\tID=gene1;Name=Gene1;seqid=ref_chr1\n")
+            f.write("ref_chr1\t.\texon\t10\t30\t.\t+\t.\tID=exon1;Parent=gene1;seqid=ref_chr1\n")
+            f.write("ref_chr1\t.\texon\t40\t60\t.\t+\t.\tID=exon2;Parent=gene1;seqid=ref_chr1\n")
+            f.write("ref_chr1\t.\tgene\t80\t120\t.\t+\t.\tID=gene2;Name=Gene2;seqid=ref_chr1\n")
+            f.write("ref_chr1\t.\texon\t80\t100\t.\t+\t.\tID=exon3;Parent=gene2;seqid=ref_chr1\n")
+            f.write("ref_chr1\t.\texon\t105\t120\t.\t+\t.\tID=exon4;Parent=gene2;seqid=ref_chr1\n")
         
         # Create a simple GFA with paths
         with open(self.gfa_file, 'w') as f:
@@ -404,9 +404,17 @@ class TestAlignmentProcessorWithSyntheticData(unittest.TestCase):
             gene2_alignment.mapq = 50
             gene2_alignment.cigar_str = "40M"
             
-            # Return different alignments for each gene
-            mock_align.side_effect = [[gene1_alignment], [gene2_alignment], 
-                                     [], []]  # No child alignments for simplicity
+            # Return different alignments for each gene and each child
+            # Define side effects to return different values for each call
+            side_effects = [
+                [gene1_alignment],  # First gene
+                [gene2_alignment],  # Second gene
+                [],  # First child (empty for simplicity)
+                []   # Second child (empty for simplicity)
+            ]
+            
+            # Set the side effect
+            mock_align.side_effect = side_effects
             
             # Run the alignment with both genes
             result = self.processor.align_features_to_paths(["path1"], feature_types=["gene"])

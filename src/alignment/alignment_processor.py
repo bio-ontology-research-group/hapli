@@ -238,9 +238,27 @@ class AlignmentProcessor:
             # For each parent feature
             for feature in parent_features:
                 # Get the feature sequence from the reference
-                ref_id = feature.qualifiers.get('seqid', [None])[0]
+                ref_id = None
+                
+                # Try to get the sequence ID from qualifiers
+                if 'seqid' in feature.qualifiers:
+                    ref_id = feature.qualifiers['seqid'][0]
+                # If not in qualifiers, try getting from GFF columns
+                elif hasattr(feature, 'ref'):
+                    ref_id = feature.ref
+                elif hasattr(feature, 'seq_id'):
+                    ref_id = feature.seq_id
+                
+                # If we still don't have a ref_id, try to get from the first field of GFF
+                if not ref_id and hasattr(feature, 'qualifiers'):
+                    # Look at standard GFF columns that might be stored in other qualifiers
+                    for possible_key in ['chromosome', 'ref', 'contig', 'seq']:
+                        if possible_key in feature.qualifiers:
+                            ref_id = feature.qualifiers[possible_key][0]
+                            break
+                
                 if not ref_id:
-                    logger.warning(f"No sequence ID found for feature {feature.id}")
+                    logger.debug(f"No sequence ID found for feature {feature.id}")
                     continue
                     
                 ref_seq = self.fasta_parser.get_sequence(ref_id)
@@ -332,9 +350,27 @@ class AlignmentProcessor:
                             continue
                             
                         # Get the original child sequence from the reference
-                        ref_id = child_feature.qualifiers.get('seqid', [None])[0]
+                        ref_id = None
+                        
+                        # Try to get the sequence ID from qualifiers
+                        if 'seqid' in child_feature.qualifiers:
+                            ref_id = child_feature.qualifiers['seqid'][0]
+                        # If not in qualifiers, try getting from GFF columns
+                        elif hasattr(child_feature, 'ref'):
+                            ref_id = child_feature.ref
+                        elif hasattr(child_feature, 'seq_id'):
+                            ref_id = child_feature.seq_id
+                            
+                        # If we still don't have a ref_id, try to get from the first field of GFF
+                        if not ref_id and hasattr(child_feature, 'qualifiers'):
+                            # Look at standard GFF columns that might be stored in other qualifiers
+                            for possible_key in ['chromosome', 'ref', 'contig', 'seq']:
+                                if possible_key in child_feature.qualifiers:
+                                    ref_id = child_feature.qualifiers[possible_key][0]
+                                    break
+                        
                         if not ref_id:
-                            logger.warning(f"No sequence ID found for feature {child_id}")
+                            logger.debug(f"No sequence ID found for feature {child_id}")
                             continue
                             
                         ref_seq = self.fasta_parser.get_sequence(ref_id)
