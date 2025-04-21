@@ -128,9 +128,12 @@ class TestAlignmentProcessorWithMockData(unittest.TestCase):
             "path2": "ACGTACGTACGTACGTACGT"
         }
         
-        # Mock get_path_segments
-        self.processor.gfa_parser.get_path_segments.return_value = ["seg1", "seg2"]
-        self.processor.gfa_parser.get_segment_sequence.side_effect = lambda seg_id: "ACGT" if seg_id == "seg1" else "ACGT"
+        # Mock the necessary GFA parser methods
+        self.processor.gfa_parser.get_paths.return_value = {
+            "path1": MagicMock(segment_names=["seg1+", "seg2+"]),
+            "path2": MagicMock(segment_names=["seg1+", "seg3+"])
+        }
+        self.processor.gfa_parser.get_segment_sequence.side_effect = lambda seg_id: "ACGT" if seg_id in ["seg1", "seg2", "seg3"] else None
         
         # Mock GFF data
         mock_gene = SeqFeature(

@@ -82,7 +82,27 @@ class AlignmentProcessor:
             path_ids: List of path IDs to extract sequences for
         """
         for path_id in path_ids:
-            segments = self.gfa_parser.get_path_segments(path_id)
+            # Get the path from the GFA
+            paths = self.gfa_parser.get_paths()
+            if path_id not in paths:
+                logger.warning(f"Path {path_id} not found in GFA")
+                continue
+                
+            # Extract segment IDs from the path
+            path = paths[path_id]
+            segments = []
+            
+            # Handle different GFA versions
+            if hasattr(path, 'segment_names'):
+                # GFApy path representation
+                segments = [seg_name.strip('+').strip('-') for seg_name in path.segment_names]
+            elif hasattr(path, 'items'):
+                # Direct access to segment items
+                segments = [item.name.strip('+').strip('-') for item in path.items]
+            else:
+                logger.warning(f"Unknown path format for {path_id}, cannot extract segments")
+                continue
+                
             if not segments:
                 logger.warning(f"No segments found for path {path_id}")
                 continue
@@ -90,7 +110,24 @@ class AlignmentProcessor:
             # Concatenate segment sequences
             path_seq = ""
             for seg_id in segments:
-                seg_seq = self.gfa_parser.get_segment_sequence(seg_id)
+                # Get the segment sequence - handle different possible methods
+                seg_seq = None
+                try:
+                    # Try get_segment_sequence if it exists
+                    if hasattr(self.gfa_parser, 'get_segment_sequence'):
+                        seg_seq = self.gfa_parser.get_segment_sequence(seg_id)
+                    # Try getting the segment and then its sequence
+                    elif hasattr(self.gfa_parser, 'get_segments'):
+                        segments = self.gfa_parser.get_segments()
+                        if seg_id in segments:
+                            seg = segments[seg_id]
+                            if hasattr(seg, 'sequence'):
+                                seg_seq = seg.sequence
+                            elif hasattr(seg, 'seq'):
+                                seg_seq = seg.seq
+                except Exception as e:
+                    logger.warning(f"Error getting sequence for segment {seg_id}: {e}")
+                
                 if seg_seq:
                     path_seq += seg_seq
                 else:
