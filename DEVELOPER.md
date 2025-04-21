@@ -26,8 +26,66 @@ The application uses a dedicated `Config` class (`src/config.py`) to manage conf
     2.  Adding a corresponding `add_argument` call in `_setup_argparser`.
     3.  Adding the parameter key to `REQUIRED_PARAMS` if it's mandatory.
 
-(Detailed explanation of the algorithms, data structures, and design choices used in the *main annotation tool* will go here.)
+### Parsers Module (`src/parsers/`)
 
+The application uses a dedicated parsers module to handle various input file formats:
+
+#### GFA Parser (`src/parsers/gfa_parser.py`)
+
+* Uses the PyGFA library to parse Graphical Fragment Assembly (GFA) files
+* Handles both GFA1 and GFA2 formats
+* Provides methods to access segments, paths, and sequences
+
+#### GFF3 Parser (`src/parsers/gff_parser.py`)
+
+* Uses Biopython's BCBio.GFF module to parse GFF3 annotation files
+* Indexes features by ID and type for quick lookup
+* Provides methods to retrieve features by ID or type
+
+#### FASTA Parser (`src/parsers/fasta_parser.py`)
+
+* Uses Biopython's Bio.SeqIO module to parse FASTA sequence files
+* Provides methods to retrieve sequences by ID
+* Includes utility methods for sequence manipulation
+
+#### Feature Relationship Graph (`src/parsers/feature_graph.py`)
+
+* Creates a directed graph of parent-child relationships between features
+* Uses NetworkX for the graph structure
+* Provides methods to access ancestors, descendants, and orphaned features
+* Handles the hierarchical nature of genomic features (e.g., gene → mRNA → exon)
+
+## Code Organization
+
+The codebase is organized into the following structure:
+
+```
+src/
+├── config.py          # Configuration management
+├── parsers/           # Input file parsers
+│   ├── __init__.py
+│   ├── gfa_parser.py  # GFA file parser
+│   ├── gff_parser.py  # GFF3 file parser
+│   ├── fasta_parser.py  # FASTA file parser
+│   └── feature_graph.py  # Feature relationship graph
+├── ...
+```
+
+## Testing
+
+Each module has corresponding unit tests in the `tests/` directory:
+
+* `tests/test_config.py` - Tests for configuration management
+* `tests/test_gfa_parser.py` - Tests for GFA parsing
+* `tests/test_gff_parser.py` - Tests for GFF3 parsing
+* `tests/test_fasta_parser.py` - Tests for FASTA parsing
+* `tests/test_feature_graph.py` - Tests for feature relationship graphs
+
+Run the tests using:
+
+```bash
+python -m unittest discover tests
+```
 
 ## Contributing
 

@@ -1,6 +1,6 @@
 # Project dependencies
 PyYAML
-gfapy
+pygfa
 bcbio-gff
 biopython
 networkx
