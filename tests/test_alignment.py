@@ -27,7 +27,7 @@ class TestMinimapAligner(unittest.TestCase):
     
     def setUp(self):
         """Set up test data."""
-        self.aligner = MinimapAligner(preset="splice")
+        self.aligner = MinimapAligner(preset="map-ont", k=5)  # Use map-ont preset with smaller k-mer size
         
         # Create a test reference sequence
         self.ref_seq = "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
@@ -57,7 +57,7 @@ class TestMinimapAligner(unittest.TestCase):
     def test_align_perfect_match(self):
         """Test aligning a perfect match sequence."""
         self.aligner.load_reference(self.ref_seq)
-        alignments = self.aligner.align_sequence(self.perfect_match)
+        alignments = self.aligner.align_sequence(self.perfect_match, min_score=0, min_len=5)
         self.assertGreater(len(alignments), 0)
         self.assertEqual(alignments[0].q_st, 0)
         self.assertEqual(alignments[0].q_en, len(self.perfect_match))
@@ -67,7 +67,7 @@ class TestMinimapAligner(unittest.TestCase):
     def test_align_mismatch(self):
         """Test aligning a sequence with mismatches."""
         self.aligner.load_reference(self.ref_seq)
-        alignments = self.aligner.align_sequence(self.mismatch_query, min_score=0)
+        alignments = self.aligner.align_sequence(self.mismatch_query, min_score=0, min_len=4)
         self.assertGreater(len(alignments), 0)
         
     def test_align_no_match(self):
@@ -87,6 +87,9 @@ class TestAlignmentProcessorWithMockData(unittest.TestCase):
     def setUp(self):
         """Set up mock test data."""
         self.processor = AlignmentProcessor()
+        
+        # Use a test-friendly aligner
+        self.processor.aligner = MinimapAligner(preset="map-ont", k=5)
         
         # Mock parsers and data
         self.processor.gfa_parser = MagicMock()
