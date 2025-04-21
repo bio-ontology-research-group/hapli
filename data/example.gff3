@@ -1,0 +1,4 @@
+##gff-version 3
+seq1	RefSeq	gene	1	4	.	+	.	ID=gene_1;Name=ExampleGene
+seq1	RefSeq	exon	1	2	.	+	.	ID=exon_1a;Parent=gene_1
+seq1	RefSeq	exon	3	4	.	+	.	ID=exon_1b;Parent=gene_1

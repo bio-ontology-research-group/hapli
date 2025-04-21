@@ -1,0 +1,12 @@
+H	VN:Z:1.0
+S	1	A	LN:i:1
+S	2	T	LN:i:1
+S	3	C	LN:i:1
+S	4	G	LN:i:1
+S	5	X	LN:i:1 # Alternative segment for sample2
+L	1	+	2	+	0M
+L	2	+	3	+	0M
+L	3	+	4	+	0M
+L	2	+	5	+	0M # Link for sample2 variation
+P	sample1	1+,2+,3+,4+	1M,1M,1M,1M
+P	sample2	1+,2+,5+,4+	1M,1M,1M,1M
