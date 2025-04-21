@@ -1,1 +1,7 @@
-pip install -r requirements.txt
+# Project dependencies
+PyYAML
+gfapy
+bcbio-gff
+biopython
+networkx
+pytest
