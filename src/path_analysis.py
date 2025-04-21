@@ -17,12 +17,13 @@ class PathAnalyzer:
     """
     
     # Common naming patterns for haplotypes in GFA paths
+    # Format: (pattern, sample_group_index, haplotype_group_index)
     HAPLOTYPE_PATTERNS = [
-        r'(.+)_hap(\d+)',  # sample_hap1, sample_hap2
-        r'(.+)_h(\d+)',     # sample_h1, sample_h2
-        r'(.+)[._](\d+)',   # sample.1, sample.2, sample_1, sample_2
-        r'hap(\d+)_(.+)',   # hap1_sample, hap2_sample
-        r'h(\d+)_(.+)',     # h1_sample, h2_sample
+        (r'(.+)_hap(\d+)', 1, 2),  # sample_hap1, sample_hap2
+        (r'(.+)_h(\d+)', 1, 2),     # sample_h1, sample_h2
+        (r'(.+)[._](\d+)', 1, 2),   # sample.1, sample.2, sample_1, sample_2
+        (r'hap(\d+)_(.+)', 2, 1),   # hap1_sample, hap2_sample
+        (r'h(\d+)_(.+)', 2, 1),     # h1_sample, h2_sample
     ]
     
     def __init__(self):
@@ -54,13 +55,13 @@ class PathAnalyzer:
             Dictionary mapping path IDs to path objects
         """
         paths = {}
-        if hasattr(self.gfa, 'paths'):
-            for path_id, path in self.gfa.paths.items():
-                paths[path_id] = path
-        elif hasattr(self.gfa, 'ordered_groups'):
+        
+        # Handle different GFA versions and edge cases
+        if hasattr(self.gfa, 'paths') and self.gfa.paths:
+            paths.update(self.gfa.paths)
+        elif hasattr(self.gfa, 'ordered_groups') and self.gfa.ordered_groups:
             # GFA2 uses ordered groups (O lines) for paths
-            for path_id, o_group in self.gfa.ordered_groups.items():
-                paths[path_id] = o_group
+            paths.update(self.gfa.ordered_groups)
         
         logger.info(f"Extracted {len(paths)} paths from GFA")
         return paths
@@ -97,19 +98,19 @@ class PathAnalyzer:
             The extracted sample name, or the original path_id if no pattern matches
         """
         # Check for haplotype patterns
-        for pattern in self.HAPLOTYPE_PATTERNS:
+        for pattern, sample_group, _ in self.HAPLOTYPE_PATTERNS:
             match = re.match(pattern, path_id)
             if match:
-                # Different patterns have sample name in different groups
-                if match.group(1).startswith('hap') or match.group(1).startswith('h'):
-                    return match.group(2)  # For patterns like hap1_sample
-                return match.group(1)  # For patterns like sample_hap1
+                return match.group(sample_group)
         
         # Check if there's metadata in the path that indicates the sample
         if hasattr(self.paths[path_id], 'get_tag'):
-            sample_tag = self.paths[path_id].get_tag('SM')
-            if sample_tag:
-                return sample_tag
+            try:
+                sample_tag = self.paths[path_id].get_tag('SM')
+                if sample_tag:
+                    return sample_tag
+            except (AttributeError, ValueError):
+                pass  # In case get_tag raises an exception
         
         # If no pattern matches, use the whole path_id as the sample name
         # (meaning it's its own group)
@@ -145,18 +146,19 @@ class PathAnalyzer:
         Returns:
             The haplotype identifier, or '1' if none is found
         """
-        for pattern in self.HAPLOTYPE_PATTERNS:
+        for pattern, _, haplotype_group in self.HAPLOTYPE_PATTERNS:
             match = re.match(pattern, path_id)
             if match:
-                if match.group(1).startswith('hap') or match.group(1).startswith('h'):
-                    return match.group(1).replace('hap', '').replace('h', '')
-                return match.group(2)
+                return match.group(haplotype_group)
                 
         # Check if there's metadata in the path that indicates the haplotype
         if hasattr(self.paths[path_id], 'get_tag'):
-            hap_tag = self.paths[path_id].get_tag('HP')
-            if hap_tag:
-                return hap_tag
+            try:
+                hap_tag = self.paths[path_id].get_tag('HP')
+                if hap_tag:
+                    return hap_tag
+            except (AttributeError, ValueError):
+                pass  # In case get_tag raises an exception
                 
         # Default to haplotype '1' if we can't extract a specific ID
         return '1'
