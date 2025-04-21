@@ -124,7 +124,8 @@ def generate_data(ref_length: int, num_features: int, paired_haplotypes: bool, o
     # 3. Generate GFA2 using gfapy
     print(f"  Generating GFA2: {gfa_path}")
     gfa = gfapy.Gfa()
-    gfa.add_version_header(version="2.0") # Explicitly add GFA2 header
+    # gfa.add_version_header(version="2.0") # Incorrect method
+    gfa.add_line("H\tVN:Z:2.0") # Correct way to add header
 
     # Create segments based on reference, introducing a variation point
     num_segments = (ref_length + SEGMENT_LEN - 1) // SEGMENT_LEN
