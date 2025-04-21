@@ -79,8 +79,15 @@ class TestPathAnalysis(unittest.TestCase):
         for path_id, path in self.mock_paths.items():
             path.segment_names = [f"seg1_{path_id}", f"seg2_{path_id}", f"seg3_{path_id}"]
         
+        # Make mock_paths behave like a dictionary with items() method
+        mock_paths_dict = self.mock_paths.copy()
+        
+        # Create a mock paths attribute that has an items method
+        paths_mock = MagicMock()
+        paths_mock.items.return_value = mock_paths_dict.items()
+        
         # Assign the mock paths to the mock GFA object
-        self.mock_gfa.paths = self.mock_paths
+        self.mock_gfa.paths = paths_mock
     
     def tearDown(self):
         """Clean up test fixtures."""
@@ -245,6 +252,16 @@ class TestPathAnalysis(unittest.TestCase):
         # Select paths for specific haplotypes
         mock_selected_paths = self.analyzer.select_paths(haplotype_ids=['1'])
         
+        # First verify that all expected paths are correctly grouped
+        path_groups = self.analyzer.path_groups
+        haplotype_groups = self.analyzer.haplotype_groups
+        
+        # All expected paths should exist in the haplotype groups
+        all_expected_ids = {'sample1_h1', 'sample2_h1', 'sample3.1', 'hap1_sample4', 'ref_chr1', 'complex_name_with_no_pattern'}
+        for path_id in all_expected_ids:
+            sample_name = self.analyzer._extract_sample_name(path_id)
+            self.assertIn(path_id, path_groups[sample_name])
+        
         # Check that only haplotype 1 paths are selected
         expected_paths = {'sample1_h1', 'sample2_h1', 'sample3.1', 'hap1_sample4', 'ref_chr1', 'complex_name_with_no_pattern'}
         self.assertEqual(set(mock_selected_paths), expected_paths)
@@ -336,19 +353,18 @@ class TestPathAnalysis(unittest.TestCase):
     
     def test_edge_case_single_path(self):
         """Test with a GFA that has only a single path."""
-        # Create a mock GFA with a single path (setting up as a dict with items method)
+        # Create a mock GFA with a single path
         single_path_gfa = MagicMock()
         mock_path = MagicMock()
         mock_path.segment_names = ['seg1', 'seg2', 'seg3']
         
-        # Set up paths as a mock dictionary with items() method that returns a list of tuples
+        # Set up paths as a proper mock with items method
         mock_paths_dict = {'ref_chr1': mock_path}
+        paths_mock = MagicMock()
+        paths_mock.items.return_value = mock_paths_dict.items()
         
-        def mock_items():
-            return mock_paths_dict.items()
-            
-        single_path_gfa.paths = MagicMock()
-        single_path_gfa.paths.items = mock_items
+        # Assign the properly mocked paths object
+        single_path_gfa.paths = paths_mock
         
         # Analyze the paths
         self.analyzer.load_gfa(single_path_gfa)
@@ -356,6 +372,7 @@ class TestPathAnalysis(unittest.TestCase):
         
         # Check that we have only one group
         self.assertEqual(len(sample_groups), 1)
+        self.assertIn('ref_chr1', sample_groups)
         self.assertEqual(sample_groups['ref_chr1'], ['ref_chr1'])
     
     def test_edge_case_no_paths(self):
