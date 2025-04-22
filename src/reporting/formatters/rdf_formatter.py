@@ -13,7 +13,7 @@ from datetime import datetime
 import uuid
 
 import rdflib
-from rdflib import Graph, Literal, URIRef, Namespace, BNode
+from rdflib import Graph, Dataset, Literal, URIRef, Namespace, BNode
 from rdflib.namespace import RDF, RDFS, XSD, DC, DCTERMS
 from pyshex import ShExEvaluator
 
@@ -66,8 +66,8 @@ class RDFFormatter:
         # Ensure directory exists
         os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
         
-        # Create RDF graph
-        g = Graph()
+        # Create RDF graph (using Dataset instead of Graph to avoid deprecation warnings)
+        g = Dataset() if rdf_format == 'json-ld' else Graph()
         
         # Bind namespaces
         g.bind('haplo', HAPLO)
@@ -205,8 +205,8 @@ class RDFFormatter:
         # Ensure directory exists
         os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
         
-        # Create RDF graph
-        g = Graph()
+        # Create RDF graph (using Dataset instead of Graph to avoid deprecation warnings)
+        g = Dataset() if rdf_format == 'json-ld' else Graph()
         
         # Bind namespaces
         g.bind('haplo', HAPLO)
@@ -336,8 +336,8 @@ class RDFFormatter:
             True if validation succeeded, False otherwise
         """
         try:
-            # Load RDF data
-            g = Graph()
+            # Load RDF data (using Dataset to avoid deprecation warnings)
+            g = Dataset()
             g.parse(rdf_file)
             
             # Find report node(s)
