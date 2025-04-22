@@ -267,7 +267,8 @@ intermediate_dir: {self.intermediate_dir}
                 # Note: The logger might write to stderr by default if basicConfig is used
                 # Or check logger output if handlers are configured differently
                 # Let's assume basicConfig's default stderr handler is active
-                self.assertIn("Unexpected error: Test runtime error", log_output)
+                # Updated assertion to match the actual log format
+                self.assertIn("An unexpected error occurred during the pipeline execution: Test runtime error", log_output)
 
 
     def test_intermediate_data_saving(self):
