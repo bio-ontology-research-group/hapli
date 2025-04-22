@@ -350,6 +350,9 @@ def create_workflow(args):
         outputs=[reference_gfa]
     ))
     
+    # Define consistent sample IDs to use across all VCF downloads
+    sample_ids = ["NA12878", "NA12891", "NA12892"]  # Common trio samples from 1000 Genomes
+    
     # Step 4: Download VCF files
     vcf_dir = os.path.join(args.output_dir, "vcf")
     # We can't predict the exact filenames, so we'll just check the directory
@@ -362,8 +365,9 @@ def create_workflow(args):
             "--phased", str(args.phased_vcfs),
             "--unphased", str(args.unphased_vcfs),
             "--extract",
-            "--force-unphased"  # Force download of unphased VCFs
-        ],
+            "--force-unphased",  # Force download of unphased VCFs
+            "--sample-ids"
+        ] + sample_ids,
         outputs=[vcf_dir]  # Just check if the directory exists
     ))
     
@@ -377,9 +381,8 @@ def create_workflow(args):
         args=[
             "--output-dir", sv_dir,
             "--samples", "3",  # Download for 3 samples
-            "--sample-ids", "NA12878", "NA12891", "NA12892",  # Prefer these samples if available
-            "--extract"
-        ],
+            "--sample-ids"
+        ] + sample_ids,  # Use the same samples as regular VCFs
         outputs=[sv_dir]  # Just check if the directory exists
     ))
     
