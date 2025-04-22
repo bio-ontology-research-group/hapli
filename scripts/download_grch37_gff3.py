@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Downloads GRCh37 GFF3 annotation files from Ensembl (Release 75).
+Downloads GRCh37 GFF3 annotation files from Ensembl (Release 113, Build 87 annotations).
+Currently downloads only chromosome 22.
 """
 
 import argparse
@@ -18,10 +19,11 @@ from urllib.parse import urlparse
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Ensembl Release 75 (GRCh37)
-ENSEMBL_BASE_URL = "http://ftp.ensembl.org/pub/release-75/gff3/homo_sapiens/"
-GFF3_FILENAME_GZ = "Homo_sapiens.GRCh37.75.gff3.gz"
-GFF3_FILENAME = "Homo_sapiens.GRCh37.75.gff3"
+# Ensembl Release 113 (GRCh37, Build 87 annotations) - Chromosome 22 specific
+ENSEMBL_BASE_URL = "http://ftp.ensembl.org/pub/grch37/release-113/gff3/homo_sapiens/"
+# TODO: Add argument to specify chromosome if needed later
+GFF3_FILENAME_GZ = "Homo_sapiens.GRCh37.87.chromosome.22.gff3.gz"
+GFF3_FILENAME = "Homo_sapiens.GRCh37.87.chromosome.22.gff3"
 
 def download_file_with_progress(url: str, output_path: Path):
     """Downloads a file from HTTP/FTP with a progress bar."""
@@ -92,7 +94,7 @@ def extract_gzip(gzip_path: Path, output_path: Path, remove_gz: bool = True):
         return False
 
 def main():
-    parser = argparse.ArgumentParser(description="Download GRCh37 GFF3 annotation from Ensembl Release 75.")
+    parser = argparse.ArgumentParser(description=f"Download GRCh37 GFF3 annotation for Chromosome 22 from Ensembl Release 113.")
     parser.add_argument('--output-dir', '-o', required=True, help='Directory to save the downloaded GFF3 file.')
     parser.add_argument('--extract', action='store_true', help='Extract the downloaded GFF3 file.')
     parser.add_argument('--skip-existing', action='store_true', help='Skip download/extraction if final file exists.')

@@ -781,8 +781,9 @@ def create_workflow(args):
         "reference_fasta_gz": str(ref_dir / "hs37d5.fa.gz"), # Path to downloaded gz
         "reference_fasta": str(ref_dir / "hs37d5.fa"),      # Path to extracted fa
         "reference_fai": str(ref_dir / "hs37d5.fa.fai"),    # Path to index
-        "annotation_file_gz": str(annot_dir / "Homo_sapiens.GRCh37.75.gff3.gz"), # Path to downloaded gz
-        "annotation_file": str(annot_dir / "Homo_sapiens.GRCh37.75.gff3"),     # Path to extracted gff3
+        # Updated GFF3 filenames
+        "annotation_file_gz": str(annot_dir / "Homo_sapiens.GRCh37.87.chromosome.22.gff3.gz"),
+        "annotation_file": str(annot_dir / "Homo_sapiens.GRCh37.87.chromosome.22.gff3"),
         "vcf_files_phased": [], # To be populated by download step
         "vcf_files_unphased": [], # To be populated by download step
         "all_vcf_files": [], # Combined list
@@ -813,17 +814,18 @@ def create_workflow(args):
         outputs=[workflow.context["reference_fasta"], workflow.context["reference_fai"]],
     ))
 
-    # --- Step 2: Download Annotation (GRCh37 GFF3) ---
+    # --- Step 2: Download Annotation (GRCh37 GFF3 - Chr22) ---
+    # Updated description and outputs list
     workflow.add_step(PythonScriptStep(
         name="download_annotation",
-        description="Download GRCh37 GFF3 annotation file.",
+        description="Download GRCh37 GFF3 annotation file (Chr 22).",
         script_path="scripts/download_grch37_gff3.py",
         args=[
             "--output-dir", "{annot_dir}",
             "--extract", # Always extract for downstream use
             "--skip-existing" if args.skip_existing else ""
         ],
-        outputs=[workflow.context["annotation_file"]],
+        outputs=[workflow.context["annotation_file"]], # Expect only the extracted file
     ))
 
     # --- Step 3: Download VCF files (Phased and Unphased) ---
