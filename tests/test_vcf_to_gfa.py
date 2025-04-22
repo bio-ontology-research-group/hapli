@@ -20,6 +20,7 @@ try:
     import gfapy
     from src.converters.vcf_to_gfa import VCFtoGFAConverter, VCFtoGFAConversionError
     from src.converters.reference_handler import ReferenceHandler, ReferenceHandlerError
+    from src.converters.phasing_processor import PhasingError # Added import
     dependencies_installed = True
 except ImportError as e:
     print(f"Skipping VCF->GFA tests: Missing dependencies - {e}")

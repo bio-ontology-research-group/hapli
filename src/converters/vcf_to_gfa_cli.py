@@ -6,6 +6,7 @@ import os
 import time
 from .vcf_to_gfa import VCFtoGFAConverter, VCFtoGFAConversionError
 from .reference_handler import ReferenceHandlerError # Import specific error
+from .phasing_processor import PhasingError # Added import
 
 # Setup basic logging config (can be overridden by args)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')

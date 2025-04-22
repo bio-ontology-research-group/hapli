@@ -1,6 +1,7 @@
 # src/converters/vcf_to_gfa.py
 import logging
 import itertools
+import os  # Added import
 from typing import Dict, List, Optional, Tuple, Any
 import pysam
 import gfapy
