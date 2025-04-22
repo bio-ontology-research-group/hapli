@@ -115,10 +115,27 @@ class PathAnalyzer:
         
         # Try direct line access (in case the GFA object is storing lines differently)
         if not paths and hasattr(self.gfa, 'line'):
-            for line_id, line in self.gfa.line.items():
-                if line_id.startswith('P'):
-                    if hasattr(line, 'name'):
-                        paths[line.name] = line
+            # Check if line is a dictionary or a function
+            if callable(self.gfa.line):
+                # If it's a function, we may need to call it to get lines
+                try:
+                    lines = self.gfa.line()
+                    if isinstance(lines, dict):
+                        for line_id, line in lines.items():
+                            if line_id.startswith('P'):
+                                if hasattr(line, 'name'):
+                                    paths[line.name] = line
+                except Exception as e:
+                    logger.debug(f"Error accessing line function: {e}")
+            else:
+                # If it's a dictionary-like object
+                try:
+                    for line_id, line in self.gfa.line.items():
+                        if line_id.startswith('P'):
+                            if hasattr(line, 'name'):
+                                paths[line.name] = line
+                except Exception as e:
+                    logger.debug(f"Error iterating through lines: {e}")
         
         # Try direct access to path segments in case paths are stored differently
         if not paths and hasattr(self.gfa, 'segment'):
