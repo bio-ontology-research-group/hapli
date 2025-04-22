@@ -287,23 +287,9 @@ class VCFtoGFAConverter:
         try:
             # Add GFA header (optional but recommended)
             # Using GFA1 for broader compatibility unless GFA2 features are needed
-            # --- Start Change: Create Header then set tag ---
+            # Just create a simple header without any tags
             header_line = gfapy.line.Header()
-            # Set the Version tag (VN) with type 'Z' (string)
-            # Assuming set_tag exists and takes value and optional datatype
-            try:
-                 header_line.set_tag("VN", "1.0", datatype="Z")
-            except AttributeError:
-                 logger.error("Failed to set VN tag on Header line. Does gfapy.line.Header have a 'set_tag' method?")
-                 # If set_tag doesn't exist, maybe direct attribute access? (Less likely)
-                 # header_line.VN = ("Z", "1.0") # Example guess
-                 raise VCFtoGFAConversionError("Could not set GFA Header VN tag.")
-            except Exception as e:
-                 logger.error(f"Error setting VN tag on Header line: {e}")
-                 raise VCFtoGFAConversionError(f"Could not set GFA Header VN tag: {e}") from e
-
             self._gfa.add_line(header_line)
-            # --- End Change ---
 
             # Determine contigs to process
             contigs_to_process = []
