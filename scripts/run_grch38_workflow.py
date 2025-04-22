@@ -189,12 +189,18 @@ class WorkflowManager:
     def _save_state(self):
         """Save the current state to the state file."""
         try:
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(self.state_file_path), exist_ok=True)
+            # Handle case where state_file_path might be just a filename without directory
+            if os.path.dirname(self.state_file_path) == '':
+                # No directory specified, save in current directory
+                path_to_save = os.path.join(os.getcwd(), self.state_file_path)
+            else:
+                path_to_save = self.state_file_path
+                # Create directory if it doesn't exist
+                os.makedirs(os.path.dirname(path_to_save), exist_ok=True)
             
-            with open(self.state_file_path, 'w') as f:
+            with open(path_to_save, 'w') as f:
                 json.dump(self.state, f, indent=2)
-            logger.info(f"Saved workflow state to {self.state_file_path}")
+            logger.info(f"Saved workflow state to {path_to_save}")
         except Exception as e:
             logger.error(f"Error saving state file: {e}")
     
@@ -291,6 +297,11 @@ def create_workflow(args):
     
     # Step 1: Download GRCh38 reference
     reference_dir = os.path.join(args.output_dir, "reference")
+    reference_gz_file = os.path.join(reference_dir, 
+                                   "Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz" 
+                                   if args.source == "ensembl" else
+                                   "GCA_000001405.15_GRCh38_no_alt_analysis_set.fna.gz")
+    
     reference_file = os.path.join(reference_dir, 
                                  "Homo_sapiens.GRCh38.dna.primary_assembly.fa" 
                                  if args.source == "ensembl" else
@@ -301,12 +312,20 @@ def create_workflow(args):
         description="Download GRCh38 reference genome",
         script_path="scripts/download_grch38.py",
         args=["--output-dir", reference_dir, "--extract", "--source", args.source],
-        outputs=[reference_file]
+        outputs=[reference_file, reference_gz_file]  # Add both files as potential outputs
     ))
     
     # Step 2: Download GFF3 annotation
     annotation_dir = os.path.join(args.output_dir, "annotation")
-    gff3_file = os.path.join(annotation_dir, 
+    # Define both compressed and extracted filenames
+    gff3_gz_file = os.path.join(annotation_dir, 
+                              "Homo_sapiens.GRCh38.109.gff3.gz" 
+                              if args.source == "ensembl" else
+                              "GCA_000001405.15_GRCh38_genomic.gff.gz"
+                              if args.source == "ncbi" else
+                              "gencode.v44.annotation.gff3.gz")
+    
+    gff3_file = os.path.join(annotation_dir,
                             "Homo_sapiens.GRCh38.109.gff3" 
                             if args.source == "ensembl" else
                             "GCA_000001405.15_GRCh38_genomic.gff"
@@ -318,7 +337,7 @@ def create_workflow(args):
         description="Download GFF3 annotation",
         script_path="scripts/download_grch38_gff3.py",
         args=["--output-dir", annotation_dir, "--extract", "--source", args.source],
-        outputs=[gff3_file]
+        outputs=[gff3_file, gff3_gz_file]  # Add both files as potential outputs
     ))
     
     # Step 3: Convert reference to GFA
