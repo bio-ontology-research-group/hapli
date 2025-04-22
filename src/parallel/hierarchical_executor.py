@@ -190,20 +190,24 @@ class HierarchicalExecutor:
                 def execute_with_deps():
                     # For tasks that expect dependency results, they should be passed as parameters
                     # with the same name as in the lambda definition
-                    # For tests that specifically expect dep_X parameters, prepare them
                     task_kwargs = task.kwargs.copy() if task.kwargs else {}
                     
                     # Only add dependency results for parameters that match the function signature
-                    import inspect
-                    sig = inspect.signature(task.func)
+                    try:
+                        import inspect
+                        sig = inspect.signature(task.func)
+                        
+                        # Check if the function expects specific parameters for dependencies
+                        for dep_id in task.dependencies:
+                            param_name = f"dep_{dep_id}"
+                            if param_name in sig.parameters:
+                                task_kwargs[param_name] = self.results[dep_id]
+                    except (ValueError, TypeError):
+                        # Some lambdas might not have inspectable signatures
+                        # In this case, don't pass any dependency results
+                        pass
                     
-                    # Check if the function expects specific parameters for dependencies
-                    for dep_id in task.dependencies:
-                        param_name = f"dep_{dep_id}"
-                        if param_name in sig.parameters:
-                            task_kwargs[param_name] = self.results[dep_id]
-                    
-                    # Execute the function with its original args and possibly updated kwargs
+                    # Execute the function with its original args and kwargs
                     return task.func(*task.args, **task_kwargs)
                 
                 # Submit the wrapper function that handles dependencies appropriately
