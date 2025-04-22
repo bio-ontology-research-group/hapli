@@ -377,6 +377,7 @@ def create_workflow(args):
         args=[
             "--output-dir", sv_dir,
             "--samples", "3",  # Download for 3 samples
+            "--sample-ids", "NA12878", "NA12891", "NA12892",  # Prefer these samples if available
             "--extract"
         ],
         outputs=[sv_dir]  # Just check if the directory exists

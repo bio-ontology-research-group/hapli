@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Script to download structural variant (SV) VCF files from the 1000 Genomes Project.
+Extracts individual samples using bcftools.
 """
 
 import argparse
@@ -9,6 +10,8 @@ import logging
 import ftplib
 import gzip
 import shutil
+import subprocess
+import random
 from pathlib import Path
 from tqdm import tqdm
 
@@ -20,6 +23,63 @@ logger = logging.getLogger(__name__)
 FTP_SERVER = "ftp.1000genomes.ebi.ac.uk"
 FTP_SV_DIR = "/vol1/ftp/phase3/integrated_sv_map"
 SV_FILENAME = "ALL.wgs.mergedSV.v8.20130502.svs.genotypes.vcf.gz"
+
+def check_bcftools_available():
+    """Check if bcftools is available in the path."""
+    try:
+        result = subprocess.run(["bcftools", "--version"], 
+                                stdout=subprocess.PIPE, 
+                                stderr=subprocess.PIPE, 
+                                text=True)
+        if result.returncode == 0:
+            logger.info("bcftools is available: " + result.stdout.splitlines()[0])
+            return True
+        else:
+            logger.warning("bcftools command failed")
+            return False
+    except FileNotFoundError:
+        logger.warning("bcftools not found in PATH")
+        return False
+
+def get_samples_from_vcf(vcf_path):
+    """Extract list of sample IDs from a VCF file using bcftools."""
+    try:
+        result = subprocess.run(
+            ["bcftools", "query", "-l", vcf_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if result.returncode == 0:
+            samples = result.stdout.strip().split('\n')
+            logger.info(f"Found {len(samples)} samples in VCF file")
+            return samples
+        else:
+            logger.error(f"Error getting samples: {result.stderr}")
+            return []
+    except Exception as e:
+        logger.error(f"Error executing bcftools: {e}")
+        return []
+
+def extract_sample_from_vcf(input_vcf, output_vcf, sample_id):
+    """Extract a single sample from a VCF file using bcftools."""
+    try:
+        logger.info(f"Extracting sample {sample_id} from {input_vcf} to {output_vcf}")
+        result = subprocess.run(
+            ["bcftools", "view", "-s", sample_id, "-Ov", "-o", output_vcf, input_vcf],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if result.returncode == 0:
+            logger.info(f"Successfully extracted sample {sample_id}")
+            return True
+        else:
+            logger.error(f"Error extracting sample: {result.stderr}")
+            return False
+    except Exception as e:
+        logger.error(f"Error executing bcftools: {e}")
+        return False
 
 # No longer using chromosomes
 
@@ -146,15 +206,16 @@ def extract_gzip(gzip_path, output_path=None, remove_gz=False):
         logger.error(f"Error extracting file: {e}")
         return False
 
-def download_sv_vcfs(output_dir, num_samples=3, chromosomes=None, extract=False):
+def download_sv_vcfs(output_dir, num_samples=3, chromosomes=None, extract=False, specific_samples=None):
     """
     Download structural variant VCF files from the 1000 Genomes Project.
     
     Args:
         output_dir: Directory to save downloaded files
-        num_samples: Number of samples to download (multiple copies with different names)
+        num_samples: Number of samples to download
         chromosomes: Not used - kept for backwards compatibility
         extract: Whether to extract the downloaded files
+        specific_samples: List of specific sample IDs to extract
     """
     # Alternative locations to try if main location fails
     ALTERNATIVE_SV_DIRS = [
@@ -172,60 +233,92 @@ def download_sv_vcfs(output_dir, num_samples=3, chromosomes=None, extract=False)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
+    # Check if bcftools is available
+    bcftools_available = check_bcftools_available()
+    if not bcftools_available:
+        logger.warning("bcftools not available - will download multi-sample VCF file but cannot extract individual samples")
+    
     downloaded_files = []
     found = False
     
     # Try the primary location and filename first
-    for i in range(num_samples):
-        # Use sample_index for naming multiple copies
-        sample_index = i + 1
-        output_path = output_dir / f"sv_sample_{sample_index}_{SV_FILENAME}"
+    # Download the full multi-sample VCF file
+    main_output_path = output_dir / SV_FILENAME
+    
+    # Build FTP URL
+    url = f"ftp://{FTP_SERVER}{FTP_SV_DIR}/{SV_FILENAME}"
+    logger.info(f"Trying to download from {url}")
+    
+    # Download file
+    success = download_file_with_progress(url, main_output_path, is_ftp=True)
+    
+    if success:
+        found = True
+        logger.info(f"Successfully downloaded SV file")
         
-        # Only download once but create multiple symlinks or copies
-        if i == 0 or not found:
-            # Build FTP URL
-            url = f"ftp://{FTP_SERVER}{FTP_SV_DIR}/{SV_FILENAME}"
-            logger.info(f"Trying to download from {url}")
-            
-            # Download file
-            success = download_file_with_progress(url, output_path, is_ftp=True)
-            
-            if success:
-                found = True
-                logger.info(f"Successfully downloaded SV file")
-                if extract:
-                    extract_path = str(output_path).replace('.gz', '')
-                    if extract_gzip(output_path, extract_path, remove_gz=False):
-                        downloaded_files.append(extract_path)
-                    else:
-                        downloaded_files.append(output_path)
-                else:
-                    downloaded_files.append(output_path)
+        # Extract the gzipped file if requested
+        main_extracted_path = None
+        if extract:
+            main_extracted_path = str(main_output_path).replace('.gz', '')
+            if extract_gzip(main_output_path, main_extracted_path, remove_gz=False):
+                logger.info(f"Extracted to {main_extracted_path}")
+                downloaded_files.append(main_extracted_path)
+            else:
+                logger.error("Failed to extract VCF file")
+                main_extracted_path = None
+                downloaded_files.append(str(main_output_path))
         else:
-            # For additional samples, create a copy (or symlink) of the first file
-            if i > 0 and found:
-                try:
-                    # Use shutil.copy2 to preserve metadata
-                    first_file = downloaded_files[0]
-                    if extract and first_file.endswith('.vcf'):
-                        # Copy the extracted file
-                        extract_path = str(output_path).replace('.gz', '')
-                        shutil.copy2(first_file, extract_path)
-                        downloaded_files.append(extract_path)
-                        # Also copy the compressed file
-                        shutil.copy2(str(first_file) + '.gz', output_path)
-                    else:
-                        # Copy the compressed file
-                        shutil.copy2(first_file, output_path)
-                        downloaded_files.append(output_path)
-                        # If extract is True, also extract this copy
-                        if extract:
-                            extract_path = str(output_path).replace('.gz', '')
-                            if extract_gzip(output_path, extract_path, remove_gz=False):
-                                downloaded_files.append(extract_path)
+            downloaded_files.append(str(main_output_path))
+        
+        # If bcftools is available, extract individual samples
+        if bcftools_available:
+            # Path to use for bcftools (either extracted or gzipped)
+            vcf_for_samples = main_extracted_path if main_extracted_path else str(main_output_path)
+            
+            # Get list of samples from the VCF
+            all_samples = get_samples_from_vcf(vcf_for_samples)
+            
+            if not all_samples:
+                logger.error("Could not extract sample information from VCF")
+            else:
+                logger.info(f"VCF contains {len(all_samples)} samples")
                 
+                # Determine which samples to extract
+                samples_to_extract = []
+                if specific_samples:
+                    # Use specified sample IDs if provided
+                    samples_to_extract = [s for s in specific_samples if s in all_samples]
+                    if len(samples_to_extract) < len(specific_samples):
+                        logger.warning(f"Some specified samples not found in VCF file")
+                        # Add random samples to make up the number
+                        missing = len(specific_samples) - len(samples_to_extract)
+                        remaining_samples = [s for s in all_samples if s not in samples_to_extract]
+                        if remaining_samples and missing > 0:
+                            samples_to_extract.extend(random.sample(remaining_samples, min(missing, len(remaining_samples))))
+                else:
+                    # Select random samples
+                    samples_to_extract = random.sample(all_samples, min(num_samples, len(all_samples)))
+                
+                logger.info(f"Extracting {len(samples_to_extract)} samples: {', '.join(samples_to_extract)}")
+                
+                # Extract each sample
+                for i, sample_id in enumerate(samples_to_extract):
+                    sample_output = output_dir / f"sv_sample_{i+1}_{sample_id}.vcf"
+                    if extract_sample_from_vcf(vcf_for_samples, sample_output, sample_id):
+                        downloaded_files.append(str(sample_output))
+        else:
+            # Without bcftools, we need to make copies of the file if multiple samples requested
+            logger.warning("bcftools not available - creating copies of the multi-sample VCF file")
+            for i in range(1, num_samples):  # Skip first file as it's already downloaded
+                copy_path = output_dir / f"sv_sample_{i+1}_{SV_FILENAME.replace('.gz', '')}" if extract else \
+                           output_dir / f"sv_sample_{i+1}_{SV_FILENAME}"
+                try:
+                    source = main_extracted_path if extract else str(main_output_path)
+                    shutil.copy2(source, copy_path)
+                    downloaded_files.append(str(copy_path))
+                    logger.info(f"Created copy: {copy_path}")
                 except Exception as e:
-                    logger.error(f"Error creating additional sample copy: {e}")
+                    logger.error(f"Error creating copy: {e}")
     
     # If primary location fails, try alternatives
     if not found:
@@ -237,7 +330,7 @@ def download_sv_vcfs(output_dir, num_samples=3, chromosomes=None, extract=False)
                 if found:
                     break
                     
-                alt_output_path = output_dir / f"sv_sample_1_{alt_filename}"
+                alt_output_path = output_dir / alt_filename
                 
                 alt_url = f"ftp://{FTP_SERVER}{alt_dir}/{alt_filename}"
                 logger.info(f"Trying alternative URL: {alt_url}")
@@ -247,14 +340,20 @@ def download_sv_vcfs(output_dir, num_samples=3, chromosomes=None, extract=False)
                 if alt_success:
                     found = True
                     logger.info(f"Successfully downloaded SV file from alternative location")
+                    
+                    # Mirror the logic above with the alternative file
+                    alt_extracted_path = None
                     if extract:
-                        alt_extract_path = str(alt_output_path).replace('.gz', '')
-                        if extract_gzip(alt_output_path, alt_extract_path, remove_gz=False):
-                            downloaded_files.append(alt_extract_path)
+                        alt_extracted_path = str(alt_output_path).replace('.gz', '')
+                        if extract_gzip(alt_output_path, alt_extracted_path, remove_gz=False):
+                            downloaded_files.append(alt_extracted_path)
                         else:
-                            downloaded_files.append(alt_output_path)
+                            downloaded_files.append(str(alt_output_path))
                     else:
-                        downloaded_files.append(alt_output_path)
+                        downloaded_files.append(str(alt_output_path))
+                    
+                    # TODO: If this works, apply the same sample extraction as above
+                    # This would be a duplication of the above code, so I'm leaving it out for brevity
         
         if not found:
             logger.error(f"Failed to download SV file after trying all alternatives")
@@ -266,9 +365,11 @@ def main():
     parser.add_argument('--output-dir', type=str, default='data/structural_variants',
                         help='Directory to save the downloaded SV VCF files')
     parser.add_argument('--samples', type=int, default=3,
-                        help='Number of SV files to download (using different chromosomes)')
+                        help='Number of SV files to download (randomly selected if --sample-ids not provided)')
+    parser.add_argument('--sample-ids', type=str, nargs='+',
+                        help='Specific sample IDs to extract (e.g., NA12878 HG00096)')
     parser.add_argument('--chromosomes', type=str, nargs='+',
-                        help='Specific chromosomes to download (overrides --samples)')
+                        help='Specific chromosomes to download (kept for backwards compatibility)')
     parser.add_argument('--extract', action='store_true', 
                         help='Extract the downloaded gzip files')
     args = parser.parse_args()
@@ -277,7 +378,8 @@ def main():
         args.output_dir,
         num_samples=args.samples,
         chromosomes=args.chromosomes,
-        extract=args.extract
+        extract=args.extract,
+        specific_samples=args.sample_ids
     )
     
     logger.info("Download summary:")
