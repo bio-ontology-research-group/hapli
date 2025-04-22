@@ -82,3 +82,21 @@ Validate the test data integrity with:
 ```bash
 python -m tests.validate_test_data
 ```
+
+## Regenerating Test Data
+
+If you need to regenerate or modify the test data, you can use the included generator script:
+
+```bash
+python data/integration_test/generate_test_data.py
+```
+
+This script uses appropriate bioinformatics libraries (Biopython, GFApy) to ensure all files are valid and properly 
+cross-referenced. It creates:
+
+1. A reference FASTA sequence
+2. GFF3 file with gene annotations
+3. GFA2 variation graph with variant paths
+4. VCF file with corresponding variants
+
+The generator ensures that variants introduced in the graph are properly aligned with features and coordinates match between all files.

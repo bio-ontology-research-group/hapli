@@ -350,6 +350,35 @@ def cross_validate_files() -> bool:
     if vcf_samples != gfa_samples and len(vcf_samples) >= 2 and len(gfa_samples) >= 2:
         logger.warning(f"Sample IDs in VCF ({vcf_samples}) don't match samples in GFA ({gfa_samples})")
     
+    # Verify variants in GFA and VCF
+    gfa_variants = set()
+    with open(gfa_path, 'r') as f:
+        for line in f:
+            if line.startswith('S'):
+                parts = line.strip().split('\t')
+                seg_id = parts[1]
+                if '_' in seg_id and not seg_id.startswith('sample'):
+                    var_type = seg_id.split('_')[1]
+                    gfa_variants.add(var_type)
+    
+    vcf_variants = set()
+    with open(vcf_path, 'r') as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
+            parts = line.strip().split('\t')
+            if len(parts) >= 8:
+                info = parts[7]
+                if "TYPE=" in info:
+                    var_type = info.split('TYPE=')[1].split(';')[0].lower()
+                    vcf_variants.add(var_type)
+    
+    # Check if variants in GFA match those in VCF
+    missing_variants = vcf_variants - gfa_variants
+    if missing_variants:
+        logger.warning(f"Variants in VCF not found in GFA: {missing_variants}")
+        valid = False
+    
     return valid
 
 def main():
