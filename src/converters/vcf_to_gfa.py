@@ -287,16 +287,9 @@ class VCFtoGFAConverter:
         try:
             # Add GFA header (optional but recommended)
             # Using GFA1 for broader compatibility unless GFA2 features are needed
-            # --- Start Change: Use tags dictionary for Header ---
-            try:
-                 # Use gfapy.Field for explicit type definition if available
-                 header_line = gfapy.line.Header(tags={"VN": gfapy.Field("Z", "1.0")})
-                 self._gfa.add_line(header_line)
-            except AttributeError:
-                 # Fallback if gfapy.Field is not available or structure changed
-                 logger.warning("gfapy.Field not found, trying tuple format for header tag.")
-                 header_line = gfapy.line.Header(tags={"VN": ("Z", "1.0")})
-                 self._gfa.add_line(header_line)
+            # --- Start Change: Use tuple format directly for Header tag ---
+            header_line = gfapy.line.Header(tags={"VN": ("Z", "1.0")})
+            self._gfa.add_line(header_line)
             # --- End Change ---
 
             # Determine contigs to process
