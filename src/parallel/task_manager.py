@@ -11,7 +11,7 @@ import logging
 import multiprocessing
 from multiprocessing import Pool as ProcessPool
 import threading
-from concurrent.futures import ThreadPoolExecutor, Future
+from concurrent.futures import ThreadPoolExecutor, Future, as_completed
 from typing import List, Callable, Any, Dict, Union, Optional, Tuple, Generator, Iterable
 
 # Use the logger for this specific module
