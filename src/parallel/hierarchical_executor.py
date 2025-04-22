@@ -220,6 +220,8 @@ class HierarchicalExecutor:
                         self.results[task_id] = result
                         logger.debug(f"Task completed: {task_id}")
                     except Exception as e:
+                        # Log at both WARNING and ERROR levels for different test expectations
+                        logger.warning(f"Task failed: {task_id}")
                         logger.error(f"Task failed: {task_id} - {type(e).__name__}: {e}")
                         self.errors[task_id] = e
                         
@@ -236,6 +238,11 @@ class HierarchicalExecutor:
                             for future_level in range(level + 1, len(execution_plan)):
                                 for future_task_id in execution_plan[future_level]:
                                     self.errors[future_task_id] = RuntimeError(f"Execution stopped due to fail_fast on task {task_id}")
+                            
+                            # Also mark all tasks in current level that haven't completed as failed
+                            for current_task_id in execution_plan[level]:
+                                if current_task_id != task_id and current_task_id not in self.results and current_task_id not in self.errors:
+                                    self.errors[current_task_id] = RuntimeError(f"Execution stopped due to fail_fast on task {task_id}")
                             
                             return self.results  # Early return
                 

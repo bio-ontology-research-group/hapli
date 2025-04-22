@@ -58,7 +58,9 @@ def _test_factorial(n):
 
 def sometimes_fails(x):
     """Function that fails for certain inputs."""
-    if x % 5 == 0:
+    if x == 0:  # Always fail on first item for deterministic testing
+        raise ValueError(f"Value not allowed: {x}")
+    elif x % 5 == 0 and x > 0:  # Still fail on multiples of 5 but not 0
         raise ValueError(f"Value not allowed: {x}")
     return x * 2
 
