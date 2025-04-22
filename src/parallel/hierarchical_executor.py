@@ -51,29 +51,17 @@ class Task:
         """
         self.status = 'running'
         try:
-            # Try two approaches:
-            # 1. First try calling with original kwargs (without dependencies)
-            # 2. If the function has parameters for dependencies, try with them
-            
+            # Always use dependency results if provided
             kwargs = self.kwargs.copy() if self.kwargs else {}
             
-            try:
-                # Try first without dependency results
-                self.result = self.func(*self.args, **kwargs)
-                self.status = 'completed'
-                return self.result
-            except TypeError as e:
-                # If it's a TypeError and we have dependency results, 
-                # it might be expecting those parameters
-                if dependency_results and "missing 1 required positional argument" in str(e):
-                    # Try with dependency results added
-                    updated_kwargs = {**kwargs, **dependency_results}
-                    self.result = self.func(*self.args, **updated_kwargs)
-                    self.status = 'completed'
-                    return self.result
-                else:
-                    # Not a dependency-related error, re-raise
-                    raise
+            # Include dependency results in kwargs if provided
+            if dependency_results:
+                kwargs.update(dependency_results)
+            
+            # Execute the function with combined arguments
+            self.result = self.func(*self.args, **kwargs)
+            self.status = 'completed'
+            return self.result
                     
         except Exception as e:
             self.status = 'failed'
@@ -210,10 +198,11 @@ class HierarchicalExecutor:
                 # Remove from remaining tasks
                 remaining_tasks.pop(i)
                 
-                # Prepare dependency results in the expected format from the test cases
-                # The test cases expect parameters named like dep_task1, dep_task2, etc.
+                # Prepare dependency results in the exact format expected by tests
+                # The parameter name must be exactly "dep_" + task_id
                 dependency_results = {}
                 for dep_id in task.dependencies:
+                    # Create the exact parameter name expected for each dependency
                     dependency_results[f"dep_{dep_id}"] = self.results[dep_id]
                 
                 # Submit the task for execution with dependency results

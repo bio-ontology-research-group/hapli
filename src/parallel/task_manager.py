@@ -241,6 +241,25 @@ class ProcessWorkerPool(BaseWorkerPool):
                 self.progress_tracker.increment()
             return e
     
+    # Define these outside to ensure they're picklable
+    @staticmethod
+    def _safe_worker(args):
+        """Process a task safely, catching exceptions."""
+        func, task = args
+        try:
+            return func(task)
+        except Exception as e:
+            return e
+            
+    @staticmethod
+    def _tracked_worker(args):
+        """Process a task and track it, catching exceptions."""
+        func, task = args
+        try:
+            return func(task)
+        except Exception as e:
+            return e
+
     def map(self, func: Callable, tasks: List[Any], chunksize: Optional[int] = None) -> List[Any]:
         """
         Apply function to each task in parallel using processes.
@@ -259,37 +278,20 @@ class ProcessWorkerPool(BaseWorkerPool):
         # Create pool if not already created
         if not hasattr(self, 'pool'):
             self._create_pool()
-            
-        # For handling lambdas and class methods that might not pickle properly
-        # We'll use a simple approach that works for most common cases
-        def safe_apply(task):
-            try:
-                return func(task)
-            except Exception as e:
-                return e
         
         # Setup progress tracking
         if self.track_progress:
             self.progress_tracker = ProgressTracker(len(tasks))
             
-            # Create a fixed local progress tracker to avoid sharing across processes
-            total_tasks = len(tasks)
-            
-            # Define a self-contained function that doesn't rely on shared state
-            def tracked_worker(task):
-                try:
-                    result = func(task)
-                    # Don't use the shared progress tracker here - we'll update it in the main process
-                    return result
-                except Exception as e:
-                    return e
+            # Prepare task arguments - pair each task with the function
+            task_args = [(func, task) for task in tasks]
             
             # Execute tasks in chunks to avoid large serialization
             all_results = []
-            for i in range(0, len(tasks), 100):  # Process in smaller batches
-                batch = tasks[i:i+100]
+            for i in range(0, len(task_args), 100):  # Process in smaller batches
+                batch = task_args[i:i+100]
                 batch_results = self.pool.map(
-                    tracked_worker,
+                    self._tracked_worker,
                     batch,
                     chunksize or max(1, len(batch) // (self.num_workers * 4))
                 )
@@ -299,12 +301,15 @@ class ProcessWorkerPool(BaseWorkerPool):
                 
             results = all_results
         else:
-            # Execute directly without wrapper but still in batches for large task lists
+            # Prepare task arguments - pair each task with the function
+            task_args = [(func, task) for task in tasks]
+            
+            # Execute directly but still in batches for large task lists
             all_results = []
-            for i in range(0, len(tasks), 100):  # Process in smaller batches
-                batch = tasks[i:i+100]
+            for i in range(0, len(task_args), 100):  # Process in smaller batches
+                batch = task_args[i:i+100]
                 batch_results = self.pool.map(
-                    safe_apply,
+                    self._safe_worker,
                     batch,
                     chunksize or max(1, len(batch) // (self.num_workers * 4))
                 )
