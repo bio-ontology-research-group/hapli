@@ -681,8 +681,8 @@ class TestDataGenerator:
                         if not replaced:
                             path_segments.append(f"{seg_id}+")
                 
-                # Add path to graph
-                self.graph.append(gfapy.Line(f"P\t{path_id}\t{','.join(path_segments)}\t*"))
+                # Add path to graph as an ordered group (O line) for GFA2
+                self.graph.append(gfapy.Line(f"O\t{path_id}\t{','.join(path_segments)}"))
         
         logger.info("Variation graph built")
         return self.graph

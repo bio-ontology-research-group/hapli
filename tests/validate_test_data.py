@@ -194,7 +194,7 @@ def validate_gfa_file() -> bool:
                     logger.error(f"Invalid edge line: {line.strip()}")
                     valid = False
             
-            elif record_type == 'P':  # Path
+            elif record_type == 'O':  # Ordered Group (path in GFA2)
                 has_paths = True
                 if len(parts) < 3:
                     logger.error(f"Invalid path line: {line.strip()}")
@@ -218,7 +218,7 @@ def validate_gfa_file() -> bool:
             logger.error("GFA file has no edges (E lines)")
             valid = False
         if not has_paths:
-            logger.error("GFA file has no paths (P lines)")
+            logger.error("GFA file has no paths (O lines for GFA2)")
             valid = False
         
         # Check for required paths (sample haplotypes)
@@ -339,7 +339,7 @@ def cross_validate_files() -> bool:
     gfa_samples = set()
     with open(gfa_path, 'r') as f:
         for line in f:
-            if line.startswith('P'):
+            if line.startswith('O'):
                 parts = line.strip().split('\t')
                 path_id = parts[1]
                 if '_' in path_id:

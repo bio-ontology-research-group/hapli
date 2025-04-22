@@ -111,8 +111,8 @@ E	e_alt2	seg10_alt+	seg11+	0	50$	0	50$	*
 E	e_nocall1	seg29+	seg30_nocall+	0	50$	0	50$	*
 E	e_nocall2	seg30_nocall+	seg31+	0	50$	0	50$	*
 
-# Paths for each of our 4 haplotypes
-P	sample1_hap1	seg1+,seg2+,seg3+,seg4+,seg5_del+,seg6+,seg7+,seg8+,seg9+,seg10+,seg11+,seg12+,seg13+,seg14+,seg15+,seg16+,seg17+,seg18+,seg19+,seg20+,seg21+,seg22+,seg23+,seg24+,seg25+,seg26+,seg27+	*
-P	sample1_hap2	seg1+,seg2+,seg3_snp+,seg4+,seg5+,seg6+,seg7_inv+,seg8+,seg9+,seg10+,seg11+,seg12+,seg13+,seg14+,seg15+,seg16+,seg17+,seg18+,seg19+,seg20+,seg21+,seg22+,seg23+,seg24+,seg25+,seg26+,seg27+,seg28+,seg29+,seg30+,seg31+	*
-P	sample2_hap1	seg1+,seg2+,seg3_snp2+,seg4_indel+,seg5+,seg6+,seg7+,seg8_trunc+,seg9+,seg10_alt+,seg11+,seg12+,seg13+,seg14+,seg15+,seg16+,seg17+,seg18+,seg19+,seg20+,seg21+,seg22+,seg23+,seg24+,seg25+,seg26+,seg27+,seg28+,seg29+,seg30+	*
-P	sample2_hap2	seg1+,seg2+,seg3+,seg4_indel+,seg5+,seg6_dup+,seg6+,seg7+,seg8_trunc+,seg9+,seg10+,seg11+,seg12+,seg13+,seg14+,seg15+,seg16+,seg17+,seg18+,seg19+,seg20+,seg21+,seg22+,seg23+,seg24+,seg25+,seg26+,seg27+,seg28+,seg29+,seg30+,seg31+	*
+# Paths for each of our 4 haplotypes (represented as ordered groups in GFA2)
+O	sample1_hap1	seg1+,seg2+,seg3+,seg4+,seg5_del+,seg6+,seg7+,seg8+,seg9+,seg10+,seg11+,seg12+,seg13+,seg14+,seg15+,seg16+,seg17+,seg18+,seg19+,seg20+,seg21+,seg22+,seg23+,seg24+,seg25+,seg26+,seg27+
+O	sample1_hap2	seg1+,seg2+,seg3_snp+,seg4+,seg5+,seg6+,seg7_inv+,seg8+,seg9+,seg10+,seg11+,seg12+,seg13+,seg14+,seg15+,seg16+,seg17+,seg18+,seg19+,seg20+,seg21+,seg22+,seg23+,seg24+,seg25+,seg26+,seg27+,seg28+,seg29+,seg30+,seg31+
+O	sample2_hap1	seg1+,seg2+,seg3_snp2+,seg4_indel+,seg5+,seg6+,seg7+,seg8_trunc+,seg9+,seg10_alt+,seg11+,seg12+,seg13+,seg14+,seg15+,seg16+,seg17+,seg18+,seg19+,seg20+,seg21+,seg22+,seg23+,seg24+,seg25+,seg26+,seg27+,seg28+,seg29+,seg30+
+O	sample2_hap2	seg1+,seg2+,seg3+,seg4_indel+,seg5+,seg6_dup+,seg6+,seg7+,seg8_trunc+,seg9+,seg10+,seg11+,seg12+,seg13+,seg14+,seg15+,seg16+,seg17+,seg18+,seg19+,seg20+,seg21+,seg22+,seg23+,seg24+,seg25+,seg26+,seg27+,seg28+,seg29+,seg30+,seg31+
