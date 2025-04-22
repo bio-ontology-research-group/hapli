@@ -186,18 +186,28 @@ class HierarchicalExecutor:
                 # Remove from remaining tasks
                 remaining_tasks.pop(i)
                 
-                # Update task with dependency results
-                updated_task = Task(
-                    id=task.id,
-                    func=task.func,
-                    args=task.args,
-                    kwargs={**task.kwargs, **{f"dep_{dep_id}": self.results[dep_id] for dep_id in task.dependencies}},
-                    dependencies=task.dependencies,
-                    status=task.status
-                )
+                # Create a function that will have access to dependency results
+                def execute_with_deps():
+                    # For tasks that expect dependency results, they should be passed as parameters
+                    # with the same name as in the lambda definition
+                    # For tests that specifically expect dep_X parameters, prepare them
+                    task_kwargs = task.kwargs.copy() if task.kwargs else {}
+                    
+                    # Only add dependency results for parameters that match the function signature
+                    import inspect
+                    sig = inspect.signature(task.func)
+                    
+                    # Check if the function expects specific parameters for dependencies
+                    for dep_id in task.dependencies:
+                        param_name = f"dep_{dep_id}"
+                        if param_name in sig.parameters:
+                            task_kwargs[param_name] = self.results[dep_id]
+                    
+                    # Execute the function with its original args and possibly updated kwargs
+                    return task.func(*task.args, **task_kwargs)
                 
-                # Submit the task with updated kwargs
-                future = executor.submit(updated_task.execute)
+                # Submit the wrapper function that handles dependencies appropriately
+                future = executor.submit(execute_with_deps)
                 futures[task_id] = future
             else:
                 i += 1
