@@ -65,6 +65,50 @@ python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --r
 
 This will select haplotype 1 from both sample1 and sample2.
 
+## Analysis Features
+
+The tool includes advanced analysis capabilities to evaluate how features are represented across different haplotypes:
+
+### Impact Classification
+
+Features are classified according to their representation in different haplotypes:
+
+- **Present**: Feature is present with high sequence identity (default: >90%)
+- **Absent**: Feature could not be aligned to the path
+- **Modified**: Feature has sequence changes but is largely intact
+- **Truncated**: Feature is present but with significant length reduction
+- **Expanded**: Feature is present but with significant length increase
+- **Fragmented**: Feature is split across multiple locations
+
+### Variant Detection
+
+The tool identifies sequence changes within aligned features:
+
+- **SNPs**: Single nucleotide polymorphisms
+- **Insertions**: Additional sequence not present in the reference
+- **Deletions**: Sequence missing compared to the reference
+- **Complex Changes**: Substitutions involving multiple bases
+
+### Feature Reconciliation
+
+When child features (like exons) don't align properly within their parent features (like genes):
+
+- Automatic adjustment of child features to fit within parent boundaries
+- Identification of potentially incorrect feature boundaries
+- Confidence scores for reconciliation decisions
+
+### Analysis Output
+
+Analysis results can be exported in multiple formats:
+
+```bash
+# Export as TSV (default)
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --output-file results.tsv
+
+# Export as JSON
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --output-file results.json --output-format json
+```
+
 ## Configuration
 
 The tool uses a hierarchical configuration system:

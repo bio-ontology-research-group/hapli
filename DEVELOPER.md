@@ -59,6 +59,63 @@ The module recognizes several common naming patterns for haplotypes in GFA paths
 - Paths without recognizable patterns are considered as their own sample group
 - The module also looks for metadata tags (SM for sample, HP for haplotype) if available
 
+### Analysis Module (`src/analysis/`)
+
+The Analysis module provides comprehensive functionality to evaluate and characterize feature alignments:
+
+#### Impact Classifier (`src/analysis/impact_classifier.py`)
+
+* Categorizes aligned features into impact types (present, absent, modified, etc.)
+* Uses sequence identity and coverage thresholds to determine status
+* Considers feature length changes to identify truncations and expansions
+
+#### Variant Detector (`src/analysis/variant_detector.py`)
+
+* Identifies sequence changes between reference and aligned features
+* Detects SNPs, insertions, and deletions
+* Uses CIGAR strings when available for precise variant calling
+* Provides filtering and summarization methods
+
+#### Feature Reconciler (`src/analysis/reconciliation.py`)
+
+* Handles cases where child features don't align within parent boundaries
+* Implements strategies like adjusting child features, suggesting parent adjustments, or orphaning children
+* Maintains confidence scores for each reconciliation decision
+* Preserves feature hierarchies when possible
+
+#### Summary Generator (`src/analysis/summary_generator.py`)
+
+* Aggregates results from impact classification, variant detection, and reconciliation
+* Provides comprehensive feature-level and path-level summaries
+* Supports export to TSV and JSON formats
+* Computes statistics on feature impacts and variant types
+
+#### Impact Classification System
+
+The Impact Classification System uses multiple criteria to categorize features:
+
+1. **Sequence Identity**: Percent of matching bases between reference and aligned sequences
+2. **Coverage**: Percent of the reference feature covered by the alignment
+3. **Length Ratio**: Ratio of aligned feature length to reference feature length
+
+These metrics are combined to determine the most appropriate classification:
+
+| Classification | Identity | Coverage | Length Ratio | Description |
+|---------------|----------|----------|--------------|-------------|
+| Present       | High     | High     | ~1.0         | Feature present with no significant changes |
+| Absent        | N/A      | N/A      | N/A          | Feature couldn't be aligned at all |
+| Modified      | Medium   | High     | ~1.0         | Feature present with sequence modifications |
+| Truncated     | Any      | Any      | <0.9         | Feature present but significantly shorter |
+| Expanded      | Any      | Any      | >1.1         | Feature present but significantly longer |
+| Fragmented    | Any      | Any      | Any          | Feature split across multiple locations |
+
+The default thresholds are:
+- High identity: ≥90%
+- High coverage: ≥80%
+- Length ratio tolerance: ±10%
+
+These thresholds can be customized through the API.
+
 ### Parsers Module (`src/parsers/`)
 
 The application uses a dedicated parsers module to handle various input file formats:
