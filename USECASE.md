@@ -139,3 +139,44 @@ python scripts/vcf_to_gfa_converter.py \
 - Converting the entire genome to GFA can be memory-intensive.
 - For testing, consider restricting to specific chromosomes or regions using the `--region` option.
 - The vg toolkit requires significant memory for larger genomes. Adjust the `--memory` parameter as needed.
+
+## Downloading GFF3 Annotation Files
+
+The `download_grch38_gff3.py` script downloads GFF3 annotation files corresponding to the GRCh38 reference.
+
+```bash
+python scripts/download_grch38_gff3.py --output-dir data/annotation --extract --source ensembl
+```
+
+Options:
+- `--output-dir`: Directory to save the downloaded file (default: `data/annotation`)
+- `--extract`: Extract the downloaded gzip file
+- `--source`: Source to download from (`ensembl`, `ncbi`, or `gencode`, default: `ensembl`)
+- `--by-chromosome`: Download chromosome-specific GFF files (Ensembl only)
+- `--chromosomes`: Specific chromosomes to download (e.g., `1 2 X Y`)
+
+## Automated Workflow Execution
+
+The `run_grch38_workflow.py` script automates the entire process, running all the steps sequentially with progress tracking and the ability to resume from where it left off if interrupted.
+
+```bash
+python scripts/run_grch38_workflow.py --output-dir data --source ensembl --region 22
+```
+
+This will:
+1. Download the GRCh38 reference genome
+2. Download GFF3 annotation files
+3. Convert the reference to GFA
+4. Download VCF files (phased and unphased)
+5. Convert VCFs to GFA separately
+6. Convert VCFs to GFA jointly
+
+Options:
+- `--output-dir`: Base output directory for all data (default: `data`)
+- `--source`: Source for reference and annotation (`ensembl` or `ncbi`, default: `ensembl`)
+- `--phased-vcfs`: Number of phased VCF files to download (default: 2, max: 3)
+- `--unphased-vcfs`: Number of unphased VCF files to download (default: 1, max: 3)
+- `--region`: Restrict VCF conversion to region (e.g., `22` for chromosome 22)
+- `--state-file`: File to store workflow state for resumption (default: `workflow_state.json`)
+
+The workflow automatically keeps track of progress, and if interrupted, will resume from where it left off when rerun. A detailed report is generated upon completion.
