@@ -198,12 +198,11 @@ class HierarchicalExecutor:
                 # Remove from remaining tasks
                 remaining_tasks.pop(i)
                 
-                # Prepare dependency results in the exact format expected by tests
-                # The parameter name must be exactly "dep_" + task_id
+                # Prepare dependency results
+                # The parameter name should be the task ID itself
                 dependency_results = {}
                 for dep_id in task.dependencies:
-                    # Create the exact parameter name expected for each dependency
-                    dependency_results[f"dep_{dep_id}"] = self.results[dep_id]
+                    dependency_results[dep_id] = self.results[dep_id]
                 
                 # Submit the task for execution with dependency results
                 future = executor.submit(task.execute, dependency_results)
