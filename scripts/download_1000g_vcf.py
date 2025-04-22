@@ -114,9 +114,16 @@ def extract_gzip(gzip_path, output_path, remove_gz=False):
         logger.error(f"Error extracting file: {e}")
         return False
 
-def download_vcfs(output_dir, phased_count=3, unphased_count=3, extract=False):
+def download_vcfs(output_dir, phased_count=3, unphased_count=3, extract=False, force_unphased=False):
     """
     Download specified number of phased and unphased VCF files.
+    
+    Args:
+        output_dir: Directory to save downloads
+        phased_count: Number of phased VCFs to download
+        unphased_count: Number of unphased VCFs to download
+        extract: Whether to extract the downloaded files
+        force_unphased: Force download of unphased VCFs even if some fail
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -138,9 +145,22 @@ def download_vcfs(output_dir, phased_count=3, unphased_count=3, extract=False):
         else:
             phased_vcfs.append(output_path)
     
-    # Download unphased VCFs
+    # Alternative unphased VCFs - more likely to download successfully
+    ALTERNATIVE_UNPHASED_VCFS = [
+        "/vol1/ftp/phase3/data/NA12878/alignment/NA12878.chrom20.ILLUMINA.bwa.CEU.low_coverage.20121211.bam.genotypes.vcf.gz",
+        "/vol1/ftp/phase3/data/NA12878/alignment/NA12878.chrom21.ILLUMINA.bwa.CEU.low_coverage.20121211.bam.genotypes.vcf.gz",
+        "/vol1/ftp/phase3/data/NA12878/alignment/NA12878.chrom22.ILLUMINA.bwa.CEU.low_coverage.20121211.bam.genotypes.vcf.gz"
+    ]
+    
+    # Download unphased VCFs - try both original and alternative sources
     unphased_vcfs = []
+    unphased_count_remaining = unphased_count
+    
+    # First try the original sources
     for i in range(min(unphased_count, len(KNOWN_UNPHASED_VCFS))):
+        if unphased_count_remaining <= 0:
+            break
+            
         vcf_path = KNOWN_UNPHASED_VCFS[i]
         filename = os.path.basename(vcf_path)
         output_path = output_dir / f"unphased_{i+1}_{filename}"
@@ -148,12 +168,32 @@ def download_vcfs(output_dir, phased_count=3, unphased_count=3, extract=False):
         url = f"ftp://{FTP_SERVER}{vcf_path}"
         success = download_file_with_progress(url, output_path, is_ftp=True)
         
-        if success and extract:
-            extract_path = output_path.with_suffix('').with_suffix('')  # Remove .vcf.gz
-            extract_gzip(output_path, extract_path, remove_gz=False)
-            unphased_vcfs.append(extract_path)
-        else:
-            unphased_vcfs.append(output_path)
+        if success:
+            if extract:
+                extract_path = output_path.with_suffix('').with_suffix('')  # Remove .vcf.gz
+                extract_gzip(output_path, extract_path, remove_gz=False)
+                unphased_vcfs.append(extract_path)
+            else:
+                unphased_vcfs.append(output_path)
+            unphased_count_remaining -= 1
+    
+    # If we need more unphased VCFs and force_unphased is enabled, try alternative sources
+    if unphased_count_remaining > 0 and force_unphased:
+        logger.info("Using alternative unphased VCF sources")
+        for i in range(min(unphased_count_remaining, len(ALTERNATIVE_UNPHASED_VCFS))):
+            vcf_path = ALTERNATIVE_UNPHASED_VCFS[i]
+            filename = os.path.basename(vcf_path)
+            output_path = output_dir / f"unphased_alt_{i+1}_{filename}"
+            
+            url = f"ftp://{FTP_SERVER}{vcf_path}"
+            success = download_file_with_progress(url, output_path, is_ftp=True)
+            
+            if success and extract:
+                extract_path = output_path.with_suffix('').with_suffix('')  # Remove .vcf.gz
+                extract_gzip(output_path, extract_path, remove_gz=False)
+                unphased_vcfs.append(extract_path)
+            elif success:
+                unphased_vcfs.append(output_path)
     
     return phased_vcfs, unphased_vcfs
 
@@ -167,13 +207,16 @@ def main():
                         help='Number of unphased VCF files to download (max 3)')
     parser.add_argument('--extract', action='store_true', 
                         help='Extract the downloaded gzip files')
+    parser.add_argument('--force-unphased', action='store_true',
+                        help='Force download of unphased VCFs using alternative sources if needed')
     args = parser.parse_args()
     
     phased_vcfs, unphased_vcfs = download_vcfs(
         args.output_dir, 
         phased_count=args.phased, 
         unphased_count=args.unphased,
-        extract=args.extract
+        extract=args.extract,
+        force_unphased=args.force_unphased
     )
     
     logger.info("Download summary:")

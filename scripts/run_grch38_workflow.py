@@ -361,9 +361,25 @@ def create_workflow(args):
             "--output-dir", vcf_dir,
             "--phased", str(args.phased_vcfs),
             "--unphased", str(args.unphased_vcfs),
-            "--extract"
+            "--extract",
+            "--force-unphased"  # Force download of unphased VCFs
         ],
         outputs=[vcf_dir]  # Just check if the directory exists
+    ))
+    
+    # Step 4b: Download Structural Variant VCF files
+    sv_dir = os.path.join(args.output_dir, "structural_variants")
+    os.makedirs(sv_dir, exist_ok=True)
+    workflow.add_step(PythonScriptStep(
+        name="download_sv_vcf",
+        description="Download Structural Variant VCF files",
+        script_path="scripts/download_1000g_sv.py",
+        args=[
+            "--output-dir", sv_dir,
+            "--samples", "3",  # Download for 3 samples
+            "--extract"
+        ],
+        outputs=[sv_dir]  # Just check if the directory exists
     ))
     
     # Step 5: Convert VCFs to GFA (separately)
@@ -422,7 +438,7 @@ def main():
                         help='Source for reference and annotation (ensembl or ncbi)')
     parser.add_argument('--phased-vcfs', type=int, default=2,
                         help='Number of phased VCF files to download (max 3)')
-    parser.add_argument('--unphased-vcfs', type=int, default=1,
+    parser.add_argument('--unphased-vcfs', type=int, default=3,
                         help='Number of unphased VCF files to download (max 3)')
     parser.add_argument('--region', type=str, default=None,
                         help='Restrict VCF conversion to region (e.g., "22")')
