@@ -61,10 +61,17 @@ def download_file_with_progress(server, directory, filename, output_path):
         logger.error(f"Error downloading file: {e}")
         return False
 
-def extract_gzip(gzip_path, output_path):
+def extract_gzip(gzip_path, output_path=None):
     """
     Extract a gzip file to the specified output path.
+    
+    Args:
+        gzip_path: Path to the gzipped file
+        output_path: Path to extract to (if None, removes only the .gz extension)
     """
+    # If output_path is not specified, remove only the .gz extension
+    if output_path is None:
+        output_path = str(gzip_path).replace('.gz', '')
     try:
         with gzip.open(gzip_path, 'rb') as f_in:
             with open(output_path, 'wb') as f_out:
@@ -82,6 +89,8 @@ def main():
                         help='Directory to save the downloaded FASTA file')
     parser.add_argument('--extract', action='store_true', 
                         help='Extract the downloaded gzip file')
+    parser.add_argument('--remove-gz', action='store_true',
+                        help='Remove the gzip file after extraction (only applies with --extract)')
     parser.add_argument('--source', type=str, choices=['ensembl', 'ncbi'], default='ensembl',
                         help='Source to download from (ensembl or ncbi)')
     args = parser.parse_args()
@@ -108,8 +117,9 @@ def main():
         output_path = output_dir / filename.replace('.gz', '')
         extract_gzip(gz_path, output_path)
         
-        # Optionally remove the gz file after extraction
-        if os.path.exists(output_path):
+        # Keep the gz file by default as the workflow checks for its existence
+        # Only remove if explicitly requested
+        if args.remove_gz and os.path.exists(output_path):
             os.remove(gz_path)
             logger.info(f"Removed compressed file {gz_path}")
 
