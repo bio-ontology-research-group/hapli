@@ -80,17 +80,36 @@ class ImpactClassifier:
         coverage = coverage or 0.0
         identity = identity or 0.0
         
-        # Check if the feature appears intact
+        # Get feature lengths for structural analysis
+        ref_length = reference_feature.location.end - reference_feature.location.start
+        aligned_length = aligned_feature.location.end - aligned_feature.location.start
+        
+        # Check for truncation or expansion first
+        if abs(ref_length - aligned_length) / ref_length > 0.1:
+            if aligned_length < ref_length:
+                return ImpactType.TRUNCATED, {
+                    "coverage": coverage,
+                    "identity": identity,
+                    "ref_length": ref_length,
+                    "aligned_length": aligned_length,
+                    "length_ratio": aligned_length / ref_length
+                }
+            else:
+                return ImpactType.EXPANDED, {
+                    "coverage": coverage,
+                    "identity": identity,
+                    "ref_length": ref_length,
+                    "aligned_length": aligned_length,
+                    "length_ratio": aligned_length / ref_length
+                }
+                
+        # Then check if the feature appears intact
         if (coverage >= self.coverage_threshold and 
             identity >= self.sequence_identity_threshold):
             return ImpactType.PRESENT, {
                 "coverage": coverage,
                 "identity": identity
             }
-            
-        # Check for truncation or expansion
-        ref_length = reference_feature.location.end - reference_feature.location.start
-        aligned_length = aligned_feature.location.end - aligned_feature.location.start
         
         # Significant length difference suggests structural change
         if abs(ref_length - aligned_length) / ref_length > 0.1:
