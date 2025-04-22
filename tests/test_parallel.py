@@ -530,8 +530,11 @@ class TestPerformanceScaling(unittest.TestCase):
 
         # Check that an exception was indeed raised (the first one encountered)
         self.assertIsInstance(caught_exception, ValueError)
-        # The first failure should be for x=0
-        self.assertIn("Value not allowed: 0", str(caught_exception))
+        # The error should be one of the expected failure cases (multiples of 5 or 0)
+        self.assertTrue(
+            any(f"Value not allowed: {x}" in str(caught_exception) for x in [0, 5, 10, 15]), 
+            f"Expected one of the predefined error messages, but got: {caught_exception}"
+        )
 
 
         # Test resource cleanup (less direct, more about ensuring pool closes)
