@@ -14,6 +14,8 @@ The tool requires the following Python packages:
 - NetworkX (for feature relationship graphs)
 - PyYAML (for configuration files)
 - argparse (for command-line arguments)
+- rdflib (for RDF report generation)
+- pyshex (for RDF validation)
 
 Install dependencies using:
 
@@ -97,16 +99,92 @@ When child features (like exons) don't align properly within their parent featur
 - Identification of potentially incorrect feature boundaries
 - Confidence scores for reconciliation decisions
 
-### Analysis Output
+## Reporting
 
-Analysis results can be exported in multiple formats:
+The tool provides rich reporting capabilities to visualize and analyze the annotated features:
+
+### Single Haplotype Reports
+
+Generate detailed reports for a single haplotype:
 
 ```bash
-# Export as TSV (default)
+# Generate a TSV report (default)
 python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --output-file results.tsv
 
-# Export as JSON
+# Generate a JSON report
 python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --output-file results.json --output-format json
+
+# Generate an RDF report in Turtle format
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --output-file results.ttl --output-format rdf --rdf-format turtle
+```
+
+### Comparative Reports
+
+Generate reports comparing features across multiple haplotypes:
+
+```bash
+# Generate a comparative TSV report for multiple haplotypes
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --path-ids path1,path2 --output-file comparative.tsv --comparative
+
+# Generate a comparative JSON report
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --path-ids path1,path2 --output-file comparative.json --output-format json --comparative
+
+# Generate a comparative RDF report in JSON-LD format
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --path-ids path1,path2 --output-file comparative.jsonld --output-format rdf --rdf-format json-ld --comparative
+```
+
+### Filtering Reports
+
+Filter reports to focus on specific impact types or genomic regions:
+
+```bash
+# Filter by impact type (PRESENT, MODIFIED, ABSENT, etc.)
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --output-file present_features.tsv --impact-types PRESENT
+
+# Filter by genomic region
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --output-file region_features.tsv --region-start 5000 --region-end 10000
+
+# Combine filters
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --output-file filtered.tsv --impact-types PRESENT,MODIFIED --region-start 5000 --region-end 10000
+```
+
+### RDF Reports
+
+The tool supports multiple RDF serialization formats for semantic web applications:
+
+```bash
+# Generate RDF in Turtle format
+python -m src.main --output-file report.ttl --output-format rdf --rdf-format turtle
+
+# Generate RDF in XML format
+python -m src.main --output-file report.rdf --output-format rdf --rdf-format xml
+
+# Generate RDF in JSON-LD format
+python -m src.main --output-file report.jsonld --output-format rdf --rdf-format json-ld
+
+# Generate RDF in N-Triples format
+python -m src.main --output-file report.nt --output-format rdf --rdf-format ntriples
+```
+
+### RDF Schema Validation
+
+Validate RDF reports against the provided ShEx schema:
+
+```bash
+# Validate a report against the ShEx schema
+python -m src.validate_rdf --rdf-file report.ttl --shex-file src/reporting/schemas/shex_schema.shex
+```
+
+### Advanced Comparative Analysis
+
+Identify consensus and discriminating features across multiple haplotypes:
+
+```bash
+# Identify features present in at least 90% of haplotypes
+python -m src.find_consensus --path-ids path1,path2,path3,path4 --threshold 0.9 --output-file consensus_features.json
+
+# Identify features that discriminate between haplotypes
+python -m src.find_discriminating --path-ids path1,path2,path3,path4 --output-file discriminating_features.json
 ```
 
 ## Configuration
@@ -136,6 +214,12 @@ These parameters *must* be provided either via the configuration file or command
 *   `output_file`: Path where the output annotations should be saved.
     *   CLI: `--output-file /path/to/output.tsv`
     *   YAML: `output_file: /path/to/output.tsv`
+*   `output_format`: Format for output reports (tsv, json, rdf).
+    *   CLI: `--output-format json`
+    *   YAML: `output_format: json`
+*   `rdf_format`: RDF serialization format if output_format is rdf (turtle, xml, json-ld, ntriples).
+    *   CLI: `--rdf-format turtle`
+    *   YAML: `rdf_format: turtle`
 *   `log_level`: Sets the logging verbosity. Options: DEBUG, INFO, WARNING, ERROR, CRITICAL. (Default: INFO)
     *   CLI: `--log-level DEBUG`
     *   YAML: `log_level: DEBUG`
@@ -148,6 +232,18 @@ These parameters *must* be provided either via the configuration file or command
 *   `path_ids`: Comma-separated list of specific path IDs to include.
     *   CLI: `--path-ids path1,path2`
     *   YAML: `path_ids: [path1, path2]`
+*   `comparative`: Generate a comparative report (for multiple paths).
+    *   CLI: `--comparative`
+    *   YAML: `comparative: true`
+*   `impact_types`: Filter by impact types.
+    *   CLI: `--impact-types PRESENT,MODIFIED`
+    *   YAML: `impact_types: [PRESENT, MODIFIED]`
+*   `region_start`: Start position for region filtering.
+    *   CLI: `--region-start 5000`
+    *   YAML: `region_start: 5000`
+*   `region_end`: End position for region filtering.
+    *   CLI: `--region-end 10000`
+    *   YAML: `region_end: 10000`
 
 **Example YAML Configuration File (`config.yaml`):**
 
@@ -156,8 +252,14 @@ gfa_file: data/example.gfa
 gff3_file: data/example.gff3
 reference_fasta: data/reference.fasta
 output_file: output/annotations.tsv
+output_format: json
+rdf_format: turtle
 log_level: INFO
 sample_names: [sample1, sample2]
 haplotype_ids: [1]
+comparative: true
+impact_types: [PRESENT, MODIFIED]
+region_start: 5000
+region_end: 10000
 ```
 

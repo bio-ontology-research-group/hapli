@@ -1,0 +1,118 @@
+{
+  "metadata": {
+    "timestamp": "2023-06-15T10:30:45.123456",
+    "path_id": "path1",
+    "reference_id": "ref1",
+    "feature_count": 4,
+    "features_present": 2,
+    "features_absent": 1,
+    "features_modified": 1
+  },
+  "features": {
+    "gene1": {
+      "type": "gene",
+      "start": 100,
+      "end": 500,
+      "strand": "+",
+      "impact_type": "PRESENT",
+      "sequence_identity": 0.95,
+      "coverage": 0.98,
+      "parent_features": [],
+      "variants": {
+        "SNP": 2,
+        "INSERTION": 1
+      },
+      "variant_details": [
+        {
+          "type": "SNP",
+          "position": 150,
+          "reference": "A",
+          "alternate": "G",
+          "length": 1,
+          "quality": 40.0
+        },
+        {
+          "type": "SNP",
+          "position": 250,
+          "reference": "C",
+          "alternate": "T",
+          "length": 1,
+          "quality": 40.0
+        },
+        {
+          "type": "INSERTION",
+          "position": 350,
+          "reference": "",
+          "alternate": "ATG",
+          "length": 3,
+          "quality": 35.0
+        }
+      ]
+    },
+    "exon1": {
+      "type": "exon",
+      "start": 200,
+      "end": 300,
+      "strand": "+",
+      "impact_type": "PRESENT",
+      "sequence_identity": 0.98,
+      "coverage": 1.0,
+      "parent_features": ["gene1"],
+      "variants": {
+        "SNP": 1
+      },
+      "variant_details": [
+        {
+          "type": "SNP",
+          "position": 250,
+          "reference": "C",
+          "alternate": "T",
+          "length": 1,
+          "quality": 40.0
+        }
+      ]
+    },
+    "gene2": {
+      "type": "gene",
+      "start": 600,
+      "end": 800,
+      "strand": "+",
+      "impact_type": "MODIFIED",
+      "sequence_identity": 0.85,
+      "coverage": 0.95,
+      "parent_features": [],
+      "variants": {
+        "SNP": 5,
+        "DELETION": 2
+      },
+      "variant_details": [
+        {
+          "type": "SNP",
+          "position": 650,
+          "reference": "A",
+          "alternate": "G",
+          "length": 1,
+          "quality": 40.0
+        },
+        {
+          "type": "DELETION",
+          "position": 700,
+          "reference": "ACGT",
+          "alternate": "",
+          "length": 4,
+          "quality": 35.0
+        }
+      ]
+    },
+    "gene3": {
+      "type": "gene",
+      "start": 900,
+      "end": 1000,
+      "strand": "+",
+      "impact_type": "ABSENT",
+      "sequence_identity": null,
+      "coverage": null,
+      "parent_features": []
+    }
+  }
+}

@@ -1,0 +1,110 @@
+PREFIX haplo: <http://example.org/haplo/>
+PREFIX faldo: <http://biohackathon.org/resource/faldo#>
+PREFIX so: <http://purl.obolibrary.org/obo/so#>
+PREFIX vg: <http://example.org/vg/>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX dc: <http://purl.org/dc/elements/1.1/>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+
+# Main report shape
+haplo:ReportShape {
+  rdf:type [ haplo:AnnotationReport ] ;
+  dcterms:created xsd:dateTime ;
+  haplo:pathId xsd:string ;
+  haplo:referenceId xsd:string ;
+  haplo:featureCount xsd:integer ;
+  haplo:analyzedPath @haplo:PathShape ;
+  haplo:hasFeature @haplo:FeatureShape*
+}
+
+# Comparative report shape
+haplo:ComparativeReportShape {
+  rdf:type [ haplo:ComparativeAnnotationReport ] ;
+  dcterms:created xsd:dateTime ;
+  haplo:referenceId xsd:string ;
+  haplo:featureCount xsd:integer ;
+  haplo:comparesPath @haplo:PathShape+ ;
+  haplo:hasComparativeFeature @haplo:ComparativeFeatureShape*
+}
+
+# Path shape
+haplo:PathShape {
+  rdf:type [ vg:Path ] ;
+  rdfs:label xsd:string
+}
+
+# Feature shape
+haplo:FeatureShape {
+  rdf:type [ haplo:GenomicFeature ] ;
+  rdfs:label xsd:string ;
+  haplo:featureType xsd:string ;
+  haplo:impact @haplo:ImpactShape? ;
+  faldo:location @faldo:RegionShape? ;
+  haplo:hasVariant @haplo:VariantShape* ;
+  haplo:hasParent IRI*
+}
+
+# Comparative feature shape
+haplo:ComparativeFeatureShape {
+  rdf:type [ haplo:GenomicFeature ] ;
+  rdfs:label xsd:string
+}
+
+# Feature occurrence shape (for comparative reports)
+haplo:FeatureOccurrenceShape {
+  rdf:type [ haplo:FeatureOccurrence ] ;
+  haplo:inPath @haplo:PathShape ;
+  haplo:hasFeature @haplo:ComparativeFeatureShape ;
+  haplo:impactType xsd:string ;
+  haplo:sequenceIdentity xsd:decimal? ;
+  haplo:coverage xsd:decimal? ;
+  faldo:location @faldo:RegionShape? ;
+  haplo:variantSummary @haplo:VariantSummaryShape?
+}
+
+# Impact shape
+haplo:ImpactShape {
+  rdf:type [ haplo:FeatureImpact ] ;
+  haplo:impactType xsd:string ;
+  haplo:sequenceIdentity xsd:decimal? ;
+  haplo:coverage xsd:decimal?
+}
+
+# Variant shape
+haplo:VariantShape {
+  rdf:type [ haplo:SequenceVariant ] ;
+  haplo:variantType xsd:string ;
+  haplo:position xsd:integer ;
+  haplo:referenceAllele xsd:string ;
+  haplo:alternateAllele xsd:string ;
+  haplo:variantLength xsd:integer ;
+  haplo:variantQuality xsd:decimal?
+}
+
+# Variant summary shape
+haplo:VariantSummaryShape {
+  rdf:type [ haplo:VariantSummary ] ;
+  haplo:snpCount xsd:integer? ;
+  haplo:insertionCount xsd:integer? ;
+  haplo:deletionCount xsd:integer? ;
+  haplo:complexCount xsd:integer?
+}
+
+# FALDO region shape
+faldo:RegionShape {
+  rdf:type [ faldo:Region ] ;
+  faldo:begin @faldo:PositionShape ;
+  faldo:end @faldo:PositionShape
+}
+
+# FALDO position shape
+faldo:PositionShape {
+  rdf:type [ 
+    faldo:Position 
+    faldo:ForwardStrandPosition?
+    faldo:ReverseStrandPosition?
+  ] ;
+  faldo:position xsd:integer
+}

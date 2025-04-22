@@ -1,0 +1,126 @@
+{
+  "metadata": {
+    "timestamp": "2023-06-15T11:30:45.123456",
+    "paths": ["path1", "path2"],
+    "reference_id": "ref1",
+    "feature_count": 4
+  },
+  "features": {
+    "gene1": {
+      "feature_id": "gene1",
+      "paths": {
+        "path1": {
+          "impact_type": "PRESENT",
+          "type": "gene",
+          "start": 100,
+          "end": 500,
+          "strand": "+",
+          "sequence_identity": 0.95,
+          "coverage": 0.98,
+          "variants": {
+            "SNP": 2,
+            "INSERTION": 1
+          }
+        },
+        "path2": {
+          "impact_type": "PRESENT",
+          "type": "gene",
+          "start": 100,
+          "end": 500,
+          "strand": "+",
+          "sequence_identity": 0.95,
+          "coverage": 0.98,
+          "variants": {
+            "SNP": 2,
+            "INSERTION": 1
+          }
+        }
+      }
+    },
+    "exon1": {
+      "feature_id": "exon1",
+      "paths": {
+        "path1": {
+          "impact_type": "PRESENT",
+          "type": "exon",
+          "start": 200,
+          "end": 300,
+          "strand": "+",
+          "sequence_identity": 0.98,
+          "coverage": 1.0,
+          "variants": {
+            "SNP": 1
+          }
+        },
+        "path2": {
+          "impact_type": "PRESENT",
+          "type": "exon",
+          "start": 200,
+          "end": 300,
+          "strand": "+",
+          "sequence_identity": 0.98,
+          "coverage": 1.0,
+          "variants": {
+            "SNP": 1
+          }
+        }
+      }
+    },
+    "gene2": {
+      "feature_id": "gene2",
+      "paths": {
+        "path1": {
+          "impact_type": "MODIFIED",
+          "type": "gene",
+          "start": 600,
+          "end": 800,
+          "strand": "+",
+          "sequence_identity": 0.85,
+          "coverage": 0.95,
+          "variants": {
+            "SNP": 5,
+            "DELETION": 2
+          }
+        },
+        "path2": {
+          "impact_type": "MODIFIED",
+          "type": "gene",
+          "start": 600,
+          "end": 800,
+          "strand": "+",
+          "sequence_identity": 0.85,
+          "coverage": 0.95,
+          "variants": {
+            "SNP": 5,
+            "DELETION": 2
+          }
+        }
+      }
+    },
+    "gene3": {
+      "feature_id": "gene3",
+      "paths": {
+        "path1": {
+          "impact_type": "ABSENT",
+          "type": "gene",
+          "start": 900,
+          "end": 1000,
+          "strand": "-",
+          "sequence_identity": null,
+          "coverage": null,
+          "variants": null
+        },
+        "path2": {
+          "impact_type": "ABSENT",
+          "type": "gene",
+          "start": 900,
+          "end": 1000,
+          "strand": "-",
+          "sequence_identity": null,
+          "coverage": null,
+          "variants": null
+        }
+      }
+    }
+  }
+}
