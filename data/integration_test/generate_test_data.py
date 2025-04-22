@@ -191,6 +191,8 @@ class TestDataGenerator:
                     "Parent": [mrna_id]
                 }
             )
+            if not hasattr(mrna_feature, "sub_features"):
+                mrna_feature.sub_features = []
             mrna_feature.sub_features.append(exon_feature)
         
         # Add UTR and CDS features if gene is long enough
@@ -227,6 +229,8 @@ class TestDataGenerator:
                         "Parent": [mrna_id]
                     }
                 )
+                if not hasattr(mrna_feature, "sub_features"):
+                    mrna_feature.sub_features = []
                 mrna_feature.sub_features.append(utr5_feature)
                 
                 # CDS features
@@ -243,6 +247,8 @@ class TestDataGenerator:
                             "phase": [str(phase)]
                         }
                     )
+                    if not hasattr(mrna_feature, "sub_features"):
+                        mrna_feature.sub_features = []
                     mrna_feature.sub_features.append(cds_feature)
                 
                 # 3' UTR
@@ -254,6 +260,8 @@ class TestDataGenerator:
                         "Parent": [mrna_id]
                     }
                 )
+                if not hasattr(mrna_feature, "sub_features"):
+                    mrna_feature.sub_features = []
                 mrna_feature.sub_features.append(utr3_feature)
                 
             else:  # Reverse strand, mirror the forward strand logic
@@ -318,6 +326,8 @@ class TestDataGenerator:
                 mrna_feature.sub_features.append(utr5_feature)
         
         # Add mRNA to gene's subfeatures
+        if not hasattr(gene_feature, "sub_features"):
+            gene_feature.sub_features = []
         gene_feature.sub_features.append(mrna_feature)
     
     def _generate_alternative_mrna_subfeatures(self, gene_feature):
@@ -373,6 +383,8 @@ class TestDataGenerator:
                         "Parent": [mrna_id]
                     }
                 )
+                if not hasattr(mrna_feature, "sub_features"):
+                    mrna_feature.sub_features = []
                 mrna_feature.sub_features.append(exon_feature)
             
             # Add UTR and CDS features
@@ -426,6 +438,8 @@ class TestDataGenerator:
                 utr5_feature.qualifiers["Parent"].append(f"mRNA{gene_id[4:]}.1")
                 utr5_feature.qualifiers["ID"] = [f"5UTR{gene_id[4:]}"]
             
+            if not hasattr(mrna_feature, "sub_features"):
+                mrna_feature.sub_features = []
             mrna_feature.sub_features.append(utr5_feature)
             
             # Add CDS features
@@ -442,6 +456,8 @@ class TestDataGenerator:
                         "phase": [str(phase)]
                     }
                 )
+                if not hasattr(mrna_feature, "sub_features"):
+                    mrna_feature.sub_features = []
                 mrna_feature.sub_features.append(cds_feature)
             
             # Add 3' UTR
@@ -459,9 +475,13 @@ class TestDataGenerator:
                 utr3_feature.qualifiers["Parent"].append(f"mRNA{gene_id[4:]}.1")
                 utr3_feature.qualifiers["ID"] = [f"3UTR{gene_id[4:]}"]
             
+            if not hasattr(mrna_feature, "sub_features"):
+                mrna_feature.sub_features = []
             mrna_feature.sub_features.append(utr3_feature)
             
             # Add mRNA to gene's subfeatures
+            if not hasattr(gene_feature, "sub_features"):
+                gene_feature.sub_features = []
             gene_feature.sub_features.append(mrna_feature)
         
     def generate_variants(self):

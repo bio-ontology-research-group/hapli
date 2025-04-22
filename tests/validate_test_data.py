@@ -272,8 +272,8 @@ def validate_vcf_file() -> bool:
             if len(columns) <= 9:
                 logger.error("VCF file missing sample columns")
                 valid = False
-            elif 'Sample1' not in columns or 'Sample2' not in columns:
-                logger.error("VCF file missing required sample columns (Sample1, Sample2)")
+            elif 'sample1' not in columns or 'sample2' not in columns:
+                logger.error("VCF file missing required sample columns (sample1, sample2)")
                 valid = False
         
         # Check variant lines
@@ -358,7 +358,7 @@ def cross_validate_files() -> bool:
                 parts = line.strip().split('\t')
                 seg_id = parts[1]
                 if '_' in seg_id and not seg_id.startswith('sample'):
-                    var_type = seg_id.split('_')[1]
+                    var_type = seg_id.split('_')[1].lower()
                     gfa_variants.add(var_type)
     
     vcf_variants = set()
