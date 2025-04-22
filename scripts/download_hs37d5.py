@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Downloads the hs37d5 reference genome FASTA file and its index
-from the 1000 Genomes FTP site.
+Downloads the hs37d5 reference genome FASTA file from the 1000 Genomes FTP site
+and generates the index locally using samtools.
 """
 
 import argparse
@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 import sys
+import subprocess # Added for samtools
 from pathlib import Path
 from tqdm import tqdm
 
@@ -22,7 +23,17 @@ FTP_SERVER = "ftp.1000genomes.ebi.ac.uk"
 FTP_DIR = "/vol1/ftp/technical/reference/phase2_reference_assembly_sequence/"
 FASTA_FILENAME_GZ = "hs37d5.fa.gz"
 FASTA_FILENAME = "hs37d5.fa"
-INDEX_FILENAME = "hs37d5.fa.fai"
+# INDEX_FILENAME = "hs37d5.fa.fai" # No longer downloading index
+
+def check_samtools_available():
+    """Check if samtools is available in the path."""
+    samtools_path = shutil.which("samtools")
+    if samtools_path:
+        logger.info(f"Found samtools at {samtools_path}")
+        return True
+    else:
+        logger.error("samtools not found in PATH. It is required to generate the FASTA index.")
+        return False
 
 def download_file_with_progress(server: str, directory: str, filename: str, output_path: Path):
     """Downloads a file from an FTP server with a progress bar."""
@@ -116,45 +127,78 @@ def extract_gzip(gzip_path: Path, output_path: Path, remove_gz: bool = True):
             output_path.unlink()
         return False
 
-def main():
-    parser = argparse.ArgumentParser(description=f"Download the {FASTA_FILENAME} reference genome and index.")
-    parser.add_argument('--output-dir', '-o', required=True, help='Directory to save the downloaded files.')
-    parser.add_argument('--extract', action='store_true', help='Extract the downloaded FASTA file.')
-    parser.add_argument('--skip-existing', action='store_true', help='Skip download/extraction if final files exist.')
+def generate_fasta_index(fasta_path: Path) -> bool:
+    """Generates a FASTA index (.fai) using samtools faidx."""
+    index_path = fasta_path.with_suffix(fasta_path.suffix + '.fai')
+    logger.info(f"Generating FASTA index for {fasta_path.name} -> {index_path.name}...")
+    try:
+        cmd = ['samtools', 'faidx', str(fasta_path)]
+        logger.debug(f"Running command: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
 
+        if not index_path.exists() or index_path.stat().st_size == 0:
+             logger.error(f"samtools faidx command finished but index file {index_path} is missing or empty.")
+             return False
+
+        logger.info(f"Successfully generated FASTA index: {index_path.name}")
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"samtools faidx failed for {fasta_path.name}: {e.stderr}")
+        return False
+    except FileNotFoundError:
+        # This should be caught by check_samtools_available, but check again
+        logger.error("samtools command not found. Cannot generate index.")
+        return False
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during index generation: {e}")
+        return False
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"Download the {FASTA_FILENAME} reference genome and generate its index.")
+    parser.add_argument('--output-dir', '-o', required=True, help='Directory to save the downloaded files.')
+    parser.add_argument('--extract', action='store_true', help='Extract the downloaded FASTA file (required for indexing).')
+    parser.add_argument('--skip-existing', action='store_true', help='Skip download/extraction/indexing if final files exist.')
 
     args = parser.parse_args()
+
+    # --- Prerequisite Check ---
+    if not check_samtools_available():
+        sys.exit(1)
+
+    if not args.extract:
+        logger.warning("--extract flag is not set. FASTA index cannot be generated without extracting the FASTA file. Please add --extract.")
+        # Decide whether to exit or proceed without indexing
+        # For now, let's exit as the goal is usually to have the index.
+        sys.exit(1)
+
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     fasta_output_path_gz = output_dir / FASTA_FILENAME_GZ
     fasta_output_path = output_dir / FASTA_FILENAME
-    index_output_path = output_dir / INDEX_FILENAME
+    index_output_path = fasta_output_path.with_suffix(fasta_output_path.suffix + '.fai') # Define expected index path
 
     # --- Skip Logic ---
+    # Check if both the final FASTA (.fa) and its index (.fa.fai) exist
     final_fasta_exists = fasta_output_path.exists() and fasta_output_path.is_file() and os.path.getsize(fasta_output_path) > 0
     final_index_exists = index_output_path.exists() and index_output_path.is_file() and os.path.getsize(index_output_path) > 0
 
     if args.skip_existing and final_fasta_exists and final_index_exists:
-        logger.info(f"Final files {fasta_output_path.name} and {index_output_path.name} already exist in {output_dir}. Skipping download and extraction.")
+        logger.info(f"Final files {fasta_output_path.name} and {index_output_path.name} already exist in {output_dir}. Skipping.")
         sys.exit(0)
-    elif args.skip_existing and args.extract and final_fasta_exists:
-         logger.info(f"Final FASTA file {fasta_output_path.name} already exists.")
-         # Still need to check/download index below
-    elif args.skip_existing and not args.extract and fasta_output_path_gz.exists():
-         logger.info(f"Compressed FASTA file {fasta_output_path_gz.name} already exists.")
-         # Still need to check/download index below
-
 
     # --- Download FASTA ---
     fasta_download_target = fasta_output_path_gz
-    if args.extract and final_fasta_exists:
+    fasta_available_for_indexing = final_fasta_exists # Is the .fa file already there?
+
+    if final_fasta_exists:
         logger.info(f"Skipping FASTA download as extracted file {fasta_output_path.name} exists.")
-        fasta_download_success = True # Treat as success for logic flow
-    elif not args.extract and fasta_output_path_gz.exists():
-         logger.info(f"Skipping FASTA download as compressed file {fasta_output_path_gz.name} exists.")
-         fasta_download_success = True # Treat as success for logic flow
+        fasta_download_success = True
+    elif fasta_output_path_gz.exists():
+         logger.info(f"Compressed FASTA file {fasta_output_path_gz.name} exists. Will proceed to extraction.")
+         fasta_download_success = True # Download itself is skipped, but file is present
     else:
         logger.info("Downloading FASTA file...")
         fasta_download_success = download_file_with_progress(FTP_SERVER, FTP_DIR, FASTA_FILENAME_GZ, fasta_download_target)
@@ -162,37 +206,40 @@ def main():
             logger.error("FASTA download failed. Exiting.")
             sys.exit(1)
 
-    # --- Download Index ---
-    if final_index_exists:
-        logger.info(f"Skipping index download as file {index_output_path.name} exists.")
-        index_download_success = True
-    else:
-        logger.info("Downloading FASTA index file...")
-        index_download_success = download_file_with_progress(FTP_SERVER, FTP_DIR, INDEX_FILENAME, index_output_path)
-        if not index_download_success:
-            logger.error("FASTA index download failed. Exiting.")
-            sys.exit(1)
-
-
     # --- Extract FASTA ---
-    if args.extract:
-        if final_fasta_exists:
-             logger.info(f"Skipping extraction as {fasta_output_path.name} already exists.")
-        elif fasta_output_path_gz.exists():
+    # Extraction is required for indexing, args.extract is checked at the start
+    if not final_fasta_exists: # Only extract if .fa doesn't exist
+        if fasta_output_path_gz.exists():
              extract_success = extract_gzip(fasta_output_path_gz, fasta_output_path, remove_gz=True)
              if not extract_success:
                  logger.error("FASTA extraction failed. Exiting.")
                  sys.exit(1)
-        elif not fasta_download_success: # Should not happen if download failed earlier, but check anyway
-             logger.error("Cannot extract FASTA as download failed or was skipped and file doesn't exist.")
-             sys.exit(1)
+             fasta_available_for_indexing = True
         else:
-             logger.warning(f"Cannot extract FASTA. Gzip file {fasta_output_path_gz.name} not found (and extracted version doesn't exist).")
-             # Exit with error if extraction was requested but couldn't happen
+             # This case should ideally not be reached if download succeeded
+             logger.error(f"Cannot extract FASTA. Gzip file {fasta_output_path_gz.name} not found.")
              sys.exit(1)
+    else:
+         logger.info(f"Skipping extraction as {fasta_output_path.name} already exists.")
+         fasta_available_for_indexing = True
 
 
-    logger.info("Reference genome download (and extraction, if requested) completed successfully.")
+    # --- Generate Index ---
+    if fasta_available_for_indexing:
+        if final_index_exists:
+            logger.info(f"Skipping index generation as {index_output_path.name} already exists.")
+        else:
+            index_success = generate_fasta_index(fasta_output_path)
+            if not index_success:
+                logger.error("FASTA index generation failed. Exiting.")
+                sys.exit(1)
+    else:
+        # Should not happen if logic above is correct
+        logger.error("FASTA file is not available for indexing. Exiting.")
+        sys.exit(1)
+
+
+    logger.info("Reference genome download, extraction, and indexing completed successfully.")
     sys.exit(0)
 
 

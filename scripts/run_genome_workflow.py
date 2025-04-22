@@ -74,9 +74,10 @@ class WorkflowStep:
     def should_run(self, state_file: Dict) -> bool:
         """Determine if this step should run based on state file and output existence."""
         # Check if step was already completed successfully
-        if self.name in state_file and state_file[self.name].get('success', False):
+        step_state = state_file.get(self.name, {}) # Get state for this specific step
+        if step_state.get('success', False):
             # Verify outputs still exist
-            outputs_from_state = state_file[self.name].get('outputs', [])
+            outputs_from_state = step_state.get('outputs', [])
             # Use the outputs defined in the step instance for checking existence
             outputs_to_check = self.get_expected_outputs()
             if not outputs_to_check: # If no outputs defined, assume success means skippable
@@ -105,12 +106,15 @@ class WorkflowStep:
     def get_state(self) -> Dict:
         """Get the state of this step for the state file."""
         # Use get_expected_outputs to ensure the saved state reflects the actual check
+        start_iso = datetime.fromtimestamp(self.start_time).isoformat() if self.start_time else None
+        end_iso = datetime.fromtimestamp(self.end_time).isoformat() if self.end_time else None
         return {
             'success': self.success,
-            'start_time': self.start_time,
-            'end_time': self.end_time,
+            'start_time': start_iso,
+            'end_time': end_iso,
             'outputs': self.get_expected_outputs(),
-            'skipped': self.skipped
+            'skipped': self.skipped,
+            'status': 'completed' if self.success else ('skipped' if self.skipped else 'failed') # Add explicit status
         }
 
     def execute(self, state_file: Dict, context: Dict[str, Any]) -> bool:
@@ -120,8 +124,12 @@ class WorkflowStep:
             self.update_context(context)
             return True
 
-        logger.info(f"Running step: {self.name} - {self.description}")
+        logger.info(f"--- Running Step: {self.name} ---")
+        logger.info(f"Description: {self.description}")
         self.start_time = time.time()
+        self.end_time = None # Reset end time
+        self.success = None # Reset success status
+        self.skipped = False # Reset skipped status
 
         try:
             self.success = self.run(context)
@@ -139,6 +147,7 @@ class WorkflowStep:
             logger.info(f"Step {self.name} completed successfully in {duration:.2f} seconds")
         else:
             logger.error(f"Step {self.name} failed after {duration:.2f} seconds")
+        logger.info(f"--- Finished Step: {self.name} ---")
 
         return self.success
 
@@ -399,13 +408,13 @@ class WorkflowManager:
                 logger.info(f"Loaded workflow state from {self.state_file_path}")
             except json.JSONDecodeError as e:
                 logger.error(f"Error decoding state file {self.state_file_path}: {e}. Starting fresh.")
-                self.state = {}
+                self.state = {"steps": {}} # Initialize with empty steps dict
             except Exception as e:
                 logger.error(f"Error loading state file: {e}. Starting fresh.")
-                self.state = {}
+                self.state = {"steps": {}} # Initialize with empty steps dict
         else:
             logger.info("No existing state file found. Starting from the beginning.")
-            self.state = {}
+            self.state = {"steps": {}} # Initialize with empty steps dict
 
     def _save_state(self):
         """Save the current state to the state file."""
@@ -444,7 +453,9 @@ class WorkflowManager:
                     overall_success = False
                     break
 
-                step_success = step.execute(self.state.get("steps", {}), self.context) # Pass step-specific state
+                # Pass the state specific to this step to execute method
+                step_state_data = self.state.get("steps", {}).get(step.name, {})
+                step_success = step.execute(step_state_data, self.context)
 
                 # Update state with step results immediately after execution
                 if "steps" not in self.state:
@@ -509,7 +520,9 @@ class WorkflowManager:
                     duration_str = ""
 
                     if state:
-                        step_status = state.get('status', 'pending') # Use status from state file
+                        # Use the explicit status saved in the state if available
+                        step_status = state.get('status', 'pending')
+
                         if step_status == "skipped":
                             status = "⏭ Skipped"
                             skipped_steps += 1
@@ -787,9 +800,10 @@ def create_workflow(args):
         Path(workflow.context[d_key]).mkdir(parents=True, exist_ok=True)
 
     # --- Step 1: Download Reference Genome (hs37d5) ---
+    # Outputs now include the index file which is generated by the script
     workflow.add_step(PythonScriptStep(
         name="download_reference",
-        description="Download hs37d5 reference genome FASTA and index.",
+        description="Download hs37d5 reference genome FASTA and generate index.",
         script_path="scripts/download_hs37d5.py",
         args=[
             "--output-dir", "{ref_dir}",
@@ -912,6 +926,7 @@ def main():
 
     # --- Prerequisite Check (Overall) ---
     # Check tools needed by any step upfront
+    # Added samtools here
     all_prereqs = ['bcftools', 'tabix', 'bgzip', 'samtools', 'vg']
     if not check_prerequisites(all_prereqs):
         sys.exit(1)
@@ -928,7 +943,16 @@ def main():
         # Ensure the converter script exists before starting
         converter_script = Path("scripts/vcf_to_gfa_converter.py")
         if not converter_script.exists():
-             logger.critical(f"Required script '{converter_script}' not found. Please restore it (e.g., from git hash 7cf2f5c).")
+             # Check if the placeholder error message is in the file
+             try:
+                 with open(converter_script, 'r') as f:
+                     content = f.read()
+                     if "Variant/reference sequence mismatch" in content:
+                          logger.critical(f"Required script '{converter_script}' contains only an error message. Please restore its code (e.g., from git hash 7cf2f5c).")
+                     else:
+                          logger.critical(f"Required script '{converter_script}' not found. Please restore it.")
+             except Exception:
+                 logger.critical(f"Required script '{converter_script}' not found or cannot be read. Please restore it.")
              sys.exit(2)
 
         workflow = create_workflow(args)
