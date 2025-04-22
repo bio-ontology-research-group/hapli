@@ -351,7 +351,7 @@ def create_workflow(args):
     ))
     
     # Define consistent sample IDs to use across all VCF downloads
-    sample_ids = ["NA12878", "NA12891", "NA12892"]  # Common trio samples from 1000 Genomes
+    sample_ids = ["HG01383", "NA12878", "NA20530"]  # Specific samples for all downloads
     
     # Step 4: Download VCF files
     vcf_dir = os.path.join(args.output_dir, "vcf")
