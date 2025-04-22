@@ -155,8 +155,8 @@ class VCFtoGFAConverter:
 
                 segment = gfapy.line.Segment(
                     segment_id,  # First positional argument is the segment ID
-                    sequence=sequence,
-                    LN=len(sequence) # Add LN tag explicitly
+                    sequence,     # Second positional argument should be the sequence
+                    {"LN": len(sequence)} # Tags should be in a dictionary
                 )
                 self._gfa.add_line(segment)
                 self._segment_cache[sequence] = segment_id

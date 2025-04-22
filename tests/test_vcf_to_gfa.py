@@ -253,7 +253,7 @@ class TestVCFtoGFAConverter(unittest.TestCase):
             self.fail("Conversion failed due to missing library, indicating reliance on them.")
         except Exception as e:
             # Allow known conversion/library errors, fail on others
-            if isinstance(e, (VCFtoGFAConversionError, ReferenceHandlerError, PhasingError, gfapy.error.GfapyError, pysam.utils.SamtoolsError, FileNotFoundError)):
+            if isinstance(e, (VCFtoGFAConversionError, ReferenceHandlerError, PhasingError, gfapy.error.FormatError, pysam.utils.SamtoolsError, FileNotFoundError)):
                  pass # Errors from the libraries or converter logic are somewhat expected
             else:
                  self.fail(f"Unexpected error, potentially indicating custom logic issues: {e}")

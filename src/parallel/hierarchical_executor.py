@@ -120,7 +120,7 @@ class HierarchicalExecutor:
             raise ValueError(f"Task ID already exists: {task_id}")
 
         # Create task object
-        task = Task(id=task_id, func=func, args=args, kwargs=kwargs, dependencies=dependencies or [])
+        task = Task(id=task_id, func=func, args=args, kwargs=kwargs or {}, dependencies=dependencies or [])
         self.tasks[task_id] = task
 
         # Add to DAG
@@ -173,6 +173,9 @@ class HierarchicalExecutor:
         # Clear previous results
         self.results = {}
         self.errors = {}
+        
+        # Set up logging
+        logger.info(f"Starting execution of {len(self.tasks)} tasks with fail_fast={self.fail_fast}")
 
         # Get topological order (ensures dependencies are executed first)
         try:
