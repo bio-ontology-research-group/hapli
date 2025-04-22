@@ -331,7 +331,7 @@ class TestVariantDetector(unittest.TestCase):
     def test_detect_tandem_repeat(self):
         """Test detection of tandem repeat variation."""
         ref_feature = self._create_mock_feature(2, 22)
-        aln_feature = self._create_mock_feature(102, 28)
+        aln_feature = self._create_mock_feature(102, 128)
         
         # Reference sequence with a repeated AT pattern
         ref_seq = "ACGTATATATACGTACGTAC"
