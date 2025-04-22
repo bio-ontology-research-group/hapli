@@ -14,7 +14,7 @@ import uuid
 import rdflib
 from rdflib import Graph, Literal, URIRef, Namespace, BNode
 from rdflib.namespace import RDF, RDFS, XSD, DC, DCTERMS
-from pyshex import ShExValidator
+from pyshex import ShExEvaluator
 
 from src.analysis.summary_generator import AnalysisSummary
 
@@ -327,7 +327,7 @@ class RDFFormatter:
                 return False
                 
             # Run validation
-            validator = ShExValidator(g, shex_file)
+            validator = ShExEvaluator(g, shex_file)
             for node in report_nodes:
                 result = validator.validate(node, HAPLO.AnnotationReport)
                 if not result:
