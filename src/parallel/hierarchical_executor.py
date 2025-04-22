@@ -36,12 +36,13 @@ class Task:
         if self.dependencies is None:
             self.dependencies = []
     
-    def execute(self, dependency_results: Dict[str, Any] = None) -> Any:
+    def execute(self, dependency_args: Tuple = ()) -> Any:
         """
         Execute the task.
         
         Args:
-            dependency_results: Optional dictionary of dependency results
+            dependency_args: Tuple containing results from dependency tasks,
+                             in the order specified by self.dependencies.
             
         Returns:
             Result of the task
@@ -51,15 +52,11 @@ class Task:
         """
         self.status = 'running'
         try:
-            # Always use dependency results if provided
-            kwargs = self.kwargs.copy() if self.kwargs else {}
-            
-            # Include dependency results in kwargs if provided
-            if dependency_results:
-                kwargs.update(dependency_results)
+            # Combine task's own args with dependency results
+            final_args = self.args + dependency_args
             
             # Execute the function with combined arguments
-            self.result = self.func(*self.args, **kwargs)
+            self.result = self.func(*final_args, **self.kwargs)
             self.status = 'completed'
             return self.result
                     
@@ -198,14 +195,12 @@ class HierarchicalExecutor:
                 # Remove from remaining tasks
                 remaining_tasks.pop(i)
                 
-                # Prepare dependency results
-                # The parameter name should be the task ID itself
-                dependency_results = {}
-                for dep_id in task.dependencies:
-                    dependency_results[dep_id] = self.results[dep_id]
+                # Prepare dependency results as positional arguments
+                # in the order specified in task.dependencies
+                dependency_args = tuple(self.results[dep_id] for dep_id in task.dependencies)
                 
-                # Submit the task for execution with dependency results
-                future = executor.submit(task.execute, dependency_results)
+                # Submit the task for execution
+                future = executor.submit(task.execute, dependency_args)
                 futures[task_id] = future
             else:
                 i += 1
