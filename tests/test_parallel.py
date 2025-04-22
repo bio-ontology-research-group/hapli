@@ -10,6 +10,7 @@ import networkx as nx
 from typing import List, Dict, Any
 import os
 import multiprocessing
+import logging # Import logging to use assertLogs
 
 from src.parallel.task_manager import (
     TaskChunker, 
@@ -151,10 +152,15 @@ class TestWorkerPools(unittest.TestCase):
     def test_progress_tracking(self):
         """Test that progress is tracked."""
         # This is more of an integration test to make sure progress tracking doesn't break
-        results = execute_parallel(slow_square, [1, 2, 3, 4, 5], 
-                                 num_workers=2,
-                                 track_progress=True)
+        # Use assertLogs to capture the expected INFO message without printing it
+        with self.assertLogs(level='INFO') as cm:
+            results = execute_parallel(slow_square, [1, 2, 3, 4, 5], 
+                                     num_workers=2,
+                                     track_progress=True)
         self.assertEqual(results, [1, 4, 9, 16, 25])
+        # Check that at least one progress message was logged
+        self.assertTrue(any("Progress:" in log for log in cm.output))
+
         
     def test_error_handling(self):
         """Test that worker errors are propagated."""
@@ -233,7 +239,7 @@ class TestHierarchicalExecutor(unittest.TestCase):
 
             
     def test_error_handling(self):
-        """Test error handling during execution."""
+        """Test error handling during execution without fail_fast."""
         def failing_task():
             raise ValueError("Task failed")
             
@@ -243,15 +249,20 @@ class TestHierarchicalExecutor(unittest.TestCase):
         # Task 3 depends on task 1, should still run
         executor.add_task('task3', lambda dep1_res: dep1_res + 2, dependencies=['task1'])
         
-        results = executor.execute()
+        # Capture expected ERROR log for task2 without printing it
+        with self.assertLogs('src.parallel.hierarchical_executor', level='ERROR') as cm:
+            results = executor.execute()
+            
         self.assertEqual(results.get('task1'), 1)
         self.assertEqual(results.get('task3'), 3) # 1 + 2 = 3
         self.assertIn('task2', executor.errors)
         self.assertIsInstance(executor.errors['task2'], ValueError)
         self.assertNotIn('task2', results)
+        # Verify the expected log message was captured
+        self.assertTrue(any("Task failed: task2" in log for log in cm.output))
         
     def test_fail_fast(self):
-        """Test fail_fast behavior."""
+        """Test fail_fast behavior, capturing expected error logs."""
         def failing_task():
             time.sleep(0.01) # Ensure it doesn't finish instantly
             raise ValueError("Task failed")
@@ -266,7 +277,9 @@ class TestHierarchicalExecutor(unittest.TestCase):
         executor.add_task('task1', failing_task)
         executor.add_task('task2', slow_task)  # Should be cancelled or not complete
         
-        results = executor.execute()
+        # Use assertLogs to capture the expected ERROR messages
+        with self.assertLogs('src.parallel.hierarchical_executor', level='ERROR') as cm:
+            results = executor.execute()
         
         # Check that the failing task's error is recorded
         self.assertIn('task1', executor.errors)
@@ -276,12 +289,10 @@ class TestHierarchicalExecutor(unittest.TestCase):
         # This is the primary check for fail_fast behavior.
         self.assertNotIn('task2', results)
         
-        # Optional: Check status if needed, but not having result is primary check
-        # This assertion might still fail depending on exact timing, so the
-        # check above (assertNotIn results) is more robust.
-        # if 'task2' in executor.tasks:
-        #      self.assertNotEqual(executor.tasks['task2'].status, 'completed')
-
+        # Verify that the expected error messages were logged
+        log_output = "".join(cm.output)
+        self.assertIn("Task failed: task1", log_output)
+        self.assertIn("Stopping execution due to task failure: task1", log_output)
 
         
     def test_execution_plan(self):
@@ -392,10 +403,12 @@ class TestPerformanceScaling(unittest.TestCase):
         # Use a context manager to ensure cleanup
         try:
             # Use 'thread' pool to avoid pickling issues with sometimes_fails if run inside method
-            with create_worker_pool('thread', track_progress=False) as pool:
-                # Map the function that sometimes fails
-                # pool.map will raise the *first* exception encountered after processing all tasks
-                results = pool.map(sometimes_fails, data)
+            # Capture expected ERROR logs from the pool map without printing them
+            with self.assertLogs(level='ERROR') as cm:
+                 with create_worker_pool('thread', track_progress=False) as pool:
+                    # Map the function that sometimes fails
+                    # pool.map will raise the *first* exception encountered after processing all tasks
+                    results = pool.map(sometimes_fails, data)
         except ValueError as e:
              caught_exception = e
 
@@ -482,4 +495,6 @@ class TestPerformanceScaling(unittest.TestCase):
 
 
 if __name__ == '__main__':
+    # Configure logging level for tests if needed, e.g., to see INFO messages
+    # logging.basicConfig(level=logging.INFO) 
     unittest.main()
