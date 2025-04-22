@@ -2,6 +2,8 @@
 import logging
 import itertools
 import os  # Added import
+import sys # Added import
+import argparse # Added import
 from typing import Dict, List, Optional, Tuple, Any
 import pysam
 import gfapy
@@ -285,7 +287,17 @@ class VCFtoGFAConverter:
         try:
             # Add GFA header (optional but recommended)
             # Using GFA1 for broader compatibility unless GFA2 features are needed
-            self._gfa.add_line(gfapy.line.Header(VN="1.0"))
+            # --- Start Change: Use tags dictionary for Header ---
+            try:
+                 # Use gfapy.Field for explicit type definition if available
+                 header_line = gfapy.line.Header(tags={"VN": gfapy.Field("Z", "1.0")})
+                 self._gfa.add_line(header_line)
+            except AttributeError:
+                 # Fallback if gfapy.Field is not available or structure changed
+                 logger.warning("gfapy.Field not found, trying tuple format for header tag.")
+                 header_line = gfapy.line.Header(tags={"VN": ("Z", "1.0")})
+                 self._gfa.add_line(header_line)
+            # --- End Change ---
 
             # Determine contigs to process
             contigs_to_process = []
@@ -444,3 +456,52 @@ class VCFtoGFAConverter:
     def __exit__(self, exc_type, exc_val, exc_tb):
         # Ensures cleanup even if errors occur within the 'with' block
         self._cleanup_resources()
+
+# --- Example Usage (for testing or direct script execution) ---
+if __name__ == "__main__":
+    # Basic argument parsing for standalone execution
+    parser = argparse.ArgumentParser(description="Convert VCF to GFA format.")
+    parser.add_argument("-v", "--vcf", required=True, help="Input VCF file path (indexed).")
+    parser.add_argument("-r", "--reference", required=True, help="Reference FASTA file path (indexed).")
+    parser.add_argument("-o", "--output", required=True, help="Output GFA file path.")
+    parser.add_argument("-s", "--sample-name", default=None, help="Sample name to process (default: first sample in VCF).")
+    parser.add_argument("--region", default=None, help="Region to process (e.g., chr1:1000-2000 or chr1). Default: process all.")
+    parser.add_argument("--unphased", default='ref', choices=['ref', 'alt', 'skip', 'error'],
+                        help=f"Strategy for handling unphased variants (default: ref).")
+    parser.add_argument("--include-ref-path", action='store_true', default=False, help="Include a GFA path representing the reference sequence.")
+    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                        help="Set the logging level (default: INFO).")
+
+    args = parser.parse_args()
+
+    # Configure logging
+    log_level = args.log_level.upper()
+    logging.basicConfig(level=log_level,
+                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S')
+    # Suppress verbose pysam messages if not in DEBUG mode
+    if log_level != "DEBUG":
+         logging.getLogger("pysam").setLevel(logging.WARNING)
+         logging.getLogger("gfapy").setLevel(logging.INFO) # Adjust gfapy level if needed
+
+    try:
+        # Instantiate converter with appropriate arguments from command line
+        converter = VCFtoGFAConverter(
+            vcf_filepath=args.vcf,
+            fasta_filepath=args.reference, # Corrected argument name
+            output_gfa_filepath=args.output,
+            path_template="{sample}_hap{hap}", # Default template, could be made configurable
+            unphased_strategy=args.unphased
+        )
+        # Call convert method
+        converter.convert(region=args.region)
+
+        logger.info("Script finished successfully.")
+        sys.exit(0)
+
+    except (FileNotFoundError, ValueError, RuntimeError, VCFtoGFAConversionError) as e:
+        logger.error(f"Error: {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.critical(f"An unexpected critical error occurred: {e}", exc_info=True)
+        sys.exit(1)
