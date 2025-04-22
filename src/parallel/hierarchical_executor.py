@@ -186,29 +186,26 @@ class HierarchicalExecutor:
                 # Remove from remaining tasks
                 remaining_tasks.pop(i)
                 
-                # Create a function that will have access to dependency results
+                # Instead of trying to inspect functions (which can fail with lambdas),
+                # we'll use a simpler approach where we prepare all dependency results
+                # but only pass them if they're actually used by the function
+                dependency_results = {
+                    f"dep_{dep_id}": self.results[dep_id] 
+                    for dep_id in task.dependencies
+                }
+                
+                # Create a function that includes dependency results in its closure
                 def execute_with_deps():
-                    # For tasks that expect dependency results, they should be passed as parameters
-                    # with the same name as in the lambda definition
+                    # Copy the task's kwargs to avoid modifying the original
                     task_kwargs = task.kwargs.copy() if task.kwargs else {}
                     
-                    # Only add dependency results for parameters that match the function signature
+                    # Try to execute with dependency results added to kwargs
                     try:
-                        import inspect
-                        sig = inspect.signature(task.func)
-                        
-                        # Check if the function expects specific parameters for dependencies
-                        for dep_id in task.dependencies:
-                            param_name = f"dep_{dep_id}"
-                            if param_name in sig.parameters:
-                                task_kwargs[param_name] = self.results[dep_id]
-                    except (ValueError, TypeError):
-                        # Some lambdas might not have inspectable signatures
-                        # In this case, don't pass any dependency results
-                        pass
-                    
-                    # Execute the function with its original args and kwargs
-                    return task.func(*task.args, **task_kwargs)
+                        return task.func(*task.args, **{**task_kwargs, **dependency_results})
+                    except TypeError:
+                        # If that fails (likely due to unexpected kwargs), 
+                        # try with just the original kwargs
+                        return task.func(*task.args, **task_kwargs)
                 
                 # Submit the wrapper function that handles dependencies appropriately
                 future = executor.submit(execute_with_deps)
