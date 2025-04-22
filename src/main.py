@@ -57,12 +57,22 @@ class HaplotypeAnnotationTool:
         if not isinstance(numeric_level, int):
             raise ValueError(f"Invalid log level: {log_level}")
         
+        # Reset existing handlers to avoid duplicate log messages
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+            
         # Configure root logger
         logging.basicConfig(
             level=numeric_level,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
+        
+        # Make sure the level is directly set on the root logger
+        # (basicConfig might be ignored if it was previously called)
+        root_logger.setLevel(numeric_level)
+        
         logger.info(f"Logging configured at {log_level} level")
         
     def load_config(self, args: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -168,10 +178,31 @@ class HaplotypeAnnotationTool:
         path_ids = self.config.get('path_ids')
         
         # Mock implementation until path_analyzer is implemented
-        selected_paths = path_ids.split(',') if isinstance(path_ids, str) and path_ids else []
+        selected_paths = []
+        
+        # Handle explicit path IDs
+        if isinstance(path_ids, str) and path_ids.strip():
+            selected_paths = [p.strip() for p in path_ids.split(',') if p.strip()]
+        elif isinstance(path_ids, list):
+            selected_paths = path_ids
+        
+        # In a real implementation, we would also handle sample_names and haplotype_ids here
+        # For now, just log if they were provided
+        if sample_names:
+            logger.info(f"Sample filtering requested but not yet implemented: {sample_names}")
+        if haplotype_ids:
+            logger.info(f"Haplotype filtering requested but not yet implemented: {haplotype_ids}")
+        
+        # If path_ids, sample_names, and haplotype_ids are all None/empty,
+        # we would typically use a default set of paths or all available paths
+        if not selected_paths and not sample_names and not haplotype_ids:
+            logger.info("No specific paths requested, using default path selection strategy")
+            # In a real implementation, this would select some default paths
+            # For now, just return an empty list
         
         logger.info(f"Selected {len(selected_paths)} paths for annotation")
-        logger.debug(f"Selected paths: {selected_paths}")
+        if selected_paths:
+            logger.debug(f"Selected paths: {selected_paths}")
         
         return selected_paths
         
@@ -237,8 +268,11 @@ class HaplotypeAnnotationTool:
             selected_paths = self.select_paths()
             self.intermediate_data['selected_paths'] = selected_paths
             
-            if not selected_paths and self.config.get('path_ids'):
-                logger.warning("No paths selected for annotation. Exiting.")
+            # Only warn and exit if path_ids were explicitly provided but no paths were found
+            path_ids = self.config.get('path_ids')
+            if not selected_paths and path_ids and isinstance(path_ids, str) and path_ids.strip():
+                logger.warning(f"No paths found matching the provided path_ids: {path_ids}")
+                logger.warning("Exiting without processing.")
                 return 0
                 
             # Save intermediate data if requested
