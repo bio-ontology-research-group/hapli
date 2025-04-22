@@ -36,10 +36,13 @@ class Task:
         if self.dependencies is None:
             self.dependencies = []
     
-    def execute(self) -> Any:
+    def execute(self, dependency_results: Dict[str, Any] = None) -> Any:
         """
         Execute the task.
         
+        Args:
+            dependency_results: Optional dictionary of dependency results
+            
         Returns:
             Result of the task
             
@@ -48,7 +51,13 @@ class Task:
         """
         self.status = 'running'
         try:
-            self.result = self.func(*self.args, **(self.kwargs or {}))
+            kwargs = self.kwargs.copy() if self.kwargs else {}
+            
+            # If dependency results are provided, update kwargs
+            if dependency_results:
+                kwargs.update(dependency_results)
+                
+            self.result = self.func(*self.args, **kwargs)
             self.status = 'completed'
             return self.result
         except Exception as e:
@@ -186,29 +195,14 @@ class HierarchicalExecutor:
                 # Remove from remaining tasks
                 remaining_tasks.pop(i)
                 
-                # Instead of trying to inspect functions (which can fail with lambdas),
-                # we'll use a simpler approach where we prepare all dependency results
-                # but only pass them if they're actually used by the function
-                dependency_results = {
-                    f"dep_{dep_id}": self.results[dep_id] 
-                    for dep_id in task.dependencies
-                }
+                # Prepare dependency results in the expected format from the test cases
+                # The test cases expect parameters named like dep_task1, dep_task2, etc.
+                dependency_results = {}
+                for dep_id in task.dependencies:
+                    dependency_results[f"dep_{dep_id}"] = self.results[dep_id]
                 
-                # Create a function that includes dependency results in its closure
-                def execute_with_deps():
-                    # Copy the task's kwargs to avoid modifying the original
-                    task_kwargs = task.kwargs.copy() if task.kwargs else {}
-                    
-                    # Try to execute with dependency results added to kwargs
-                    try:
-                        return task.func(*task.args, **{**task_kwargs, **dependency_results})
-                    except TypeError:
-                        # If that fails (likely due to unexpected kwargs), 
-                        # try with just the original kwargs
-                        return task.func(*task.args, **task_kwargs)
-                
-                # Submit the wrapper function that handles dependencies appropriately
-                future = executor.submit(execute_with_deps)
+                # Submit the task for execution with dependency results
+                future = executor.submit(task.execute, dependency_results)
                 futures[task_id] = future
             else:
                 i += 1
