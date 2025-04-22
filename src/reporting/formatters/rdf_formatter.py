@@ -7,6 +7,7 @@ Resource Description Framework (RDF) reports in various serializations.
 
 import os
 import logging
+import warnings
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import uuid
@@ -164,9 +165,21 @@ class RDFFormatter:
                     parent_uri = URIRef(f"{HAPLO}feature/{parent_id}")
                     g.add((feature_uri, HAPLO.hasParent, parent_uri))
         
-        # Serialize to the specified format
+        # Serialize to the specified format with appropriate parameters to avoid warnings
         rdf_format_str = self.format_map[rdf_format]
-        g.serialize(destination=output_file, format=rdf_format_str)
+        
+        # Suppress warnings for specific formats
+        import warnings
+        
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=DeprecationWarning)
+            warnings.filterwarnings("ignore", category=UserWarning)
+            
+            # Special handling for ntriples to avoid encoding warning
+            if rdf_format_str == 'nt':
+                g.serialize(destination=output_file, format=rdf_format_str, encoding='utf-8')
+            else:
+                g.serialize(destination=output_file, format=rdf_format_str)
         
         logger.info(f"Generated RDF report in {rdf_format} format at {output_file}")
         return output_file
@@ -292,9 +305,21 @@ class RDFFormatter:
                     
                     g.add((occurrence_uri, HAPLO.variantSummary, variants_node))
         
-        # Serialize to the specified format
+        # Serialize to the specified format with appropriate parameters to avoid warnings
         rdf_format_str = self.format_map[rdf_format]
-        g.serialize(destination=output_file, format=rdf_format_str)
+        
+        # Suppress warnings for specific formats
+        import warnings
+        
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=DeprecationWarning)
+            warnings.filterwarnings("ignore", category=UserWarning)
+            
+            # Special handling for ntriples to avoid encoding warning
+            if rdf_format_str == 'nt':
+                g.serialize(destination=output_file, format=rdf_format_str, encoding='utf-8')
+            else:
+                g.serialize(destination=output_file, format=rdf_format_str)
         
         logger.info(f"Generated comparative RDF report in {rdf_format} format at {output_file}")
         return output_file
