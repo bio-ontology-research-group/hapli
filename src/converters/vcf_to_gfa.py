@@ -287,8 +287,8 @@ class VCFtoGFAConverter:
         try:
             # Add GFA header (optional but recommended)
             # Using GFA1 for broader compatibility unless GFA2 features are needed
-            # Just create a simple header without any tags
-            header_line = gfapy.line.Header()
+            # Create a simple header with "H" tag which is the minimal valid header
+            header_line = gfapy.line.Header("H")
             self._gfa.add_line(header_line)
 
             # Determine contigs to process
