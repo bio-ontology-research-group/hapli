@@ -49,20 +49,20 @@ def download_file_with_progress(url, output_path, is_ftp=True):
                 
                 # Now download with progress tracking
                 with open(output_path, 'wb') as f:
-                logger.info(f"Connecting to {server}")
-                ftp = ftplib.FTP(server)
-                ftp.login()
-                ftp.cwd(directory)
+                    logger.info(f"Connecting to {server}")
+                    ftp = ftplib.FTP(server)
+                    ftp.login()
+                    ftp.cwd(directory)
+                    
+                    # Create progress bar
+                    with tqdm(total=file_size, unit='B', unit_scale=True, desc=filename) as pbar:
+                        def callback(data):
+                            f.write(data)
+                            pbar.update(len(data))
+                        
+                        ftp.retrbinary(f"RETR {filename}", callback)
                 
-                # Create progress bar
-                with tqdm(total=file_size, unit='B', unit_scale=True, desc=filename) as pbar:
-                    def callback(data):
-                        f.write(data)
-                        pbar.update(len(data))
-                    
-                    ftp.retrbinary(f"RETR {filename}", callback)
-                    
-                    ftp.quit()
+                ftp.quit()
             except ftplib.error_perm as e:
                 logger.error(f"FTP error: {e}")
                 # Try alternative pattern as fallback
