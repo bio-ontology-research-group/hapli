@@ -23,16 +23,59 @@ Install dependencies using:
 pip install -r requirements.txt
 ```
 
-## Usage
+## Command-Line Usage
 
 ```bash
-python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta
+python -m src.main [options]
 ```
 
-Or using a configuration file:
+### Required Parameters
+
+These parameters must be provided either via command-line or in a config file:
+
+* `--gfa-file PATH`: Path to the input GFA file
+* `--gff3-file PATH`: Path to the input GFF3 annotation file
+* `--reference-fasta PATH`: Path to the reference FASTA file
+* `--config-file PATH`: Load settings from a YAML configuration file
+
+### Output Options
+
+* `--output-file PATH`: Path where output should be saved (default: stdout)
+* `--output-format FORMAT`: Format for output reports (tsv, json, rdf) (default: tsv)
+* `--rdf-format FORMAT`: RDF serialization if output_format is rdf (turtle, xml, json-ld, ntriples)
+
+### Path Selection
+
+* `--sample-names LIST`: Comma-separated list of sample names to include
+* `--haplotype-ids LIST`: Comma-separated list of haplotype IDs to include
+* `--path-ids LIST`: Comma-separated list of specific path IDs to include
+
+### Parallelization Options
+
+* `--num-workers N`: Number of parallel workers to use (default: number of CPU cores)
+* `--batch-size N`: Number of features to process in each batch (default: 100)
+* `--pool-type TYPE`: Worker pool type ('process' or 'thread') (default: process)
+
+### Debug and Logging
+
+* `--log-level LEVEL`: Logging verbosity (DEBUG, INFO, WARNING, ERROR, CRITICAL) (default: INFO)
+* `--save-intermediate`: Save intermediate data for later visualization
+* `--intermediate-dir PATH`: Directory to save intermediate data (default: intermediate_data)
+
+### Examples
 
 ```bash
-python -m src.main --config-file src/config.yaml
+# Basic usage with required files
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta
+
+# Use a configuration file
+python -m src.main --config-file config.yaml
+
+# Enable parallel processing
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --num-workers 4
+
+# Save intermediate data for later visualization
+python -m src.main --gfa-file data/example.gfa --gff3-file data/example.gff3 --reference-fasta data/reference.fasta --save-intermediate --intermediate-dir intermediate_data
 ```
 
 ## Path Selection

@@ -95,6 +95,46 @@ executor.add_task('analyze', analyze_function, dependencies=['filter'])
 results = executor.execute()
 ```
 
+### Main Application Module (`src/main.py`)
+
+The main application module provides the command-line interface and orchestrates the entire annotation pipeline:
+
+#### HaplotypeAnnotationTool Class
+
+The core class that implements the annotation pipeline:
+
+* **Initialization and Setup:**
+  * `__init__()`: Initializes the tool components
+  * `configure_logging()`: Sets up logging with the specified verbosity
+  * `load_config()`: Loads configuration from command-line args and/or config file
+  * `initialize_components()`: Creates parsers, analyzers, and processors
+
+* **Data Processing:**
+  * `load_input_files()`: Loads GFA, GFF3, and FASTA files
+  * `select_paths()`: Selects paths to annotate based on config criteria
+  * `save_intermediate_data()`: Saves intermediate results for visualization
+
+* **Pipeline Execution:**
+  * `run()`: Runs the full annotation pipeline
+  * Handles errors and returns appropriate exit codes
+
+#### Main Entry Point
+
+* `main()`: Command-line entry point function that creates a tool instance and runs it
+* Returns exit code (0 for success, non-zero for error)
+
+#### Dependency Management
+
+* The module follows dependency injection patterns for better testability
+* Components are initialized with appropriate parallelization settings
+* Configuration is centralized and validated before pipeline execution
+
+#### Error Handling
+
+* User-friendly error messages with appropriate logging levels
+* Graceful handling of configuration errors vs. runtime errors
+* Detailed error information in debug mode
+
 ### Configuration Management (`src/config.py`)
 
 The application uses a dedicated `Config` class (`src/config.py`) to manage configuration settings.
@@ -118,6 +158,13 @@ The application uses a dedicated `Config` class (`src/config.py`) to manage conf
     1.  Adding a default value in `DEFAULT_CONFIG` (if applicable).
     2.  Adding a corresponding `add_argument` call in `_setup_argparser`.
     3.  Adding the parameter key to `REQUIRED_PARAMS` if it's mandatory.
+*   **Main Module Integration:** The configuration is loaded by the HaplotypeAnnotationTool and used to control:
+    1.  Logging verbosity
+    2.  Input file paths
+    3.  Path/haplotype selection
+    4.  Parallelization settings
+    5.  Output formatting
+    6.  Intermediate data saving
 
 ### Path Analysis Module (`src/path_analysis.py`)
 

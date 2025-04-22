@@ -112,12 +112,94 @@ class Config:
             help="Path to the output annotation file."
         )
         parser.add_argument(
+            "--output-format",
+            type=str,
+            choices=["tsv", "json", "rdf"],
+            help="Format for output reports."
+        )
+        parser.add_argument(
+            "--rdf-format",
+            type=str,
+            choices=["turtle", "xml", "json-ld", "ntriples"],
+            help="RDF serialization format if output_format is rdf."
+        )
+        parser.add_argument(
             "--log-level",
             type=str,
             choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
             # Default is now handled by DEFAULT_CONFIG, avoid setting default here
             # to distinguish between explicitly set and default values.
             help="Logging level."
+        )
+        
+        # Path selection options
+        parser.add_argument(
+            "--sample-names",
+            type=str,
+            help="Comma-separated list of sample names to include."
+        )
+        parser.add_argument(
+            "--haplotype-ids",
+            type=str,
+            help="Comma-separated list of haplotype IDs to include."
+        )
+        parser.add_argument(
+            "--path-ids",
+            type=str,
+            help="Comma-separated list of specific path IDs to include."
+        )
+        
+        # Parallelization options
+        parser.add_argument(
+            "--num-workers",
+            type=int,
+            help="Number of parallel workers to use."
+        )
+        parser.add_argument(
+            "--batch-size",
+            type=int,
+            help="Number of features to process in each batch."
+        )
+        parser.add_argument(
+            "--pool-type",
+            type=str,
+            choices=["process", "thread"],
+            help="Worker pool type ('process' or 'thread')."
+        )
+        
+        # Analysis options
+        parser.add_argument(
+            "--comparative",
+            action="store_true",
+            help="Generate a comparative report (for multiple paths)."
+        )
+        parser.add_argument(
+            "--impact-types",
+            type=str,
+            help="Filter by impact types (comma-separated)."
+        )
+        parser.add_argument(
+            "--region-start",
+            type=int,
+            help="Start position for region filtering."
+        )
+        parser.add_argument(
+            "--region-end",
+            type=int,
+            help="End position for region filtering."
+        )
+        
+        # Intermediate data options
+        parser.add_argument(
+            "--save-intermediate",
+            action="store_true",
+            help="Save intermediate data for later visualization."
+        )
+        parser.add_argument(
+            "--intermediate-dir",
+            type=str,
+            default="intermediate_data",
+            help="Directory to save intermediate data."
         )
 
         return parser
