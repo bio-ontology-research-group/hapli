@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 # 1000 Genomes FTP server details
 FTP_SERVER = "ftp.1000genomes.ebi.ac.uk"
-FTP_SV_DIR = "/vol1/ftp/phase3/integrated_sv_map"
-SV_FILENAME_PATTERN = "ALL.wgs.mergedSV.v8.20130502.svs.genotypes.{}.vcf.gz"
+FTP_SV_DIR = "/vol1/ftp/phase3/integrated_sv_map/supporting/vcfs"
+SV_FILENAME_PATTERN = "ALL.wgs.integrated_sv_map_v2.20130502.svs.genotypes.{}.vcf.gz"
 
 # Smaller chromosomes for faster download
 DEFAULT_CHROMOSOMES = ['21', '22']  # Smaller chromosomes
@@ -39,15 +39,16 @@ def download_file_with_progress(url, output_path, is_ftp=True):
             directory = os.path.dirname(path)
             filename = os.path.basename(path)
             
-            # Get file size first
-            ftp = ftplib.FTP(server)
-            ftp.login()
-            ftp.cwd(directory)
-            file_size = ftp.size(filename)
-            ftp.quit()
-            
-            # Now download with progress tracking
-            with open(output_path, 'wb') as f:
+            try:
+                # Get file size first
+                ftp = ftplib.FTP(server)
+                ftp.login()
+                ftp.cwd(directory)
+                file_size = ftp.size(filename)
+                ftp.quit()
+                
+                # Now download with progress tracking
+                with open(output_path, 'wb') as f:
                 logger.info(f"Connecting to {server}")
                 ftp = ftplib.FTP(server)
                 ftp.login()
@@ -60,8 +61,41 @@ def download_file_with_progress(url, output_path, is_ftp=True):
                         pbar.update(len(data))
                     
                     ftp.retrbinary(f"RETR {filename}", callback)
-                
-                ftp.quit()
+                    
+                    ftp.quit()
+            except ftplib.error_perm as e:
+                logger.error(f"FTP error: {e}")
+                # Try alternative pattern as fallback
+                if "mergedSV" not in filename:
+                    alt_filename = filename.replace("integrated_sv_map_v2", "mergedSV.v8")
+                    logger.info(f"Trying alternative filename: {alt_filename}")
+                    try:
+                        ftp = ftplib.FTP(server)
+                        ftp.login()
+                        ftp.cwd(directory)
+                        file_size = ftp.size(alt_filename)
+                        ftp.quit()
+                        
+                        with open(output_path, 'wb') as f:
+                            logger.info(f"Connecting to {server}")
+                            ftp = ftplib.FTP(server)
+                            ftp.login()
+                            ftp.cwd(directory)
+                            
+                            # Create progress bar
+                            with tqdm(total=file_size, unit='B', unit_scale=True, desc=alt_filename) as pbar:
+                                def callback(data):
+                                    f.write(data)
+                                    pbar.update(len(data))
+                                
+                                ftp.retrbinary(f"RETR {alt_filename}", callback)
+                            
+                            ftp.quit()
+                    except Exception as e2:
+                        logger.error(f"Error with alternative filename: {e2}")
+                        raise
+                else:
+                    raise
         else:
             # HTTP/HTTPS download
             import requests
@@ -123,6 +157,20 @@ def download_sv_vcfs(output_dir, num_samples=3, chromosomes=None, extract=False)
         chromosomes: Specific chromosomes to download
         extract: Whether to extract the downloaded files
     """
+    # Alternative locations to try if main location fails
+    ALTERNATIVE_SV_DIRS = [
+        "/vol1/ftp/phase3/integrated_sv_map",
+        "/vol1/ftp/phase3/integrated_sv_map/ALL",
+        "/vol1/ftp/release/20130502/supporting/sv_deletions"
+    ]
+    
+    # Alternative filename patterns to try
+    ALTERNATIVE_SV_PATTERNS = [
+        "ALL.wgs.mergedSV.v8.20130502.svs.genotypes.{}.vcf.gz",
+        "ALL.wgs.integrated_sv_map_v2.20130502.svs.genotypes.{}.vcf.gz",
+        "ALL.{}.integrated_sv_map.20130502.ALL.genotypes.vcf.gz",
+        "DEL_svs_1kg_genotypes.{}.vcf.gz"
+    ]
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -140,16 +188,24 @@ def download_sv_vcfs(output_dir, num_samples=3, chromosomes=None, extract=False)
     downloaded_files = []
     
     for i, chrom in enumerate(chromosomes):
+        if len(downloaded_files) >= num_samples:
+            break
+            
+        found = False
+        
+        # Try the primary location and filename pattern first
         sv_filename = SV_FILENAME_PATTERN.format(chrom)
         output_path = output_dir / f"sv_sample_{i+1}_chr{chrom}_{sv_filename}"
         
         # Build FTP URL
         url = f"ftp://{FTP_SERVER}{FTP_SV_DIR}/{sv_filename}"
+        logger.info(f"Trying to download from {url}")
         
         # Download file
         success = download_file_with_progress(url, output_path, is_ftp=True)
         
         if success:
+            found = True
             logger.info(f"Successfully downloaded SV file for chromosome {chrom}")
             if extract:
                 extract_path = str(output_path).replace('.gz', '')
@@ -159,8 +215,39 @@ def download_sv_vcfs(output_dir, num_samples=3, chromosomes=None, extract=False)
                     downloaded_files.append(output_path)
             else:
                 downloaded_files.append(output_path)
-        else:
-            logger.error(f"Failed to download SV file for chromosome {chrom}")
+        
+        # If primary location fails, try alternatives
+        if not found:
+            logger.info(f"Trying alternative locations for chromosome {chrom}")
+            
+            # Try alternative directories and patterns
+            for alt_dir in ALTERNATIVE_SV_DIRS:
+                for alt_pattern in ALTERNATIVE_SV_PATTERNS:
+                    if found:
+                        break
+                        
+                    alt_filename = alt_pattern.format(chrom)
+                    alt_output_path = output_dir / f"sv_sample_{i+1}_chr{chrom}_{alt_filename}"
+                    
+                    alt_url = f"ftp://{FTP_SERVER}{alt_dir}/{alt_filename}"
+                    logger.info(f"Trying alternative URL: {alt_url}")
+                    
+                    alt_success = download_file_with_progress(alt_url, alt_output_path, is_ftp=True)
+                    
+                    if alt_success:
+                        found = True
+                        logger.info(f"Successfully downloaded SV file for chromosome {chrom} from alternative location")
+                        if extract:
+                            alt_extract_path = str(alt_output_path).replace('.gz', '')
+                            if extract_gzip(alt_output_path, alt_extract_path, remove_gz=False):
+                                downloaded_files.append(alt_extract_path)
+                            else:
+                                downloaded_files.append(alt_output_path)
+                        else:
+                            downloaded_files.append(alt_output_path)
+            
+            if not found:
+                logger.error(f"Failed to download SV file for chromosome {chrom} after trying all alternatives")
     
     return downloaded_files
 
