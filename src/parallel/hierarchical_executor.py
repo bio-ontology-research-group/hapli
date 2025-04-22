@@ -186,13 +186,18 @@ class HierarchicalExecutor:
                 # Remove from remaining tasks
                 remaining_tasks.pop(i)
                 
-                # Update task kwargs with dependency results
-                task_kwargs = task.kwargs.copy() if task.kwargs else {}
-                for dep_id in task.dependencies:
-                    task_kwargs[f"dep_{dep_id}"] = self.results[dep_id]
+                # Update task with dependency results
+                updated_task = Task(
+                    id=task.id,
+                    func=task.func,
+                    args=task.args,
+                    kwargs={**task.kwargs, **{f"dep_{dep_id}": self.results[dep_id] for dep_id in task.dependencies}},
+                    dependencies=task.dependencies,
+                    status=task.status
+                )
                 
-                # Submit the task
-                future = executor.submit(task.execute)
+                # Submit the task with updated kwargs
+                future = executor.submit(updated_task.execute)
                 futures[task_id] = future
             else:
                 i += 1
