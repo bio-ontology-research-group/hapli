@@ -51,15 +51,30 @@ class Task:
         """
         self.status = 'running'
         try:
+            # Try two approaches:
+            # 1. First try calling with original kwargs (without dependencies)
+            # 2. If the function has parameters for dependencies, try with them
+            
             kwargs = self.kwargs.copy() if self.kwargs else {}
             
-            # If dependency results are provided, update kwargs
-            if dependency_results:
-                kwargs.update(dependency_results)
-                
-            self.result = self.func(*self.args, **kwargs)
-            self.status = 'completed'
-            return self.result
+            try:
+                # Try first without dependency results
+                self.result = self.func(*self.args, **kwargs)
+                self.status = 'completed'
+                return self.result
+            except TypeError as e:
+                # If it's a TypeError and we have dependency results, 
+                # it might be expecting those parameters
+                if dependency_results and "missing 1 required positional argument" in str(e):
+                    # Try with dependency results added
+                    updated_kwargs = {**kwargs, **dependency_results}
+                    self.result = self.func(*self.args, **updated_kwargs)
+                    self.status = 'completed'
+                    return self.result
+                else:
+                    # Not a dependency-related error, re-raise
+                    raise
+                    
         except Exception as e:
             self.status = 'failed'
             self.error = e
