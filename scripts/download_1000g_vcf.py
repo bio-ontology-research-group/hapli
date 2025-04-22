@@ -87,6 +87,29 @@ KNOWN_PHASED_VCFS = [
     "/vol1/ftp/release/20130502/ALL.chr20.phase3_shapeit2_mvncall_integrated_v5b.20130502.genotypes.vcf.gz"
 ]
 
+# Common trio samples with reliable data availability
+KNOWN_SAMPLE_IDS = ["NA12878", "NA12891", "NA12892"]
+
+# Sample-specific unphased VCFs mapped by sample ID - more reliable than general unphased VCFs
+SAMPLE_TO_UNPHASED_VCF = {
+    "NA12878": [
+        "/vol1/ftp/phase3/data/NA12878/alignment/NA12878.chrom20.ILLUMINA.bwa.CEU.low_coverage.20121211.bam.genotypes.vcf.gz",
+        "/vol1/ftp/phase3/data/NA12878/alignment/NA12878.chrom21.ILLUMINA.bwa.CEU.low_coverage.20121211.bam.genotypes.vcf.gz",
+        "/vol1/ftp/phase3/data/NA12878/alignment/NA12878.chrom22.ILLUMINA.bwa.CEU.low_coverage.20121211.bam.genotypes.vcf.gz"
+    ],
+    "NA12891": [
+        "/vol1/ftp/phase3/data/NA12891/alignment/NA12891.chrom20.ILLUMINA.bwa.CEU.low_coverage.20130415.bam.genotypes.vcf.gz", 
+        "/vol1/ftp/phase3/data/NA12891/alignment/NA12891.chrom21.ILLUMINA.bwa.CEU.low_coverage.20130415.bam.genotypes.vcf.gz",
+        "/vol1/ftp/phase3/data/NA12891/alignment/NA12891.chrom22.ILLUMINA.bwa.CEU.low_coverage.20130415.bam.genotypes.vcf.gz"
+    ],
+    "NA12892": [
+        "/vol1/ftp/phase3/data/NA12892/alignment/NA12892.chrom20.ILLUMINA.bwa.CEU.low_coverage.20130415.bam.genotypes.vcf.gz",
+        "/vol1/ftp/phase3/data/NA12892/alignment/NA12892.chrom21.ILLUMINA.bwa.CEU.low_coverage.20130415.bam.genotypes.vcf.gz",
+        "/vol1/ftp/phase3/data/NA12892/alignment/NA12892.chrom22.ILLUMINA.bwa.CEU.low_coverage.20130415.bam.genotypes.vcf.gz"
+    ]
+}
+
+# Fallback general unphased VCFs (multi-sample)
 KNOWN_UNPHASED_VCFS = [
     # Using smaller chromosomes/regions for testing
     "/vol1/ftp/phase3/data/HG00096/alignment/HG00096.chrom22.ILLUMINA.bwa.GBR.low_coverage.20130415.bam.genotypes.vcf.gz",
@@ -289,59 +312,66 @@ def download_vcfs(output_dir, phased_count=3, unphased_count=3, extract=False, f
                     elif success:
                         phased_vcfs.append(add_output_path)
     
-    # Alternative unphased VCFs - more likely to download successfully
-    ALTERNATIVE_UNPHASED_VCFS = [
-        "/vol1/ftp/phase3/data/NA12878/alignment/NA12878.chrom20.ILLUMINA.bwa.CEU.low_coverage.20121211.bam.genotypes.vcf.gz",
-        "/vol1/ftp/phase3/data/NA12878/alignment/NA12878.chrom21.ILLUMINA.bwa.CEU.low_coverage.20121211.bam.genotypes.vcf.gz",
-        "/vol1/ftp/phase3/data/NA12878/alignment/NA12878.chrom22.ILLUMINA.bwa.CEU.low_coverage.20121211.bam.genotypes.vcf.gz"
-    ]
-    
     # Download unphased VCFs
     unphased_vcfs = []
     
-    # If we have specific samples and they're in our alternative list, use those files directly
-    sample_to_vcf_map = {
-        "NA12878": [ALTERNATIVE_UNPHASED_VCFS[0], ALTERNATIVE_UNPHASED_VCFS[1], ALTERNATIVE_UNPHASED_VCFS[2]]
-    }
-    
+    # First priority: sample-specific unphased VCFs for requested samples
     sample_specific_downloads = False
-    if specific_samples and any(s in sample_to_vcf_map for s in specific_samples):
-        logger.info("Using sample-specific VCF sources for unphased VCFs")
+    if specific_samples:
+        logger.info("Attempting to download sample-specific unphased VCFs")
         sample_specific_downloads = True
         
         sample_idx = 0
         for sample in specific_samples:
-            if sample in sample_to_vcf_map and sample_idx < unphased_count:
-                for vcf_path in sample_to_vcf_map[sample]:
-                    filename = os.path.basename(vcf_path)
-                    output_path = output_dir / f"unphased_{sample_idx+1}_{sample}_{filename}"
-                    
-                    url = f"ftp://{FTP_SERVER}{vcf_path}"
-                    success = download_file_with_progress(url, output_path, is_ftp=True)
-                    
-                    if success:
-                        if extract:
-                            extract_path = output_path.with_suffix('').with_suffix('')  # Remove .vcf.gz
-                            extract_gzip(output_path, extract_path, remove_gz=False)
+            if sample in SAMPLE_TO_UNPHASED_VCF and sample_idx < unphased_count:
+                logger.info(f"Found sample-specific VCFs for {sample}")
+                # For each sample, choose one chromosome VCF (20, 21, or 22)
+                vcf_path = SAMPLE_TO_UNPHASED_VCF[sample][sample_idx % len(SAMPLE_TO_UNPHASED_VCF[sample])]
+                filename = os.path.basename(vcf_path)
+                output_path = output_dir / f"unphased_{sample_idx+1}_{sample}_{filename}"
+                
+                logger.info(f"Downloading unphased VCF for {sample}: {vcf_path}")
+                url = f"ftp://{FTP_SERVER}{vcf_path}"
+                success = download_file_with_progress(url, output_path, is_ftp=True)
+                
+                if success:
+                    logger.info(f"Successfully downloaded unphased VCF for {sample}")
+                    if extract:
+                        extract_path = output_path.with_suffix('').with_suffix('')  # Remove .vcf.gz
+                        if extract_gzip(output_path, extract_path, remove_gz=False):
                             unphased_vcfs.append(extract_path)
+                            logger.info(f"Extracted VCF to {extract_path}")
                         else:
                             unphased_vcfs.append(output_path)
-                        
-                        sample_idx += 1
-                        if sample_idx >= unphased_count:
-                            break
+                    else:
+                        unphased_vcfs.append(output_path)
+                    
+                    sample_idx += 1
+                    if sample_idx >= unphased_count:
+                        break
+                else:
+                    logger.warning(f"Failed to download unphased VCF for {sample}, will try alternative methods")
     
-    # If we don't have specific samples or haven't downloaded enough samples yet, use the standard approach
+    # Count how many more unphased VCFs we need
     unphased_count_remaining = unphased_count - len(unphased_vcfs)
     
-    if not sample_specific_downloads and unphased_count_remaining > 0:
-        # Try the first source - for a multi-sample VCF if possible
-        vcf_path = KNOWN_UNPHASED_VCFS[0]
-        filename = os.path.basename(vcf_path)
-        main_output_path = output_dir / f"unphased_full_{filename}"
+    # Second priority: Multi-sample unphased VCF and extract the samples
+    if unphased_count_remaining > 0:
+        # We'll try to download a multi-sample unphased VCF from a reliable source
+        logger.info(f"Need {unphased_count_remaining} more unphased VCFs, trying multi-sample approach")
         
-        url = f"ftp://{FTP_SERVER}{vcf_path}"
-        success = download_file_with_progress(url, main_output_path, is_ftp=True)
+        # Try each chromosome - more likely to find data
+        for chr_num in ["22", "21", "20"]:
+            if unphased_count_remaining <= 0:
+                break
+                
+            vcf_path = f"/vol1/ftp/release/20130502/ALL.chr{chr_num}.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz"
+            filename = os.path.basename(vcf_path)
+            main_output_path = output_dir / f"unphased_full_chr{chr_num}_{filename}"
+            
+            logger.info(f"Trying to download multi-sample unphased VCF for chr{chr_num}")
+            url = f"ftp://{FTP_SERVER}{vcf_path}"
+            success = download_file_with_progress(url, main_output_path, is_ftp=True)
         
         if success:
             logger.info(f"Successfully downloaded unphased VCF file")
@@ -436,13 +466,13 @@ def download_vcfs(output_dir, phased_count=3, unphased_count=3, extract=False, f
                     if unphased_count_remaining <= 0:
                         break
             
-            # If we still need more and force_unphased is enabled, try alternative sources
+            # Third priority: Use general per-sample unphased VCFs as fallback
             if unphased_count_remaining > 0 and force_unphased:
-                logger.info("Using alternative unphased VCF sources")
-                for i in range(min(unphased_count_remaining, len(ALTERNATIVE_UNPHASED_VCFS))):
-                    vcf_path = ALTERNATIVE_UNPHASED_VCFS[i]
+                logger.info("Trying fallback unphased VCF sources")
+                for i in range(min(unphased_count_remaining, len(KNOWN_UNPHASED_VCFS))):
+                    vcf_path = KNOWN_UNPHASED_VCFS[i]
                     filename = os.path.basename(vcf_path)
-                    output_path = output_dir / f"unphased_alt_{len(unphased_vcfs)+1}_{filename}"
+                    output_path = output_dir / f"unphased_fallback_{len(unphased_vcfs)+1}_{filename}"
                     
                     url = f"ftp://{FTP_SERVER}{vcf_path}"
                     success = download_file_with_progress(url, output_path, is_ftp=True)
