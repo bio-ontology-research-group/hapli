@@ -59,8 +59,7 @@ class PathAnalyzer:
         """
         Extract paths from the loaded GFA file.
         
-        This method handles various GFA object structures from different
-        libraries and GFA formats (GFA1, GFA2).
+        This method handles various GFA object structures for GFA2 format.
         
         Returns:
             Dictionary mapping path IDs to path objects
@@ -71,23 +70,7 @@ class PathAnalyzer:
             logger.warning("GFA object is None")
             return paths
         
-        # Handle different GFA versions and edge cases
-        if hasattr(self.gfa, 'paths'):
-            # GFA1 style - In gfapy these are often Line objects
-            if hasattr(self.gfa.paths, 'items'):
-                # If it's a dict-like object
-                if callable(getattr(self.gfa.paths, 'items')):
-                    for path_id, path in self.gfa.paths.items():
-                        paths[path_id] = path
-                else:
-                    for path_id, path in self.gfa.paths.items:
-                        paths[path_id] = path
-            else:
-                # If it's an iterable of path objects
-                for path in self.gfa.paths:
-                    if hasattr(path, 'name'):
-                        paths[path.name] = path
-        
+        # Handle GFA2 ordered groups (for paths)
         # GFA2 uses ordered groups (O lines) for paths
         if hasattr(self.gfa, 'ordered_groups'):
             if hasattr(self.gfa.ordered_groups, 'items'):
@@ -104,10 +87,10 @@ class PathAnalyzer:
                     if hasattr(path, 'name'):
                         paths[path.name] = path
         
-        # Check for lines attribute which might contain path lines (P)
+        # Check for lines attribute which might contain ordered group lines (O)
         if not paths and hasattr(self.gfa, 'lines'):
-            if isinstance(self.gfa.lines, dict) and 'P' in self.gfa.lines:
-                for path in self.gfa.lines['P']:
+            if isinstance(self.gfa.lines, dict) and 'O' in self.gfa.lines:
+                for path in self.gfa.lines['O']:
                     if hasattr(path, 'name'):
                         paths[path.name] = path
                     elif hasattr(path, 'path_name'):
@@ -116,7 +99,7 @@ class PathAnalyzer:
         # Access paths through the _records attribute (common in gfapy)
         if not paths and hasattr(self.gfa, '_records'):
             for line_type, records in self.gfa._records.items():
-                if line_type == 'P':  # Path lines in GFA1
+                if line_type == 'O':  # Ordered groups in GFA2
                     for path in records:
                         if hasattr(path, 'name'):
                             paths[path.name] = path
@@ -130,7 +113,7 @@ class PathAnalyzer:
                     lines = self.gfa.line()
                     if isinstance(lines, dict):
                         for line_id, line in lines.items():
-                            if line_id.startswith('P'):
+                            if line_id.startswith('O'):  # GFA2 ordered groups
                                 if hasattr(line, 'name'):
                                     paths[line.name] = line
                 except Exception as e:
@@ -139,7 +122,7 @@ class PathAnalyzer:
                 # If it's a dictionary-like object
                 try:
                     for line_id, line in self.gfa.line.items():
-                        if line_id.startswith('P'):
+                        if line_id.startswith('O'):  # GFA2 ordered groups
                             if hasattr(line, 'name'):
                                 paths[line.name] = line
                 except Exception as e:
@@ -406,7 +389,7 @@ class PathAnalyzer:
             
         path = self.paths[path_id]
         
-        # Handle different GFA versions and implementations
+        # Handle GFA2 path implementations
         try:
             # First check for our MockPath class which is a common case in tests
             if isinstance(path, type) and hasattr(path, 'segment_names'):
@@ -426,26 +409,23 @@ class PathAnalyzer:
                     return path.segment_names_list
             elif hasattr(path, 'ordered_segment_names'):
                 return path.ordered_segment_names
-            # For gfapy objects that have path_object.path - typically used in "P" lines
-            elif hasattr(path, 'path'):
-                # Extract segment names from path string (format: "seg1+,seg2-,...")
-                path_str = path.path
-                # The path might be a string like "seg1+,seg2-,..." or a list of objects
-                if isinstance(path_str, str):
-                    return [s.rstrip('+-') for s in path_str.split(',')]
+            # For gfapy objects with references to segments in an ordered group
+            elif hasattr(path, 'elements'):
+                # Extract segment references from elements list
+                if isinstance(path.elements, list):
+                    return [elem.rstrip('+-') if isinstance(elem, str) else 
+                           (elem.name if hasattr(elem, 'name') else str(elem).rstrip('+-')) 
+                           for elem in path.elements]
                 else:
-                    return [s.name if hasattr(s, 'name') else str(s).rstrip('+-') for s in path_str]
+                    return []
             else:
                 # Last resort: try to parse from string representation
                 path_str = str(path)
                 if '\t' in path_str:  # Might be a tab-delimited GFA line
                     parts = path_str.split('\t')
-                    if len(parts) >= 3:  # Path line should have at least 3 fields
+                    if len(parts) >= 3:  # GFA2 ordered group line format
                         segment_str = parts[2]
-                        if ',' in segment_str:  # GFA1 format
-                            return [s.rstrip('+-') for s in segment_str.split(',')]
-                        else:  # GFA2 format or space-separated
-                            return [s.rstrip('+-') for s in segment_str.split()]
+                        return [s.rstrip('+-') for s in segment_str.split()]
                 
                 # Handle the case where path is a dict-like object with segment_names
                 if isinstance(path, dict) and 'segment_names' in path:
