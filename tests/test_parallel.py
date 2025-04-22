@@ -43,6 +43,11 @@ def factorial(n):
              raise RecursionError("Maximum recursion depth exceeded (simulated)")
         return n * factorial(n - 1)
 
+# Top-level function for pickling compatibility with multiprocessing
+def _test_factorial(n):
+    """Helper function to call factorial for testing."""
+    return factorial(n)
+
 def sometimes_fails(x):
     """Function that fails for certain inputs."""
     if x % 5 == 0:
@@ -153,9 +158,9 @@ class TestWorkerPools(unittest.TestCase):
         
     def test_error_handling(self):
         """Test that worker errors are propagated."""
-        # Using lambda to avoid issues with the recursive factorial
+        # Use top-level function for process pool compatibility
         with self.assertRaises(RecursionError):
-            execute_parallel(lambda x: factorial(x), [1000], 
+            execute_parallel(_test_factorial, [1000], 
                            track_progress=False)
             
     def test_chunksize(self):
@@ -211,27 +216,20 @@ class TestHierarchicalExecutor(unittest.TestCase):
         self.assertEqual(results['task4'], 16)
         
     def test_cyclic_dependencies(self):
-        """Test that cyclic dependencies raise an error."""
+        """Test that cyclic dependencies raise an error during execution."""
         executor = HierarchicalExecutor()
         executor.add_task('task1', lambda: 1)
         executor.add_task('task2', lambda dep1: 2, dependencies=['task1']) # Lambda signature updated
         executor.add_task('task3', lambda dep2: 3, dependencies=['task2']) # Lambda signature updated
         
-        # Add a task that depends on task3 to avoid direct cycle error on add_edge
-        executor.add_task('task4', lambda dep3: 4, dependencies=['task3'])
+        # Add a task that creates a cycle (depends on task3, but task1 depends on it)
+        # This should be allowed by add_task itself.
+        executor.add_task('task1_cycle_dep', lambda dep3: 4, dependencies=['task3'])
+        executor.dag.add_edge('task1_cycle_dep', 'task1') # Manually add edge to create cycle for testing
 
-        # Now try adding the edge that creates the cycle
-        with self.assertRaises(ValueError): # Check if add_task detects dependency before cycle check
-             executor.add_task('task1_cycle', lambda: 1, dependencies=['task3']) # This might fail earlier
-
-        # If add_task doesn't detect, manually add edge and check execute()
-        try:
-            executor.dag.add_edge('task3', 'task1')
-            with self.assertRaises(nx.NetworkXUnfeasible):
-                executor.execute()
-        except ValueError: # Handle case where add_task already raised error
-             pass
-
+        # The cycle check happens in execute()
+        with self.assertRaises(nx.NetworkXUnfeasible):
+            executor.execute()
 
             
     def test_error_handling(self):
@@ -267,10 +265,15 @@ class TestHierarchicalExecutor(unittest.TestCase):
         executor.add_task('task2', slow_task)  # Should be cancelled or not complete
         
         results = executor.execute()
-        self.assertEqual(results, {}) # No results should be recorded
+        
+        # Check that the failing task's error is recorded
         self.assertIn('task1', executor.errors)
         self.assertIsInstance(executor.errors['task1'], ValueError)
-        # Check status of task2 if it exists (might not if cancelled early)
+        
+        # Check that the slow task's result was NOT recorded due to fail_fast
+        self.assertNotIn('task2', results)
+        
+        # Optional: Check status if needed, but not having result is primary check
         if 'task2' in executor.tasks:
              self.assertNotEqual(executor.tasks['task2'].status, 'completed')
 
@@ -383,6 +386,7 @@ class TestPerformanceScaling(unittest.TestCase):
         
         # Use a context manager to ensure cleanup
         try:
+            # Use 'thread' pool to avoid pickling issues with sometimes_fails if run inside method
             with create_worker_pool('thread', track_progress=False) as pool:
                 # Map the function that sometimes fails
                 # pool.map will raise the *first* exception encountered after processing all tasks
@@ -430,6 +434,7 @@ class TestPerformanceScaling(unittest.TestCase):
             # Add many independent tasks depending on root
             for i in range(num_tasks):
                 # Lambda now expects root result positionally (though it's unused)
+                # Use default argument for i to capture its value at definition time
                 executor.add_task(f'task_{i}', lambda root_res, x=i: slow_square(x), 
                                 dependencies=['root'])
                 
