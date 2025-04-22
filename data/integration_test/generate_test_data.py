@@ -522,7 +522,8 @@ class TestDataGenerator:
         
         # Create a graph object
         self.graph = gfapy.Gfa()
-        self.graph.header = gfapy.Line("H\tVN:Z:2.0")
+        # Add header properly
+        self.graph.append(gfapy.Line("H\tVN:Z:2.0"))
         
         # Reference sequence
         ref_seq = str(self.reference_seq.seq)
@@ -613,6 +614,18 @@ class TestDataGenerator:
                     "variant": variant
                 }
             
+            elif var_type == "NOCALL":
+                # Create a segment for no-call/missing variant
+                var_seq = ref_seq[var_pos-5:var_pos] + var_alt + ref_seq[var_pos+len(var_ref):var_pos+len(var_ref)+45]
+                var_seg_id = f"{containing_seg}_nocall"
+                self.graph.append(gfapy.Line(f"S\t{var_seg_id}\t{len(var_seq)}\t{var_seq}"))
+                self.segments[var_seg_id] = {
+                    "start": var_pos-5,
+                    "end": var_pos + len(var_ref) + 45,
+                    "sequence": var_seq,
+                    "variant": variant
+                }
+            
             # Add more variant types as needed
         
         # Create edges between segments
@@ -632,36 +645,44 @@ class TestDataGenerator:
         # For demonstration, we'll create 4 paths: sample1_hap1, sample1_hap2, sample2_hap1, sample2_hap2
         # Each path will include different variants according to the genotypes
         
-        # Sample1 Haplotype1 path
-        sample1_hap1_segments = []
-        for i in range(1, len(self.segments)+1):
-            seg_id = f"seg{i}"
-            if seg_id in self.segments:
-                # Check if this segment should be replaced by a variant
-                replaced = False
-                for variant in self.variants:
-                    var_pos = variant["pos"] - 1
-                    sample_gt = variant["sample_genotypes"]["sample1"]
-                    hap1_allele = int(sample_gt.split("|")[0])
-                    
-                    if hap1_allele == 1 and self.segments[seg_id]["start"] <= var_pos < self.segments[seg_id]["end"]:
-                        # This segment contains a variant that should be included in hap1
-                        var_type = variant["type"]
-                        var_seg_id = f"{seg_id}_{var_type.lower()}"
-                        if var_seg_id in self.segments:
-                            sample1_hap1_segments.append(f"{var_seg_id}+")
-                            replaced = True
-                            break
+        # Build paths for each sample and haplotype
+        for sample in self.samples:
+            for hap_idx, haplotype in enumerate(self.haplotypes):
+                path_id = f"{sample}_{haplotype}"
+                path_segments = []
                 
-                if not replaced:
-                    sample1_hap1_segments.append(f"{seg_id}+")
-        
-        # Add path to graph
-        self.graph.append(gfapy.Line(f"P\tsample1_hap1\t{','.join(sample1_hap1_segments)}\t*"))
-        
-        # Similarly create paths for the other haplotypes
-        # This is a simplified approach - in a real implementation we would need
-        # more sophisticated path creation logic
+                for i in range(1, len(self.segments)+1):
+                    seg_id = f"seg{i}"
+                    if seg_id in self.segments:
+                        # Check if this segment should be replaced by a variant
+                        replaced = False
+                        for variant in self.variants:
+                            var_pos = variant["pos"] - 1
+                            # Get the genotype for this sample
+                            if sample in variant["sample_genotypes"]:
+                                sample_gt = variant["sample_genotypes"][sample]
+                                # Get allele for this haplotype (0 or 1)
+                                if "|" in sample_gt:
+                                    alleles = sample_gt.split("|")
+                                    hap_allele = int(alleles[hap_idx]) if hap_idx < len(alleles) else 0
+                                else:
+                                    # Handle unphased genotypes
+                                    hap_allele = 1 if sample_gt.startswith("1") and hap_idx == 0 else 0
+                                
+                                if hap_allele == 1 and self.segments[seg_id]["start"] <= var_pos < self.segments[seg_id]["end"]:
+                                    # This segment contains a variant that should be included in this haplotype
+                                    var_type = variant["type"].lower()
+                                    var_seg_id = f"{seg_id}_{var_type}"
+                                    if var_seg_id in self.segments:
+                                        path_segments.append(f"{var_seg_id}+")
+                                        replaced = True
+                                        break
+                        
+                        if not replaced:
+                            path_segments.append(f"{seg_id}+")
+                
+                # Add path to graph
+                self.graph.append(gfapy.Line(f"P\t{path_id}\t{','.join(path_segments)}\t*"))
         
         logger.info("Variation graph built")
         return self.graph
