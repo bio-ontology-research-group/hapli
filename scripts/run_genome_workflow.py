@@ -325,42 +325,55 @@ class IndexVcfStep(WorkflowStep):
             index_file = Path(str(target_vcf) + ".tbi")
             self._outputs.append(str(index_file)) # Add expected index file to outputs
 
-            # Check if index already exists
+            # Check if index already exists AND if it's older than the VCF
+            reindex_needed = True
             if index_file.exists():
-                logger.info(f"Index file {index_file.name} already exists. Skipping indexing for {target_vcf.name}.")
-                processed_vcf_paths.append(str(target_vcf)) # Add to list even if skipped
-                continue
+                try:
+                    vcf_mtime = target_vcf.stat().st_mtime
+                    idx_mtime = index_file.stat().st_mtime
+                    if idx_mtime >= vcf_mtime:
+                        logger.info(f"Index file {index_file.name} is up-to-date. Skipping indexing for {target_vcf.name}.")
+                        reindex_needed = False
+                        processed_vcf_paths.append(str(target_vcf)) # Add to list even if skipped
+                    else:
+                        logger.warning(f"Index file {index_file.name} is older than VCF file {target_vcf.name}. Re-indexing.")
+                        # Remove the old index before re-running tabix
+                        index_file.unlink()
+                except OSError as e:
+                    logger.warning(f"Could not check/remove old index file {index_file.name}: {e}. Will attempt re-indexing.")
 
-            try:
-                # Use shutil.which to find tabix
-                tabix_exe = shutil.which('tabix')
-                if not tabix_exe:
-                     logger.error("tabix command not found in PATH.")
-                     all_indexed = False
-                     break # Fail the step if tabix isn't available
+            if reindex_needed:
+                try:
+                    # Use shutil.which to find tabix
+                    tabix_exe = shutil.which('tabix')
+                    if not tabix_exe:
+                         logger.error("tabix command not found in PATH.")
+                         all_indexed = False
+                         break # Fail the step if tabix isn't available
 
-                tabix_cmd = [tabix_exe, '-p', 'vcf', str(target_vcf)]
-                logger.info(f"Running: {' '.join(tabix_cmd)}")
-                result = subprocess.run(tabix_cmd, check=True, capture_output=True, text=True)
-                logger.debug(f"tabix stdout: {result.stdout}")
-                if result.stderr:
-                    logger.debug(f"tabix stderr: {result.stderr}")
-                if not index_file.exists():
-                     logger.error(f"tabix command completed but index file {index_file} was not created.")
-                     all_indexed = False
-                else:
-                     logger.info(f"Successfully indexed {target_vcf.name}")
-                     processed_vcf_paths.append(str(target_vcf)) # Add successfully indexed file
-            except subprocess.CalledProcessError as e:
-                logger.error(f"tabix failed for {target_vcf.name} with exit code {e.returncode}: {' '.join(e.cmd)}")
-                logger.error(f"STDOUT: {e.stdout}")
-                logger.error(f"STDERR: {e.stderr}")
-                all_indexed = False
-            except Exception as e:
-                logger.error(f"Error running tabix for {target_vcf.name}: {e}", exc_info=True)
-                all_indexed = False
+                    tabix_cmd = [tabix_exe, '-p', 'vcf', str(target_vcf)]
+                    logger.info(f"Running: {' '.join(tabix_cmd)}")
+                    result = subprocess.run(tabix_cmd, check=True, capture_output=True, text=True)
+                    logger.debug(f"tabix stdout: {result.stdout}")
+                    if result.stderr:
+                        logger.debug(f"tabix stderr: {result.stderr}")
+                    if not index_file.exists():
+                         logger.error(f"tabix command completed but index file {index_file} was not created.")
+                         all_indexed = False
+                    else:
+                         logger.info(f"Successfully indexed {target_vcf.name}")
+                         processed_vcf_paths.append(str(target_vcf)) # Add successfully indexed file
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"tabix failed for {target_vcf.name} with exit code {e.returncode}: {' '.join(e.cmd)}")
+                    logger.error(f"STDOUT: {e.stdout}")
+                    logger.error(f"STDERR: {e.stderr}")
+                    all_indexed = False
+                except Exception as e:
+                    logger.error(f"Error running tabix for {target_vcf.name}: {e}", exc_info=True)
+                    all_indexed = False
 
         # Update context with the list of VCF files that are now confirmed to be gzipped
+        # Only include files that were successfully processed (indexed or skipped because up-to-date)
         context[self.vcf_context_key] = processed_vcf_paths
         logger.debug(f"Updated context key '{self.vcf_context_key}' with processed VCF paths: {processed_vcf_paths}")
 
