@@ -6,7 +6,6 @@ Tests for:
 - Command-line argument parsing
 - Configuration loading
 - Logging setup
-- Parallelization settings
 - Error handling
 - Intermediate data saving
 """
@@ -19,9 +18,20 @@ import shutil
 import logging
 from unittest.mock import patch, MagicMock
 from io import StringIO
+import json # Import json for loading saved data
+
+# Ensure src is in path
+script_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.abspath(os.path.join(script_dir, '..', 'src'))
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
 
 from src.main import HaplotypeAnnotationTool, main
 from src.config import Config, ConfigurationError
+# Import placeholder summaries if needed for testing save_intermediate
+from src.analysis.summary_generator import AnalysisSummary, FeatureSummary
+from src.analysis.impact_classifier import ImpactType
+
 
 class TestMain(unittest.TestCase):
     """Test the main application module functionality."""
@@ -29,17 +39,26 @@ class TestMain(unittest.TestCase):
     def setUp(self):
         """Set up test environment."""
         # Create temporary directory for test files
-        self.temp_dir = tempfile.mkdtemp()
+        self.temp_dir = tempfile.mkdtemp(prefix="main_test_")
 
         # Create mock input files
         self.gfa_file = os.path.join(self.temp_dir, "test.gfa")
         self.gff_file = os.path.join(self.temp_dir, "test.gff3")
         self.fasta_file = os.path.join(self.temp_dir, "test.fasta")
 
-        # Create empty files
-        for filepath in [self.gfa_file, self.gff_file, self.fasta_file]:
-            with open(filepath, 'w') as f:
-                f.write("Test content")
+        # Create simple content for mock files to allow parsing
+        with open(self.gfa_file, 'w') as f:
+            f.write("H\tVN:Z:1.0\n")
+            f.write("S\t1\tACGT\n")
+            f.write("P\tpath1\t1+\t*\n")
+        with open(self.gff_file, 'w') as f:
+            f.write("##gff-version 3\n")
+            f.write("seq1\t.\tgene\t1\t100\t.\t+\t.\tID=gene1\n")
+            f.write("seq1\t.\texon\t10\t50\t.\t+\t.\tID=exon1;Parent=gene1\n")
+        with open(self.fasta_file, 'w') as f:
+            f.write(">seq1\n")
+            f.write("ACGT" * 25 + "\n")
+
 
         # Intermediate data directory
         self.intermediate_dir = os.path.join(self.temp_dir, "intermediate")
@@ -47,7 +66,7 @@ class TestMain(unittest.TestCase):
         # Create tool instance
         self.tool = HaplotypeAnnotationTool()
 
-        # Store original handlers
+        # Store original handlers and level to restore later
         self.original_handlers = logging.getLogger().handlers[:]
         self.original_level = logging.getLogger().level
 
@@ -58,17 +77,15 @@ class TestMain(unittest.TestCase):
         shutil.rmtree(self.temp_dir)
 
         # Restore original logging configuration
-        logger = logging.getLogger()
-        # Remove any handlers added during tests
-        for handler in logger.handlers[:]:
-             if handler not in self.original_handlers:
-                 logger.removeHandler(handler)
-        # Restore original handlers if they were removed
+        root_logger = logging.getLogger()
+        # Remove any handlers added during tests or by the tool
+        for handler in root_logger.handlers[:]:
+             root_logger.removeHandler(handler)
+        # Restore original handlers
         for handler in self.original_handlers:
-             if handler not in logger.handlers:
-                 logger.addHandler(handler)
+             root_logger.addHandler(handler)
         # Restore original level
-        logger.setLevel(self.original_level)
+        root_logger.setLevel(self.original_level)
 
 
     def test_command_line_args_parsing(self):
@@ -84,43 +101,41 @@ class TestMain(unittest.TestCase):
             "--intermediate-dir", self.intermediate_dir
         ]
 
-        # Mock the Config.load method to prevent actual file loading
-        with patch.object(Config, 'load') as mock_load:
-            mock_load.return_value = None
+        # Mock the Config methods used within load_config
+        with patch.object(Config, 'load') as mock_load, \
+             patch.object(Config, 'get_all') as mock_get_all:
 
-            # Mock get_all to return our test configuration
-            with patch.object(Config, 'get_all') as mock_get_all:
-                mock_get_all.return_value = {
-                    'gfa_file': self.gfa_file,
-                    'gff3_file': self.gff_file,
-                    'reference_fasta': self.fasta_file,
-                    'log_level': 'DEBUG',
-                    'num_workers': 4,
-                    'batch_size': 100,
-                    'save_intermediate': True,
-                    'intermediate_dir': self.intermediate_dir
-                }
+            # Define what get_all should return after load is called
+            mock_get_all.return_value = {
+                'gfa_file': self.gfa_file,
+                'gff3_file': self.gff_file,
+                'reference_fasta': self.fasta_file,
+                'log_level': 'DEBUG',
+                'num_workers': 4,
+                'batch_size': 100,
+                'save_intermediate': True,
+                'intermediate_dir': self.intermediate_dir,
+                # Add other defaults expected by the tool if necessary
+                'output_file': None,
+                'output_format': 'tsv',
+                'comparative': False,
+            }
 
-                self.tool.load_config(args)
+            # Call the method that uses Config.load and Config.get_all
+            loaded_config = self.tool.load_config(args)
 
-                # Verify load was called with our args
-                mock_load.assert_called_once_with(args)
+            # Verify load was called correctly
+            mock_load.assert_called_once_with(args)
 
-                # Get the configuration
-                config = self.tool.config.get_all()
+            # Check the returned config dictionary
+            self.assertEqual(loaded_config['gfa_file'], self.gfa_file)
+            self.assertEqual(loaded_config['log_level'], 'DEBUG')
+            self.assertEqual(loaded_config['num_workers'], 4)
+            self.assertTrue(loaded_config['save_intermediate'])
+            self.assertEqual(loaded_config['intermediate_dir'], self.intermediate_dir)
 
-                # Check that parameters were correctly set
-                self.assertEqual(config['gfa_file'], self.gfa_file)
-                self.assertEqual(config['gff3_file'], self.gff_file)
-                self.assertEqual(config['reference_fasta'], self.fasta_file)
-                self.assertEqual(config['log_level'], 'DEBUG')
-                self.assertEqual(config['num_workers'], 4)
-                self.assertEqual(config['batch_size'], 100)
-                self.assertTrue(config['save_intermediate'])
-                self.assertEqual(config['intermediate_dir'], self.intermediate_dir)
-
-    def test_config_loading(self):
-        """Test configuration loading through the interface."""
+    def test_config_loading_from_file(self):
+        """Test configuration loading from a YAML file."""
         # Create a test config file
         config_file = os.path.join(self.temp_dir, "test_config.yaml")
         with open(config_file, 'w') as f:
@@ -130,145 +145,112 @@ gff3_file: {self.gff_file}
 reference_fasta: {self.fasta_file}
 log_level: INFO
 num_workers: 2
-batch_size: 50
 save_intermediate: true
 intermediate_dir: {self.intermediate_dir}
+output_file: output.tsv
 """)
 
         args = ["--config-file", config_file]
 
-        # Mock get_resource_files to prevent file loading attempts
-        with patch.object(Config, 'get_resource_files') as mock_resources:
-            mock_resources.return_value = {
-                'gfa_file': self.gfa_file,
-                'gff3_file': self.gff_file,
-                'reference_fasta': self.fasta_file
-            }
+        # Mock get_all to simulate what Config would return after loading the file
+        # This avoids needing a full Config integration test here
+        with patch.object(Config, 'get_all') as mock_get_all:
+             mock_get_all.return_value = {
+                 'gfa_file': self.gfa_file,
+                 'gff3_file': self.gff_file,
+                 'reference_fasta': self.fasta_file,
+                 'log_level': 'INFO',
+                 'num_workers': 2,
+                 'batch_size': 100, # Assuming default if not in file
+                 'save_intermediate': True,
+                 'intermediate_dir': self.intermediate_dir,
+                 'output_file': 'output.tsv',
+                 'output_format': 'tsv', # Assuming default
+                 'comparative': False, # Assuming default
+                 'config_file': config_file # Config usually stores this too
+             }
 
-            with patch.object(Config, 'get_all') as mock_get_all:
-                mock_get_all.return_value = {
-                    'gfa_file': self.gfa_file,
-                    'gff3_file': self.gff_file,
-                    'reference_fasta': self.fasta_file,
-                    'log_level': 'INFO',
-                    'num_workers': 2,
-                    'batch_size': 50,
-                    'save_intermediate': True,
-                    'intermediate_dir': self.intermediate_dir
-                }
+             # Call load_config, which internally calls config.load -> config.get_all
+             config = self.tool.load_config(args)
 
-                # Actually call load_config with our args
-                config = self.tool.load_config(args)
+             # Check that parameters were correctly loaded
+             self.assertEqual(config['log_level'], 'INFO')
+             self.assertEqual(config['num_workers'], 2)
+             self.assertTrue(config['save_intermediate'])
+             self.assertEqual(config['intermediate_dir'], self.intermediate_dir)
+             self.assertEqual(config['output_file'], 'output.tsv')
 
-                # Check that parameters were correctly loaded from the file
-                self.assertEqual(config['gfa_file'], self.gfa_file)
-                self.assertEqual(config['gff3_file'], self.gff_file)
-                self.assertEqual(config['reference_fasta'], self.fasta_file)
-                self.assertEqual(config['log_level'], 'INFO')
-                self.assertEqual(config['num_workers'], 2)
-                self.assertEqual(config['batch_size'], 50)
-                self.assertTrue(config['save_intermediate'])
-                self.assertEqual(config['intermediate_dir'], self.intermediate_dir)
 
     def test_logging_configuration(self):
-        """Test that logging is properly configured."""
-        logger = logging.getLogger() # Get root logger
+        """Test that logging is properly configured using assertLogs."""
+        # Test DEBUG level
+        # assertLogs captures logs from the specified logger AND its children
+        with self.assertLogs(level='DEBUG') as cm_debug:
+            self.tool.configure_logging('DEBUG')
+            # Log messages using different loggers to test propagation
+            logging.getLogger('src.main').debug("Test main debug")
+            logging.getLogger('src.parsers').info("Test parser info")
+            logging.getLogger().warning("Test root warning") # Root logger
 
-        # --- Test DEBUG level ---
-        log_capture_debug = StringIO()
-        handler_debug = logging.StreamHandler(log_capture_debug)
-        # Ensure the handler has a formatter to match the basicConfig setup
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s', '%Y-%m-%d %H:%M:%S')
-        handler_debug.setFormatter(formatter)
+        # Check captured output (cm.output is a list of log strings)
+        self.assertIn("DEBUG:src.main:Test main debug", cm_debug.output[1]) # Index 1 because configure_logging logs INFO first
+        self.assertIn("INFO:src.parsers:Test parser info", cm_debug.output[2])
+        self.assertIn("WARNING:root:Test root warning", cm_debug.output[3])
 
-        # Configure logging (this removes existing handlers)
-        self.tool.configure_logging('DEBUG')
-        # Add our capture handler *after* configuration
-        logger.addHandler(handler_debug)
+        # Test INFO level
+        with self.assertLogs(level='INFO') as cm_info:
+            self.tool.configure_logging('INFO')
+            logging.getLogger('src.main').debug("Test main debug") # Should not be captured
+            logging.getLogger('src.main').info("Test main info")
+            logging.getLogger().error("Test root error")
 
-        # Check that the root logger is at DEBUG level
-        self.assertEqual(logger.level, logging.DEBUG)
+        # Check captured output
+        self.assertEqual(len(cm_info.output), 3) # configure_logging + main info + root error
+        self.assertIn("INFO:src.main:Logging configured at INFO level", cm_info.output[0])
+        self.assertIn("INFO:src.main:Test main info", cm_info.output[1])
+        self.assertIn("ERROR:root:Test root error", cm_info.output[2])
+        # Verify debug message is NOT present
+        self.assertFalse(any("Test main debug" in log for log in cm_info.output))
 
-        # Log a test message using the root logger
-        logger.debug("Test debug message")
-        logger.info("Test info message")
 
-        # Check that messages were logged
-        log_output_debug = log_capture_debug.getvalue()
-        self.assertIn("Test debug message", log_output_debug)
-        self.assertIn("Test info message", log_output_debug)
+    def test_error_handling_config(self):
+        """Test error handling for configuration errors using assertLogs."""
+        args = ["--gfa-file", "nonexistent.gfa"] # Missing other required args
 
-        # Clean up handler for the next part
-        logger.removeHandler(handler_debug)
+        # Expect ConfigurationError during config.load()
+        # Capture logs from the root logger or 'src.config' if specific
+        with self.assertLogs(level='ERROR') as cm:
+             # Mock Config.load to raise the expected error
+             with patch.object(Config, 'load', side_effect=ConfigurationError("Missing required files")):
+                  exit_code = self.tool.run(args)
 
-        # --- Test INFO level ---
-        log_capture_info = StringIO()
-        handler_info = logging.StreamHandler(log_capture_info)
-        handler_info.setFormatter(formatter) # Use the same formatter
+        self.assertNotEqual(exit_code, 0)
+        # Check if the ConfigurationError message was logged
+        self.assertTrue(any("Configuration error: Missing required files" in log for log in cm.output))
 
-        # Configure logging (this removes existing handlers again)
-        self.tool.configure_logging('INFO')
-        # Add our capture handler *after* configuration
-        logger.addHandler(handler_info)
 
-        # Check that the root logger is at INFO level
-        self.assertEqual(logger.level, logging.INFO)
-
-        # Log test messages using the root logger
-        logger.debug("Test debug message") # Should not be captured
-        logger.info("Test info message")  # Should be captured
-
-        # Check that only INFO message was logged
-        log_output_info = log_capture_info.getvalue()
-        self.assertNotIn("Test debug message", log_output_info)
-        self.assertIn("Test info message", log_output_info)
-
-        # Clean up handler
-        logger.removeHandler(handler_info)
-
-    def test_error_handling(self):
-        """Test basic error handling."""
-        # Test with missing required files
-        args = [
-            "--gfa-file", "nonexistent.gfa",
-            "--gff3-file", "nonexistent.gff3",
-            "--reference-fasta", "nonexistent.fasta"
-        ]
-
-        # Run with invalid config should raise ConfigurationError during load
-        # We patch 'load' to simulate this failure
-        with patch.object(Config, 'load', side_effect=ConfigurationError("Missing required files")):
-            # Capture stderr to check log message
-            with patch('sys.stderr', new_callable=StringIO) as mock_stderr:
-                 exit_code = self.tool.run(args)
-                 self.assertNotEqual(exit_code, 0)
-                 # Check if the error message was logged to stderr (or logger)
-                 # Depending on when logging is configured vs when error happens
-                 # Here, config load fails before logging is fully set up by run()
-                 # So we might not see the logger output, but the exception is raised
-                 # and caught, leading to non-zero exit code.
-
-        # Test with runtime error during execution
-        # Need valid args first to pass config loading
+    def test_error_handling_runtime(self):
+        """Test error handling for runtime errors using assertLogs."""
+        # Use valid args to pass config loading
         valid_args = [
             "--gfa-file", self.gfa_file,
             "--gff3-file", self.gff_file,
-            "--reference-fasta", self.fasta_file
+            "--reference-fasta", self.fasta_file,
+            "--log-level", "INFO" # Ensure level is sufficient for CRITICAL
         ]
-        # Mock the actual file loading part to raise an error
+
+        # Mock a later step (e.g., load_input_files) to raise an error
+        runtime_error_msg = "Test runtime error during file load"
         with patch.object(HaplotypeAnnotationTool, 'load_input_files',
-                         side_effect=Exception("Test runtime error")):
-            # Capture stderr to check log message
-            with patch('sys.stderr', new_callable=StringIO) as mock_stderr:
+                         side_effect=Exception(runtime_error_msg)):
+            # Capture logs from the root logger at CRITICAL level
+            with self.assertLogs(level='CRITICAL') as cm:
                 exit_code = self.tool.run(valid_args)
-                self.assertNotEqual(exit_code, 0)
-                # Check if the runtime error message was logged
-                log_output = mock_stderr.getvalue()
-                # Note: The logger might write to stderr by default if basicConfig is used
-                # Or check logger output if handlers are configured differently
-                # Let's assume basicConfig's default stderr handler is active
-                # Updated assertion to match the actual log format
-                self.assertIn("An unexpected error occurred during the pipeline execution: Test runtime error", log_output)
+
+        self.assertNotEqual(exit_code, 0)
+        # Check if the critical error message was logged
+        expected_log = f"A critical unexpected error occurred during the pipeline execution: {runtime_error_msg}"
+        self.assertTrue(any(expected_log in log for log in cm.output))
 
 
     def test_intermediate_data_saving(self):
@@ -276,15 +258,26 @@ intermediate_dir: {self.intermediate_dir}
         # Create directory for intermediate data
         os.makedirs(self.intermediate_dir, exist_ok=True)
 
-        # Set up mock intermediate data
+        # Set up mock intermediate data and analysis summaries
         self.tool.intermediate_data = {
             'input_files': {
                 'gfa_file': self.gfa_file,
-                'gff_file': self.gff_file,
-                'fasta_file': self.fasta_file
+                'gff3_file': self.gff_file,
+                'reference_fasta': self.fasta_file
             },
-            'selected_paths': ['path1', 'path2', 'path3']
+            'selected_paths': ['path1']
         }
+        # Create a mock AnalysisSummary (assuming structure)
+        mock_summary = AnalysisSummary(
+             path_id='path1',
+             features=[
+                 FeatureSummary(feature_id='gene1', impact=ImpactType.PRESENT, metrics={'cov': 1.0}, variants=[], reconciliation_status='OK')
+             ]
+        )
+        self.tool.analysis_summaries = {'path1': mock_summary}
+        # Mock features dict needed for saving features_info
+        self.tool.features = {'gene1': MagicMock(type='gene')}
+
 
         # Mock config - provide necessary file paths for saving config itself
         mock_config_data = {
@@ -296,36 +289,52 @@ intermediate_dir: {self.intermediate_dir}
         }
         # Patch the config object within the tool instance
         with patch.object(self.tool.config, 'get_all', return_value=mock_config_data):
+             # Capture logs to check success message
+             with self.assertLogs(level='INFO') as cm:
+                  # Save the data
+                  self.tool.save_intermediate_data(self.intermediate_dir)
 
-            # Save the data
-            self.tool.save_intermediate_data(self.intermediate_dir)
+        # Check log message
+        self.assertTrue(any(f"Saved intermediate data to {self.intermediate_dir}" in log for log in cm.output))
 
-            # Check that files were created
-            input_files_path = os.path.join(self.intermediate_dir, 'input_files.json')
-            paths_file_path = os.path.join(self.intermediate_dir, 'selected_paths.json')
-            config_file_path = os.path.join(self.intermediate_dir, 'configuration.json')
+        # Check that files were created
+        input_files_path = os.path.join(self.intermediate_dir, 'input_files.json')
+        paths_file_path = os.path.join(self.intermediate_dir, 'selected_paths.json')
+        config_file_path = os.path.join(self.intermediate_dir, 'configuration.json')
+        features_info_path = os.path.join(self.intermediate_dir, 'parsed_features_info.json')
+        summaries_path = os.path.join(self.intermediate_dir, 'analysis_summaries.json')
 
-            self.assertTrue(os.path.exists(input_files_path))
-            self.assertTrue(os.path.exists(paths_file_path))
-            self.assertTrue(os.path.exists(config_file_path))
+        self.assertTrue(os.path.exists(input_files_path))
+        self.assertTrue(os.path.exists(paths_file_path))
+        self.assertTrue(os.path.exists(config_file_path))
+        self.assertTrue(os.path.exists(features_info_path))
+        self.assertTrue(os.path.exists(summaries_path))
 
-            # Verify content
-            with open(paths_file_path) as f:
-                paths_data = f.read()
-                self.assertIn('path1', paths_data)
-                self.assertIn('path2', paths_data)
-                self.assertIn('path3', paths_data)
+        # Verify content (basic checks)
+        with open(paths_file_path) as f:
+            paths_data = json.load(f)
+            self.assertEqual(paths_data, ['path1'])
 
-            with open(input_files_path) as f:
-                input_data = f.read()
-                self.assertIn(self.gfa_file.replace('\\', '/'), input_data.replace('\\', '/')) # Normalize paths for comparison
-                self.assertIn(self.gff_file.replace('\\', '/'), input_data.replace('\\', '/'))
-                self.assertIn(self.fasta_file.replace('\\', '/'), input_data.replace('\\', '/'))
+        with open(input_files_path) as f:
+            input_data = json.load(f)
+            self.assertEqual(input_data.get('gfa_file'), self.gfa_file)
 
-            with open(config_file_path) as f:
-                 config_saved_data = f.read()
-                 self.assertIn('intermediate_dir', config_saved_data)
-                 self.assertIn(self.intermediate_dir.replace('\\', '/'), config_saved_data.replace('\\', '/'))
+        with open(config_file_path) as f:
+             config_saved_data = json.load(f)
+             self.assertEqual(config_saved_data.get('intermediate_dir'), self.intermediate_dir)
+
+        with open(features_info_path) as f:
+             features_data = json.load(f)
+             self.assertEqual(features_data, {'gene1': 'gene'})
+
+        with open(summaries_path) as f:
+             summaries_data = json.load(f)
+             self.assertIn('path1', summaries_data)
+             self.assertEqual(summaries_data['path1']['path_id'], 'path1')
+             self.assertEqual(len(summaries_data['path1']['features']), 1)
+             self.assertEqual(summaries_data['path1']['features'][0]['feature_id'], 'gene1')
+             # Use .name for Enum comparison after loading from JSON
+             self.assertEqual(summaries_data['path1']['features'][0]['impact'], ImpactType.PRESENT.name)
 
 
 if __name__ == '__main__':

@@ -54,7 +54,7 @@ from src.reporting.formatters.json_formatter import JSONFormatter
 from src.reporting.formatters.rdf_formatter import RDFFormatter
 
 
-# Configure logger
+# Configure logger for this module
 logger = logging.getLogger(__name__)
 
 # Placeholder classes for components not fully defined in context
@@ -80,7 +80,7 @@ class PlaceholderAlignmentProcessor:
                 results[feature_id] = (aligned_feature, 0.95, 0.98, 0.99)
             else: # Simulate alignment failure
                 results[feature_id] = (None, None, None, None)
-        time.sleep(0.1) # Simulate work
+        time.sleep(0.01) # Simulate work slightly faster
         logger.info(f"Placeholder: Finished aligning features to path {path_id}")
         return results
 
@@ -102,17 +102,29 @@ class PlaceholderImpactClassifier:
 
 class PlaceholderVariantDetector:
     def __init__(self):
+        self.reference_fasta = None # Allow setting reference later
         logger.info("PlaceholderVariantDetector initialized")
 
     def detect_variants(self, reference_feature: SeqFeature, aligned_feature: SeqFeature) -> List[Any]:
         """ Placeholder: Returns mock variants """
         # Simulate variant detection if features differ slightly (e.g., modified)
         # In a real scenario, compare sequences or use CIGAR
-        ref_seq = str(reference_feature.extract(self.reference_fasta[reference_feature.ref].seq)) # Needs reference_fasta access
-        aln_seq = str(aligned_feature.extract(aligned_feature.ref.seq)) # Needs aligned sequence access
-        if ref_seq != aln_seq:
-             # Mock variant data
-             return [{"type": "SNP", "pos": 10, "ref": "A", "alt": "T"}]
+        if not self.reference_fasta:
+             logger.warning("Reference FASTA not set for PlaceholderVariantDetector. Cannot compare sequences.")
+             return []
+        try:
+            # Ensure feature.ref points to a valid key in reference_sequences
+            if reference_feature.ref not in self.reference_fasta:
+                 logger.warning(f"Reference sequence ID '{reference_feature.ref}' not found for feature {reference_feature.id}")
+                 return []
+            # Assuming aligned_feature also has a .ref pointing to the *path sequence* (which isn't stored here)
+            # This placeholder logic is flawed as it needs the actual aligned sequence context.
+            # Let's just mock based on ID for simplicity in placeholder.
+            if "modified" in reference_feature.id.lower(): # Mock based on ID
+                 # Mock variant data
+                 return [{"type": "SNP", "pos": 10, "ref": "A", "alt": "T"}]
+        except Exception as e:
+             logger.warning(f"Error extracting sequence for variant detection placeholder: {e}")
         return []
 
 class PlaceholderFeatureReconciler:
@@ -132,6 +144,8 @@ class PlaceholderSummaryGenerator:
         """ Placeholder: Creates a basic summary """
         feature_summaries = []
         for feature_id, results in analysis_results.items():
+            # Ensure FeatureSummary is instantiated correctly based on its definition
+            # Assuming FeatureSummary takes these kwargs
             fs = FeatureSummary(
                 feature_id=feature_id,
                 impact=results.get('impact_type', ImpactType.UNKNOWN),
@@ -141,6 +155,7 @@ class PlaceholderSummaryGenerator:
             )
             feature_summaries.append(fs)
 
+        # Assuming AnalysisSummary takes path_id and features list
         return AnalysisSummary(path_id=path_id, features=feature_summaries)
 
 class PlaceholderReportGenerator:
@@ -150,14 +165,24 @@ class PlaceholderReportGenerator:
 
     def generate(self, summary: AnalysisSummary, output_file: Optional[str]):
         """ Placeholder: Formats and prints/writes summary """
-        formatted_output = self.formatter.format(summary, output_file or "stdout")
-        if output_file:
-            with open(output_file, 'w') as f:
-                f.write(formatted_output)
-            logger.info(f"Placeholder: Report written to {output_file}")
-        else:
-            print(formatted_output)
-            logger.info("Placeholder: Report written to stdout")
+        try:
+            # Assume formatter.format exists and works
+            formatted_output = self.formatter.format(summary, output_file or "stdout")
+            if output_file:
+                # Ensure directory exists before writing
+                output_dir = os.path.dirname(output_file)
+                if output_dir and not os.path.exists(output_dir):
+                    os.makedirs(output_dir, exist_ok=True)
+                with open(output_file, 'w') as f:
+                    f.write(formatted_output)
+                logger.info(f"Placeholder: Report written to {output_file}")
+            else:
+                # Use print for stdout simulation
+                print(formatted_output)
+                logger.info("Placeholder: Report written to stdout")
+        except Exception as e:
+             logger.error(f"PlaceholderReportGenerator failed: {e}", exc_info=True)
+             raise # Re-raise to indicate failure
 
 class PlaceholderComparativeReportGenerator:
      def __init__(self, formatter):
@@ -166,16 +191,34 @@ class PlaceholderComparativeReportGenerator:
 
      def generate(self, summaries: Dict[str, AnalysisSummary], output_file: Optional[str]):
          """ Placeholder: Formats and prints/writes comparative summary """
-         # Mock comparative data structure
-         comparative_data = {path_id: summary.to_dict() for path_id, summary in summaries.items()} # Assuming AnalysisSummary has to_dict()
-         formatted_output = self.formatter.format_comparative(comparative_data, output_file or "stdout")
-         if output_file:
-             with open(output_file, 'w') as f:
-                 f.write(formatted_output)
-             logger.info(f"Placeholder: Comparative report written to {output_file}")
-         else:
-             print(formatted_output)
-             logger.info("Placeholder: Comparative report written to stdout")
+         try:
+             # Mock comparative data structure
+             # Check if AnalysisSummary has a to_dict method, otherwise use a placeholder
+             comparative_data = {}
+             for path_id, summary in summaries.items():
+                 if hasattr(summary, 'to_dict'):
+                     comparative_data[path_id] = summary.to_dict()
+                 else:
+                     # Placeholder if to_dict is missing
+                     comparative_data[path_id] = {"path_id": summary.path_id, "feature_count": len(summary.features)}
+
+             # Assume formatter.format_comparative exists
+             formatted_output = self.formatter.format_comparative(comparative_data, output_file or "stdout")
+             if output_file:
+                 # Ensure directory exists before writing
+                 output_dir = os.path.dirname(output_file)
+                 if output_dir and not os.path.exists(output_dir):
+                     os.makedirs(output_dir, exist_ok=True)
+                 with open(output_file, 'w') as f:
+                     f.write(formatted_output)
+                 logger.info(f"Placeholder: Comparative report written to {output_file}")
+             else:
+                 # Use print for stdout simulation
+                 print(formatted_output)
+                 logger.info("Placeholder: Comparative report written to stdout")
+         except Exception as e:
+             logger.error(f"PlaceholderComparativeReportGenerator failed: {e}", exc_info=True)
+             raise # Re-raise to indicate failure
 
 
 # --- Main Tool Class ---
@@ -217,22 +260,36 @@ class HaplotypeAnnotationTool:
 
 
     def configure_logging(self, log_level: str) -> None:
-        """Configure logging."""
+        """Configure logging using explicit handlers."""
         numeric_level = getattr(logging, log_level.upper(), None)
         if not isinstance(numeric_level, int):
             raise ValueError(f"Invalid log level: {log_level}")
 
         root_logger = logging.getLogger()
+        root_logger.setLevel(numeric_level) # Set level on root logger
+
+        # Remove existing handlers attached to the root logger
+        # This prevents duplicate messages if called multiple times or in tests
         for handler in root_logger.handlers[:]:
             root_logger.removeHandler(handler)
 
-        logging.basicConfig(
-            level=numeric_level,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        # Create a default StreamHandler (writes to stderr)
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setLevel(numeric_level) # Set level on handler
+
+        # Create formatter and add it to the handler
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
-        root_logger.setLevel(numeric_level)
+        handler.setFormatter(formatter)
+
+        # Add the handler to the root logger
+        root_logger.addHandler(handler)
+
+        # Log the configuration action using the module-level logger
         logger.info(f"Logging configured at {log_level} level")
+
 
     def load_config(self, args: Optional[List[str]] = None) -> Dict[str, Any]:
         """Load configuration."""
@@ -240,7 +297,7 @@ class HaplotypeAnnotationTool:
             self.config.load(args)
             config_dict = self.config.get_all()
             logger.info("Configuration loaded successfully")
-            logger.debug(f"Configuration: {config_dict}")
+            logger.debug(f"Configuration: {json.dumps(config_dict, indent=2, default=str)}") # Use json for cleaner debug output
             return config_dict
         except ConfigurationError as e:
             logger.error(f"Configuration error: {e}")
@@ -271,7 +328,7 @@ class HaplotypeAnnotationTool:
         self.impact_classifier = PlaceholderImpactClassifier()
         self.variant_detector = PlaceholderVariantDetector()
         # Pass reference sequences to variant detector if needed for extraction
-        # self.variant_detector.reference_fasta = self.reference_sequences
+        self.variant_detector.reference_fasta = self.reference_sequences
         self.feature_reconciler = PlaceholderFeatureReconciler()
         self.summary_generator = PlaceholderSummaryGenerator()
 
@@ -570,6 +627,11 @@ class HaplotypeAnnotationTool:
                  if len(self.analysis_summaries) > 1:
                       logger.warning(f"Multiple paths analyzed ({len(self.analysis_summaries)}) but non-comparative report requested. Generating report for the first path only: {next(iter(self.analysis_summaries.keys()))}")
 
+                 # Ensure there's at least one summary before accessing
+                 if not self.analysis_summaries:
+                      logger.error("No summaries available to generate report.")
+                      return
+
                  first_summary = next(iter(self.analysis_summaries.values()))
                  logger.info(f"Generating standard report for path: {first_summary.path_id}")
                  self.report_generator.generate(first_summary, output_file)
@@ -583,62 +645,87 @@ class HaplotypeAnnotationTool:
 
     def save_intermediate_data(self, output_dir: str) -> None:
         """Save intermediate data."""
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-
-        # Save configuration
-        config_file = os.path.join(output_dir, 'configuration.json')
-        with open(config_file, 'w') as f:
-            config_data = {k: v for k, v in self.config.get_all().items()
-                          if isinstance(v, (str, int, float, bool, list, dict, type(None)))} # Allow None
-            json.dump(config_data, f, indent=2, default=str) # Use default=str for non-serializable types
-
-        # Save input file paths
-        input_files_path = os.path.join(output_dir, 'input_files.json')
-        with open(input_files_path, 'w') as f:
-            json.dump(self.intermediate_data.get('input_files', {}), f, indent=2)
-
-        # Save selected paths
-        paths_file = os.path.join(output_dir, 'selected_paths.json')
-        with open(paths_file, 'w') as f:
-            json.dump(self.intermediate_data.get('selected_paths', []), f, indent=2)
-
-        # Save basic feature info (IDs and types)
-        features_info_file = os.path.join(output_dir, 'parsed_features_info.json')
-        features_info = {fid: f.type for fid, f in self.features.items()}
-        with open(features_info_file, 'w') as f:
-             json.dump(features_info, f, indent=2)
-
-        # Optionally save summaries if generated
-        summaries_file = os.path.join(output_dir, 'analysis_summaries.json')
         try:
-            # Convert summaries to dicts if they have a method for it
-            summaries_dict = {path_id: summary.to_dict() for path_id, summary in self.analysis_summaries.items() if hasattr(summary, 'to_dict')}
-            with open(summaries_file, 'w') as f:
-                json.dump(summaries_dict, f, indent=2, default=str) # Use default=str
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+                logger.info(f"Created intermediate data directory: {output_dir}")
+
+            # Save configuration
+            config_file = os.path.join(output_dir, 'configuration.json')
+            with open(config_file, 'w') as f:
+                config_data = {k: v for k, v in self.config.get_all().items()
+                              if isinstance(v, (str, int, float, bool, list, dict, type(None)))} # Allow None
+                json.dump(config_data, f, indent=2, default=str) # Use default=str for non-serializable types
+
+            # Save input file paths
+            input_files_path = os.path.join(output_dir, 'input_files.json')
+            with open(input_files_path, 'w') as f:
+                json.dump(self.intermediate_data.get('input_files', {}), f, indent=2)
+
+            # Save selected paths
+            paths_file = os.path.join(output_dir, 'selected_paths.json')
+            with open(paths_file, 'w') as f:
+                json.dump(self.intermediate_data.get('selected_paths', []), f, indent=2)
+
+            # Save basic feature info (IDs and types)
+            features_info_file = os.path.join(output_dir, 'parsed_features_info.json')
+            features_info = {fid: f.type for fid, f in self.features.items()}
+            with open(features_info_file, 'w') as f:
+                 json.dump(features_info, f, indent=2)
+
+            # Optionally save summaries if generated
+            summaries_file = os.path.join(output_dir, 'analysis_summaries.json')
+            try:
+                # Convert summaries to dicts if they have a method for it
+                summaries_dict = {}
+                for path_id, summary in self.analysis_summaries.items():
+                     if hasattr(summary, 'to_dict'):
+                         summaries_dict[path_id] = summary.to_dict()
+                     else: # Placeholder if no to_dict method
+                          summaries_dict[path_id] = {"path_id": summary.path_id, "feature_count": len(summary.features)}
+
+                with open(summaries_file, 'w') as f:
+                    json.dump(summaries_dict, f, indent=2, default=str) # Use default=str
+            except Exception as e:
+                 logger.warning(f"Could not save analysis summaries to intermediate data: {e}")
+
+
+            logger.info(f"Saved intermediate data to {output_dir}")
         except Exception as e:
-             logger.warning(f"Could not save analysis summaries to intermediate data: {e}")
-
-
-        logger.info(f"Saved intermediate data to {output_dir}")
+             logger.error(f"Failed to save intermediate data to {output_dir}: {e}", exc_info=True)
 
 
     def run(self, args: Optional[List[str]] = None) -> int:
         """Run the full annotation pipeline."""
         start_time = time.time()
         exit_code = 0
+        log_level_for_init = 'INFO' # Default level before config is loaded
 
         try:
+            # Attempt to parse log level from args early for initial setup
+            # This is a bit hacky but allows seeing config load errors if DEBUG is passed
+            temp_parser = argparse.ArgumentParser(add_help=False)
+            temp_parser.add_argument('--log-level', default='INFO')
+            parsed_args, _ = temp_parser.parse_known_args(args)
+            log_level_for_init = parsed_args.log_level
+
+            # Configure logging minimally first
+            self.configure_logging(log_level_for_init)
+
             # 1. Load Config
             config_dict = self.load_config(args)
 
-            # 2. Configure Logging
-            self.configure_logging(config_dict.get('log_level', 'INFO'))
+            # 2. Re-Configure Logging based on final config value
+            final_log_level = config_dict.get('log_level', 'INFO')
+            if final_log_level.upper() != log_level_for_init.upper():
+                 self.configure_logging(final_log_level)
+            logger.info("--- Starting Haplotype Annotation Tool ---")
+
 
             # 3. Load Input Files (includes parsing)
             success, error_msg = self.load_input_files()
             if not success:
-                logger.error(f"Failed to load input files: {error_msg}")
+                # Error already logged by load_input_files
                 return 1
 
             # 4. Initialize Components (after data is loaded)
@@ -659,26 +746,29 @@ class HaplotypeAnnotationTool:
                 intermediate_dir = config_dict.get('intermediate_dir', 'intermediate_data')
                 self.save_intermediate_data(intermediate_dir)
 
-            logger.info("Pipeline finished.")
+            logger.info("--- Pipeline finished ---")
 
         except ConfigurationError as e:
-            # Already logged in load_config
+            # Error should have been logged by load_config
             exit_code = 1
         except Exception as e:
-            logger.error(f"An unexpected error occurred during the pipeline execution: {e}", exc_info=True)
+            # Log the final unexpected error
+            logger.critical(f"A critical unexpected error occurred during the pipeline execution: {e}", exc_info=True)
             exit_code = 1
         finally:
             elapsed_time = time.time() - start_time
             if exit_code == 0:
                 logger.info(f"Haplotype Annotation Tool completed successfully in {elapsed_time:.2f} seconds.")
             else:
-                logger.error(f"Haplotype Annotation Tool failed after {elapsed_time:.2f} seconds.")
+                logger.error(f"Haplotype Annotation Tool failed after {elapsed_time:.2f} seconds. Exit code: {exit_code}")
 
         return exit_code
 
 
 def main() -> int:
     """Command-line entry point."""
+    # Basic logging setup before full configuration, captures early errors
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     tool = HaplotypeAnnotationTool()
     return tool.run()
 

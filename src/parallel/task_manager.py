@@ -11,36 +11,39 @@ import logging
 import multiprocessing
 from multiprocessing import Pool as ProcessPool
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, Future
 from typing import List, Callable, Any, Dict, Union, Optional, Tuple, Generator, Iterable
 
+# Use the logger for this specific module
 logger = logging.getLogger(__name__)
 
 class TaskChunker:
     """Utility class to divide a list of tasks into chunks for parallel processing."""
-    
+
     @staticmethod
     def chunk_tasks(tasks: List[Any], num_chunks: int) -> List[List[Any]]:
         """
         Divide tasks into a specified number of chunks.
-        
+
         Args:
             tasks: List of tasks to divide
             num_chunks: Number of chunks to divide into
-            
+
         Returns:
             List of task chunks
         """
         if not tasks:
             return []
-            
+        if num_chunks <= 0:
+             num_chunks = 1
+
         # Adjust num_chunks if it's greater than the number of tasks
         num_chunks = min(num_chunks, len(tasks))
-        
+
         # Calculate approximate size of each chunk
         chunk_size = len(tasks) // num_chunks
         remainder = len(tasks) % num_chunks
-        
+
         chunks = []
         start = 0
         for i in range(num_chunks):
@@ -48,403 +51,435 @@ class TaskChunker:
             end = start + chunk_size + (1 if i < remainder else 0)
             chunks.append(tasks[start:end])
             start = end
-            
+
         return chunks
-    
+
     @staticmethod
     def chunk_by_size(tasks: List[Any], chunk_size: int) -> List[List[Any]]:
         """
         Divide tasks into chunks of specified size.
-        
+
         Args:
             tasks: List of tasks to divide
             chunk_size: Maximum size of each chunk
-            
+
         Returns:
             List of task chunks
         """
         if not tasks:
             return []
-            
+        if chunk_size <= 0:
+             chunk_size = 1
+
         return [tasks[i:i + chunk_size] for i in range(0, len(tasks), chunk_size)]
 
 
 class ProgressTracker:
     """Tracks and reports progress of parallel tasks."""
-    
-    def __init__(self, total_tasks: int, report_interval: float = 2.0):
+
+    def __init__(self, total_tasks: int, report_interval: float = 5.0): # Increased default interval
         """
         Initialize progress tracker.
-        
+
         Args:
             total_tasks: Total number of tasks to track
             report_interval: Minimum interval between progress reports in seconds
         """
         self.total_tasks = total_tasks
-        
+        self.report_interval = max(0.1, report_interval) # Ensure interval is positive
+
         # Use Value from multiprocessing for thread-safe counter that works across processes
+        # Use a lock for fallback scenario too
+        self._lock = multiprocessing.RLock() # RLock for re-entrancy if needed
         try:
-            self.completed_tasks = multiprocessing.Value('i', 0)
-            self.is_mp_value = True
-        except:
-            # Fallback if multiprocessing Value fails
-            self.completed_tasks = 0
-            self.is_mp_value = False
-            
-        self.start_time = time.time()
-        self.report_interval = report_interval
+            # Use a shared Value for process safety
+            self._completed_tasks_value = multiprocessing.Value('i', 0, lock=self._lock)
+            self._is_mp_value = True
+        except Exception as e:
+            # Fallback if multiprocessing Value fails (e.g., in restricted environments)
+            logger.warning(f"Failed to create multiprocessing.Value for progress tracking, using simple counter: {e}")
+            self._completed_tasks_value = 0
+            self._is_mp_value = False
+
+        self.start_time = time.monotonic() # Use monotonic clock for intervals
         self.last_report_time = self.start_time
-        self.lock = threading.RLock()  # Use RLock for thread safety
-    
+
+
     def increment(self, count: int = 1) -> None:
         """
-        Increment the number of completed tasks.
-        
+        Increment the number of completed tasks and report progress if interval passed.
+
         Args:
             count: Number of tasks completed
         """
-        with self.lock:
-            if self.is_mp_value:
-                with self.completed_tasks.get_lock():
-                    self.completed_tasks.value += count
-                completed = self.completed_tasks.value
+        if count <= 0: return
+
+        with self._lock:
+            if self._is_mp_value:
+                # Access shared value safely
+                self._completed_tasks_value.value += count
+                completed = self._completed_tasks_value.value
             else:
-                self.completed_tasks += count
-                completed = self.completed_tasks
-            
-            current_time = time.time()
-            if (current_time - self.last_report_time >= self.report_interval or 
+                # Access simple counter safely
+                self._completed_tasks_value += count
+                completed = self._completed_tasks_value
+
+            current_time = time.monotonic()
+            # Report if interval passed OR if all tasks are completed
+            if (current_time - self.last_report_time >= self.report_interval or
                 completed >= self.total_tasks):
-                self._report_progress()
+                self._report_progress(completed, current_time)
                 self.last_report_time = current_time
-    
-    def _report_progress(self) -> None:
-        """Report current progress."""
-        if self.is_mp_value:
-            with self.completed_tasks.get_lock():
-                completed = self.completed_tasks.value
-        else:
-            completed = self.completed_tasks
-            
-        percent = (completed / self.total_tasks) * 100 if self.total_tasks > 0 else 0
-        elapsed = time.time() - self.start_time
-        
+
+    def _report_progress(self, completed: int, current_time: float) -> None:
+        """Report current progress. Called internally with lock held."""
+        if self.total_tasks <= 0: return
+
+        percent = (completed / self.total_tasks) * 100
+        elapsed = current_time - self.start_time
+
         # Calculate estimated time remaining
-        if completed > 0:
+        eta_str = ""
+        if completed > 0 and elapsed > 0:
             tasks_per_second = completed / elapsed
             remaining_tasks = self.total_tasks - completed
-            eta = remaining_tasks / tasks_per_second if tasks_per_second > 0 else 0
-            eta_str = f", ETA: {eta:.1f}s" if eta > 0 else ""
-        else:
-            eta_str = ""
-            
+            if tasks_per_second > 1e-6: # Avoid division by zero or near-zero
+                 eta = remaining_tasks / tasks_per_second
+                 eta_str = f", ETA: {eta:.1f}s"
+
+        # Log using the module's logger instance
         logger.info(f"Progress: {completed}/{self.total_tasks} ({percent:.1f}%) "
                    f"in {elapsed:.1f}s{eta_str}")
-    
+
     def get_completed(self) -> int:
         """
-        Get the number of completed tasks.
-        
+        Get the number of completed tasks safely.
+
         Returns:
             Number of completed tasks
         """
-        if self.is_mp_value:
-            with self.completed_tasks.get_lock():
-                return self.completed_tasks.value
-        else:
-            return self.completed_tasks
+        with self._lock:
+            if self._is_mp_value:
+                return self._completed_tasks_value.value
+            else:
+                return self._completed_tasks_value
 
 
 class BaseWorkerPool:
     """Base class for worker pools."""
-    
-    def __init__(self, num_workers: Optional[int] = None, 
+
+    def __init__(self, num_workers: Optional[int] = None,
                  track_progress: bool = True):
         """
         Initialize worker pool.
-        
+
         Args:
-            num_workers: Number of worker processes/threads
-            track_progress: Whether to track and report progress
+            num_workers: Number of worker processes/threads. Defaults to CPU count.
+            track_progress: Whether to track and report progress using logger.info.
         """
-        # Default to CPU count if num_workers is None
-        self.num_workers = num_workers or os.cpu_count() or 4
+        # Default to CPU count if num_workers is None or invalid
+        resolved_workers = num_workers
+        if not isinstance(resolved_workers, int) or resolved_workers <= 0:
+             resolved_workers = os.cpu_count() or 4 # Default to 4 if cpu_count fails
+        self.num_workers = resolved_workers
         self.track_progress = track_progress
-        self.progress_tracker = None
-        
+        self.progress_tracker: Optional[ProgressTracker] = None
+        self._pool = None # Internal pool instance
+
     def _create_pool(self):
         """Create the worker pool. To be implemented by subclasses."""
         raise NotImplementedError("Subclasses must implement this method")
-        
+
     def _close_pool(self):
         """Close the worker pool. To be implemented by subclasses."""
         raise NotImplementedError("Subclasses must implement this method")
-    
+
     def map(self, func: Callable, tasks: List[Any], chunksize: Optional[int] = None) -> List[Any]:
         """
         Apply function to each task in parallel.
-        
+
         Args:
-            func: Function to apply to each task
-            tasks: List of tasks
-            chunksize: Size of task chunks (optional)
-            
+            func: Function to apply to each task. Must be picklable for ProcessPool.
+            tasks: List of tasks.
+            chunksize: Size of task chunks (primarily for ProcessPool).
+
         Returns:
-            List of results
+            List of results in the same order as tasks.
+
+        Raises:
+            Exception: Re-raises the first exception encountered in a worker.
         """
         raise NotImplementedError("Subclasses must implement this method")
-    
+
     def __enter__(self):
         """Context manager entry point."""
         self._create_pool()
         return self
-        
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit point with resource cleanup."""
         self._close_pool()
 
 
 class ProcessWorkerPool(BaseWorkerPool):
-    """Worker pool using multiprocessing."""
-    
+    """Worker pool using multiprocessing.Pool."""
+
     def _create_pool(self):
         """Create process pool."""
-        self.pool = ProcessPool(processes=self.num_workers)
-        
+        if self._pool is None:
+             logger.debug(f"Creating ProcessPool with {self.num_workers} workers.")
+             # Consider adding initializer/initargs if needed for worker setup
+             self._pool = ProcessPool(processes=self.num_workers)
+
     def _close_pool(self):
         """Close process pool."""
-        if hasattr(self, 'pool'):
-            self.pool.close()
-            self.pool.join()
-    
-    def _worker_wrapper(self, args):
+        if self._pool is not None:
+            logger.debug("Closing ProcessPool.")
+            self._pool.close() # Prevent new tasks
+            self._pool.join()  # Wait for workers to finish
+            self._pool = None
+
+    @staticmethod
+    def _worker_wrapper(args):
         """
-        Wrapper for worker function to track progress.
-        
+        Static wrapper for worker function to handle task execution and progress.
+        Must be static or defined at top-level for pickling.
+
         Args:
-            args: Tuple of (function, task, task_id)
-            
+            args: Tuple of (function, task)
+
         Returns:
-            Function result
+            Tuple of (result, exception)
         """
-        func, task, task_id = args
+        func, task = args
         try:
             result = func(task)
-            
-            if self.progress_tracker:
-                self.progress_tracker.increment()
-                
-            return result
+            return (result, None) # Return result and no exception
         except Exception as e:
-            # Catch and return exceptions to avoid process worker crashes
-            if self.progress_tracker:
-                self.progress_tracker.increment()
-            return e
-    
-    # Define these outside to ensure they're picklable
-    @staticmethod
-    def _safe_worker(args):
-        """Process a task safely, catching exceptions."""
-        func, task = args
-        try:
-            return func(task)
-        except Exception as e:
-            return e
-            
-    @staticmethod
-    def _tracked_worker(args):
-        """Process a task and track it, catching exceptions."""
-        func, task = args
-        try:
-            return func(task)
-        except Exception as e:
-            return e
+            # Log error in worker process if possible (might not show in main process log easily)
+            # logger.error(f"Error in worker process executing task {task}: {e}", exc_info=True) # This logger might not be configured
+            return (None, e) # Return None result and the exception
 
     def map(self, func: Callable, tasks: List[Any], chunksize: Optional[int] = None) -> List[Any]:
         """
         Apply function to each task in parallel using processes.
-        
+
         Args:
-            func: Function to apply to each task
-            tasks: List of tasks
-            chunksize: Size of task chunks (optional)
-            
+            func: Function to apply to each task (must be picklable).
+            tasks: List of tasks.
+            chunksize: Size of task chunks. Auto-calculated if None.
+
         Returns:
-            List of results
+            List of results.
+
+        Raises:
+            Exception: Re-raises the first exception encountered in a worker.
         """
         if not tasks:
             return []
-            
-        # Create pool if not already created
-        if not hasattr(self, 'pool'):
+
+        if self._pool is None:
             self._create_pool()
-        
-        # Setup progress tracking
+
         if self.track_progress:
             self.progress_tracker = ProgressTracker(len(tasks))
-            
-            # Prepare task arguments - pair each task with the function
-            task_args = [(func, task) for task in tasks]
-            
-            # Execute tasks in chunks to avoid large serialization
-            all_results = []
-            for i in range(0, len(task_args), 100):  # Process in smaller batches
-                batch = task_args[i:i+100]
-                batch_results = self.pool.map(
-                    self._tracked_worker,
-                    batch,
-                    chunksize or max(1, len(batch) // (self.num_workers * 4))
-                )
-                all_results.extend(batch_results)
-                # Update progress here in the main process
-                self.progress_tracker.increment(len(batch))
-                
-            results = all_results
-        else:
-            # Prepare task arguments - pair each task with the function
-            task_args = [(func, task) for task in tasks]
-            
-            # Execute directly but still in batches for large task lists
-            all_results = []
-            for i in range(0, len(task_args), 100):  # Process in smaller batches
-                batch = task_args[i:i+100]
-                batch_results = self.pool.map(
-                    self._safe_worker,
-                    batch,
-                    chunksize or max(1, len(batch) // (self.num_workers * 4))
-                )
-                all_results.extend(batch_results)
-            
-            results = all_results
-            
-        # Re-raise any exceptions that were returned
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                raise result
-                
-        return results
+
+        # Prepare arguments for the static wrapper
+        task_args = [(func, task) for task in tasks]
+
+        # Determine chunksize if not provided
+        # Good chunksize balances overhead and load balancing
+        if chunksize is None:
+            chunksize, extra = divmod(len(tasks), self.num_workers * 4)
+            if extra:
+                chunksize += 1
+            chunksize = max(1, chunksize) # Ensure chunksize is at least 1
+
+        logger.debug(f"Mapping {len(tasks)} tasks with chunksize {chunksize} across {self.num_workers} workers.")
+
+        results_with_errors = []
+        try:
+            # Use imap_unordered for potentially better memory usage and progress updates
+            # Note: Results will NOT be in order initially
+            map_results = self._pool.imap_unordered(self._worker_wrapper, task_args, chunksize=chunksize)
+
+            # Process results as they complete
+            processed_count = 0
+            temp_results = {} # Store results temporarily with original index
+            original_indices = {id(task): i for i, task in enumerate(tasks)} # Map task id to index
+
+            for i, (result, error) in enumerate(map_results):
+                 processed_count += 1
+                 # Find original index - This is tricky with imap_unordered if tasks aren't hashable/unique
+                 # We rely on the fact that the wrapper gets (func, task) and returns (result, error)
+                 # Let's assume the order corresponds *roughly* if we just append,
+                 # but this is NOT guaranteed by imap_unordered.
+                 # A safer way requires passing index or using map.
+                 # Sticking with map for ordered results.
+
+                 if self.track_progress and self.progress_tracker:
+                      self.progress_tracker.increment() # Increment progress as results arrive
+
+                 results_with_errors.append((result, error))
+
+            # If using map instead of imap_unordered:
+            # results_with_errors = self._pool.map(self._worker_wrapper, task_args, chunksize=chunksize)
+            # if self.track_progress and self.progress_tracker:
+            #      # Increment progress after map completes (less granular)
+            #      self.progress_tracker.increment(len(tasks))
+
+
+        except Exception as e:
+             logger.error(f"Error during ProcessPool execution: {e}", exc_info=True)
+             self._close_pool() # Ensure pool is closed on error
+             raise # Re-raise the exception
+
+        # Check for errors returned from workers and re-raise the first one
+        final_results = []
+        first_error = None
+        for result, error in results_with_errors:
+            if error is not None:
+                logger.error(f"Task failed with exception: {error}")
+                if first_error is None:
+                    first_error = error
+            final_results.append(result) # Append result even if error occurred (will be None)
+
+        if first_error is not None:
+            raise first_error # Re-raise the first captured exception
+
+        # If using imap_unordered, results need reordering here.
+        # Since we switched back to map (implicitly), results are already ordered.
+        return final_results
 
 
 class ThreadWorkerPool(BaseWorkerPool):
-    """Worker pool using threading."""
-    
+    """Worker pool using concurrent.futures.ThreadPoolExecutor."""
+
     def _create_pool(self):
         """Create thread pool."""
-        self.pool = ThreadPoolExecutor(max_workers=self.num_workers)
-        
+        if self._pool is None:
+             logger.debug(f"Creating ThreadPoolExecutor with {self.num_workers} workers.")
+             self._pool = ThreadPoolExecutor(max_workers=self.num_workers)
+
     def _close_pool(self):
         """Close thread pool."""
-        if hasattr(self, 'pool'):
-            self.pool.shutdown()
-    
+        if self._pool is not None:
+            logger.debug("Shutting down ThreadPoolExecutor.")
+            self._pool.shutdown(wait=True) # Wait for tasks to complete
+            self._pool = None
+
     def map(self, func: Callable, tasks: List[Any], chunksize: Optional[int] = None) -> List[Any]:
         """
         Apply function to each task in parallel using threads.
-        
+
         Args:
-            func: Function to apply to each task
-            tasks: List of tasks
-            chunksize: Size of task chunks (ignored in ThreadWorkerPool)
-            
+            func: Function to apply to each task.
+            tasks: List of tasks.
+            chunksize: Ignored for ThreadPoolExecutor's map.
+
         Returns:
-            List of results
+            List of results.
+
+        Raises:
+            Exception: Re-raises the first exception encountered in a worker.
         """
         if not tasks:
             return []
-            
-        # Create pool if not already created
-        if not hasattr(self, 'pool'):
+
+        if self._pool is None:
             self._create_pool()
-            
-        # Define a safe function that catches exceptions
-        def safe_apply(task):
-            try:
-                return func(task)
-            except Exception as e:
-                return e
-        
-        # Setup progress tracking
+
         if self.track_progress:
             self.progress_tracker = ProgressTracker(len(tasks))
-            
-            # Define wrapper function for progress tracking
-            def _tracked_func(task):
-                try:
-                    result = func(task)
-                    self.progress_tracker.increment()
-                    return result
-                except Exception as e:
-                    self.progress_tracker.increment()
-                    return e
-                
-            # Execute with wrapper function in smaller batches for better progress reporting
-            all_results = []
-            for i in range(0, len(tasks), 100):  # Process in batches
-                batch = tasks[i:i+100]
-                batch_results = list(self.pool.map(_tracked_func, batch))
-                all_results.extend(batch_results)
-            
-            results = all_results
-        else:
-            # Execute directly without wrapper but still in batches for large task lists
-            all_results = []
-            for i in range(0, len(tasks), 100):
-                batch = tasks[i:i+100]
-                batch_results = list(self.pool.map(safe_apply, batch))
-                all_results.extend(batch_results)
-            
-            results = all_results
-            
-        # Re-raise any exceptions that were returned
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                raise result
-                
+
+        results = []
+        futures: List[Future] = []
+
+        try:
+            # Submit all tasks
+            for task in tasks:
+                future = self._pool.submit(func, task)
+                if self.track_progress and self.progress_tracker:
+                     # Add callback to increment progress when done
+                     future.add_done_callback(lambda f: self.progress_tracker.increment())
+                futures.append(future)
+
+            # Collect results in order, waiting for completion
+            # This automatically handles exceptions raised in workers
+            for future in futures:
+                results.append(future.result()) # future.result() re-raises exceptions
+
+        except Exception as e:
+             logger.error(f"Error during ThreadPoolExecutor execution: {e}", exc_info=True)
+             # Ensure pool shutdown is attempted even if map fails
+             self._close_pool()
+             raise # Re-raise the exception
+
         return results
 
 
-def create_worker_pool(pool_type: str = 'process', num_workers: Optional[int] = None, 
+def create_worker_pool(pool_type: str = 'process', num_workers: Optional[int] = None,
                       track_progress: bool = True) -> BaseWorkerPool:
     """
     Factory function to create appropriate worker pool.
-    
+
     Args:
-        pool_type: Type of pool ('process' or 'thread')
-        num_workers: Number of worker processes/threads
-        track_progress: Whether to track and report progress
-        
+        pool_type: Type of pool ('process' or 'thread').
+        num_workers: Number of worker processes/threads. Defaults to CPU count.
+        track_progress: Whether to track and report progress using logger.info.
+
     Returns:
-        Worker pool instance
-        
+        Worker pool instance (ProcessWorkerPool or ThreadWorkerPool).
+
     Raises:
-        ValueError: If pool_type is not recognized
+        ValueError: If pool_type is not recognized.
     """
-    if pool_type.lower() == 'process':
+    pool_type = pool_type.lower()
+    logger.info(f"Creating '{pool_type}' worker pool with {num_workers or 'default'} workers. Progress tracking: {track_progress}")
+    if pool_type == 'process':
         return ProcessWorkerPool(num_workers, track_progress)
-    elif pool_type.lower() == 'thread':
+    elif pool_type == 'thread':
         return ThreadWorkerPool(num_workers, track_progress)
     else:
         raise ValueError(f"Unknown pool type: {pool_type}. Use 'process' or 'thread'.")
 
 
-def execute_parallel(func: Callable, tasks: List[Any], 
+def execute_parallel(func: Callable, tasks: List[Any],
                     num_workers: Optional[int] = None,
                     pool_type: str = 'process',
                     chunksize: Optional[int] = None,
                     track_progress: bool = True) -> List[Any]:
     """
-    Convenience function to execute tasks in parallel.
-    
+    Convenience function to execute tasks in parallel using a context manager.
+
     Args:
-        func: Function to apply to each task
-        tasks: List of tasks
-        num_workers: Number of worker processes/threads
-        pool_type: Type of pool ('process' or 'thread')
-        chunksize: Size of task chunks
-        track_progress: Whether to track and report progress
-        
+        func: Function to apply to each task. Must be picklable for 'process' pool.
+        tasks: List of tasks.
+        num_workers: Number of worker processes/threads. Defaults to CPU count.
+        pool_type: Type of pool ('process' or 'thread').
+        chunksize: Size of task chunks (primarily for 'process' pool).
+        track_progress: Whether to track and report progress using logger.info.
+
     Returns:
-        List of results
+        List of results in the same order as tasks.
+
+    Raises:
+        Exception: Re-raises the first exception encountered in a worker.
+        ValueError: If pool_type is not recognized.
     """
-    with create_worker_pool(pool_type, num_workers, track_progress) as pool:
-        return pool.map(func, tasks, chunksize)
+    if not tasks:
+        return []
+
+    logger.info(f"Executing {len(tasks)} tasks in parallel using {pool_type} pool...")
+    start_time = time.monotonic()
+    try:
+        # Use context manager for automatic pool creation and cleanup
+        with create_worker_pool(pool_type, num_workers, track_progress) as pool:
+            results = pool.map(func, tasks, chunksize)
+        end_time = time.monotonic()
+        logger.info(f"Parallel execution finished in {end_time - start_time:.2f} seconds.")
+        return results
+    except Exception as e:
+         # Log the error at this top level as well
+         logger.error(f"Parallel execution failed: {e}", exc_info=True)
+         raise # Re-raise the exception for calling code to handle
