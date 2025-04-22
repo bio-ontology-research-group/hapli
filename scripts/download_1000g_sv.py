@@ -18,11 +18,10 @@ logger = logging.getLogger(__name__)
 
 # 1000 Genomes FTP server details
 FTP_SERVER = "ftp.1000genomes.ebi.ac.uk"
-FTP_SV_DIR = "/vol1/ftp/phase3/integrated_sv_map/supporting/vcfs"
-SV_FILENAME_PATTERN = "ALL.wgs.integrated_sv_map_v2.20130502.svs.genotypes.{}.vcf.gz"
+FTP_SV_DIR = "/vol1/ftp/phase3/integrated_sv_map"
+SV_FILENAME = "ALL.wgs.mergedSV.v8.20130502.svs.genotypes.vcf.gz"
 
-# Smaller chromosomes for faster download
-DEFAULT_CHROMOSOMES = ['21', '22']  # Smaller chromosomes
+# No longer using chromosomes
 
 def download_file_with_progress(url, output_path, is_ftp=True):
     """
@@ -153,8 +152,8 @@ def download_sv_vcfs(output_dir, num_samples=3, chromosomes=None, extract=False)
     
     Args:
         output_dir: Directory to save downloaded files
-        num_samples: Number of chromosomes to download (using different chromosomes as "samples")
-        chromosomes: Specific chromosomes to download
+        num_samples: Number of samples to download (multiple copies with different names)
+        chromosomes: Not used - kept for backwards compatibility
         extract: Whether to extract the downloaded files
     """
     # Alternative locations to try if main location fails
@@ -164,90 +163,101 @@ def download_sv_vcfs(output_dir, num_samples=3, chromosomes=None, extract=False)
         "/vol1/ftp/release/20130502/supporting/sv_deletions"
     ]
     
-    # Alternative filename patterns to try
-    ALTERNATIVE_SV_PATTERNS = [
-        "ALL.wgs.mergedSV.v8.20130502.svs.genotypes.{}.vcf.gz",
-        "ALL.wgs.integrated_sv_map_v2.20130502.svs.genotypes.{}.vcf.gz",
-        "ALL.{}.integrated_sv_map.20130502.ALL.genotypes.vcf.gz",
-        "DEL_svs_1kg_genotypes.{}.vcf.gz"
+    # Alternative filenames to try
+    ALTERNATIVE_SV_FILES = [
+        "ALL.wgs.mergedSV.v8.20130502.svs.genotypes.vcf.gz",
+        "ALL.wgs.integrated_sv_map_v2.20130502.svs.genotypes.vcf.gz"
     ]
+    
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    if chromosomes is None:
-        # Use DEFAULT_CHROMOSOMES first, then add more if needed
-        chromosomes = DEFAULT_CHROMOSOMES.copy()
-        if num_samples > len(chromosomes):
-            # Add more chromosomes if needed
-            additional_chroms = ['20', '19', '18', '17', '16']
-            chromosomes.extend(additional_chroms[:num_samples - len(chromosomes)])
-    
-    # Make sure we only process the requested number of samples
-    chromosomes = chromosomes[:num_samples]
-    
     downloaded_files = []
+    found = False
     
-    for i, chrom in enumerate(chromosomes):
-        if len(downloaded_files) >= num_samples:
-            break
+    # Try the primary location and filename first
+    for i in range(num_samples):
+        # Use sample_index for naming multiple copies
+        sample_index = i + 1
+        output_path = output_dir / f"sv_sample_{sample_index}_{SV_FILENAME}"
+        
+        # Only download once but create multiple symlinks or copies
+        if i == 0 or not found:
+            # Build FTP URL
+            url = f"ftp://{FTP_SERVER}{FTP_SV_DIR}/{SV_FILENAME}"
+            logger.info(f"Trying to download from {url}")
             
-        found = False
-        
-        # Try the primary location and filename pattern first
-        sv_filename = SV_FILENAME_PATTERN.format(chrom)
-        output_path = output_dir / f"sv_sample_{i+1}_chr{chrom}_{sv_filename}"
-        
-        # Build FTP URL
-        url = f"ftp://{FTP_SERVER}{FTP_SV_DIR}/{sv_filename}"
-        logger.info(f"Trying to download from {url}")
-        
-        # Download file
-        success = download_file_with_progress(url, output_path, is_ftp=True)
-        
-        if success:
-            found = True
-            logger.info(f"Successfully downloaded SV file for chromosome {chrom}")
-            if extract:
-                extract_path = str(output_path).replace('.gz', '')
-                if extract_gzip(output_path, extract_path, remove_gz=False):
-                    downloaded_files.append(extract_path)
+            # Download file
+            success = download_file_with_progress(url, output_path, is_ftp=True)
+            
+            if success:
+                found = True
+                logger.info(f"Successfully downloaded SV file")
+                if extract:
+                    extract_path = str(output_path).replace('.gz', '')
+                    if extract_gzip(output_path, extract_path, remove_gz=False):
+                        downloaded_files.append(extract_path)
+                    else:
+                        downloaded_files.append(output_path)
                 else:
                     downloaded_files.append(output_path)
-            else:
-                downloaded_files.append(output_path)
-        
-        # If primary location fails, try alternatives
-        if not found:
-            logger.info(f"Trying alternative locations for chromosome {chrom}")
-            
-            # Try alternative directories and patterns
-            for alt_dir in ALTERNATIVE_SV_DIRS:
-                for alt_pattern in ALTERNATIVE_SV_PATTERNS:
-                    if found:
-                        break
-                        
-                    alt_filename = alt_pattern.format(chrom)
-                    alt_output_path = output_dir / f"sv_sample_{i+1}_chr{chrom}_{alt_filename}"
-                    
-                    alt_url = f"ftp://{FTP_SERVER}{alt_dir}/{alt_filename}"
-                    logger.info(f"Trying alternative URL: {alt_url}")
-                    
-                    alt_success = download_file_with_progress(alt_url, alt_output_path, is_ftp=True)
-                    
-                    if alt_success:
-                        found = True
-                        logger.info(f"Successfully downloaded SV file for chromosome {chrom} from alternative location")
+        else:
+            # For additional samples, create a copy (or symlink) of the first file
+            if i > 0 and found:
+                try:
+                    # Use shutil.copy2 to preserve metadata
+                    first_file = downloaded_files[0]
+                    if extract and first_file.endswith('.vcf'):
+                        # Copy the extracted file
+                        extract_path = str(output_path).replace('.gz', '')
+                        shutil.copy2(first_file, extract_path)
+                        downloaded_files.append(extract_path)
+                        # Also copy the compressed file
+                        shutil.copy2(str(first_file) + '.gz', output_path)
+                    else:
+                        # Copy the compressed file
+                        shutil.copy2(first_file, output_path)
+                        downloaded_files.append(output_path)
+                        # If extract is True, also extract this copy
                         if extract:
-                            alt_extract_path = str(alt_output_path).replace('.gz', '')
-                            if extract_gzip(alt_output_path, alt_extract_path, remove_gz=False):
-                                downloaded_files.append(alt_extract_path)
-                            else:
-                                downloaded_files.append(alt_output_path)
+                            extract_path = str(output_path).replace('.gz', '')
+                            if extract_gzip(output_path, extract_path, remove_gz=False):
+                                downloaded_files.append(extract_path)
+                
+                except Exception as e:
+                    logger.error(f"Error creating additional sample copy: {e}")
+    
+    # If primary location fails, try alternatives
+    if not found:
+        logger.info("Trying alternative locations")
+        
+        # Try alternative directories and filenames
+        for alt_dir in ALTERNATIVE_SV_DIRS:
+            for alt_filename in ALTERNATIVE_SV_FILES:
+                if found:
+                    break
+                    
+                alt_output_path = output_dir / f"sv_sample_1_{alt_filename}"
+                
+                alt_url = f"ftp://{FTP_SERVER}{alt_dir}/{alt_filename}"
+                logger.info(f"Trying alternative URL: {alt_url}")
+                
+                alt_success = download_file_with_progress(alt_url, alt_output_path, is_ftp=True)
+                
+                if alt_success:
+                    found = True
+                    logger.info(f"Successfully downloaded SV file from alternative location")
+                    if extract:
+                        alt_extract_path = str(alt_output_path).replace('.gz', '')
+                        if extract_gzip(alt_output_path, alt_extract_path, remove_gz=False):
+                            downloaded_files.append(alt_extract_path)
                         else:
                             downloaded_files.append(alt_output_path)
-            
-            if not found:
-                logger.error(f"Failed to download SV file for chromosome {chrom} after trying all alternatives")
+                    else:
+                        downloaded_files.append(alt_output_path)
+        
+        if not found:
+            logger.error(f"Failed to download SV file after trying all alternatives")
     
     return downloaded_files
 
