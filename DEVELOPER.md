@@ -2,6 +2,99 @@
 
 ## Implementation Details
 
+### Parallelization Module (`src/parallel/`)
+
+The Parallelization module provides a flexible framework for concurrent execution:
+
+#### Task Manager (`src/parallel/task_manager.py`)
+
+* Implements both process-based and thread-based worker pools
+* Includes smart task chunking for efficient workload distribution
+* Provides progress tracking with ETA estimation
+* Ensures proper resource management and cleanup
+
+**Key Components:**
+- `TaskChunker`: Divides tasks into balanced chunks
+- `ProgressTracker`: Monitors and reports execution progress
+- `ProcessWorkerPool`: Implements multiprocessing-based parallelism
+- `ThreadWorkerPool`: Implements threading-based parallelism
+- `execute_parallel()`: Convenience function for simple parallel execution
+
+**Usage Example:**
+```python
+from src.parallel.task_manager import execute_parallel
+
+# Process-based parallelism (best for CPU-bound tasks)
+results = execute_parallel(
+    func=my_function,
+    tasks=data_items,
+    num_workers=4,  # Number of processes
+    pool_type='process'
+)
+
+# Thread-based parallelism (best for I/O-bound tasks)
+results = execute_parallel(
+    func=my_function,
+    tasks=data_items,
+    num_workers=8,  # Number of threads
+    pool_type='thread'
+)
+```
+
+#### Parallel Alignment (`src/parallel/parallel_alignment.py`)
+
+* Parallelizes minimap2 executions across multiple processes
+* Implements smart batching to reduce overhead
+* Handles result aggregation from parallel workers
+* Provides progress tracking during alignment
+
+**Key Components:**
+- `BatchAlignmentTask`: Encapsulates data for independent alignment tasks
+- `ParallelAligner`: High-level interface for parallel feature alignment
+
+**Usage Example:**
+```python
+from src.parallel.parallel_alignment import ParallelAligner
+
+aligner = ParallelAligner(
+    num_workers=4,       # Number of parallel workers
+    batch_size=50,       # Features per batch
+    pool_type='process', # Use processes for computation-heavy alignment
+    minimap_preset='splice'  # Passed to minimap2
+)
+
+aligned_features = aligner.align_features(features, reference_seq)
+```
+
+#### Hierarchical Executor (`src/parallel/hierarchical_executor.py`)
+
+* Executes tasks respecting hierarchical dependencies
+* Uses a directed acyclic graph (DAG) to manage execution order
+* Optimizes by running independent branches in parallel
+* Handles synchronization between dependent tasks
+
+**Key Components:**
+- `Task`: Represents a task with dependencies in the execution graph
+- `HierarchicalExecutor`: Manages task dependencies and parallel execution
+- `execute_hierarchical_tasks()`: Convenience function for task execution
+
+**Usage Example:**
+```python
+from src.parallel.hierarchical_executor import HierarchicalExecutor
+
+# Create executor
+executor = HierarchicalExecutor(num_workers=4)
+
+# Add tasks with dependencies
+executor.add_task('load_data', load_function)
+executor.add_task('parse', parse_function, dependencies=['load_data'])
+executor.add_task('filter', filter_function, dependencies=['parse'])
+executor.add_task('analyze', analyze_function, dependencies=['filter'])
+
+# Execute respecting dependencies
+results = executor.execute()
+```
+
 ### Configuration Management (`src/config.py`)
 
 The application uses a dedicated `Config` class (`src/config.py`) to manage configuration settings.
@@ -214,6 +307,11 @@ src/
 │   ├── gff_parser.py  # GFF3 file parser
 │   ├── fasta_parser.py  # FASTA file parser
 │   └── feature_graph.py  # Feature relationship graph
+├── parallel/          # Parallel processing components
+│   ├── __init__.py
+│   ├── task_manager.py         # Worker pool implementation
+│   ├── parallel_alignment.py   # Parallel feature alignment
+│   └── hierarchical_executor.py  # Dependency-based execution
 ├── analysis/          # Feature analysis components
 │   ├── __init__.py
 │   ├── impact_classifier.py  # Feature impact classification
