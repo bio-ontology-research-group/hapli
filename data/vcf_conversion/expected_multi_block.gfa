@@ -1,0 +1,27 @@
+# GFA representation of multi_block.vcf (Conceptual)
+# Assumes unphased_strategy='ref' for mb3 (0/1)
+H	VN:Z:1.0
+# Segments (Ref parts, alleles for SAMPLE_A)
+S	s1	ACGTACGTA	LN:9	# Ref 0-9
+S	s2	A	LN:1	# Ref@10
+S	s3	G	LN:1	# Alt@10
+S	s4	CGTACGTACGTAC	LN:14	# Ref 10-24
+S	s5	C	LN:1	# Ref@25
+S	s6	T	LN:1	# Alt@25
+S	s7	GTACGTACGTACGTACGTACGTACG	LN:25	# Ref 25-50
+S	s8	G	LN:1	# Ref@50
+S	s9	A	LN:1	# Alt@50
+S	s10	TACGTACGTACGTACGTACGTACGT	LN:25	# Ref 50-75
+S	s11	T	LN:1	# Ref@75
+S	s12	C	LN:1	# Alt@75
+S	s13	ACGTACGTACGTACGTACGTACG	LN:25	# Ref 75-100
+S	s14	A	LN:1	# Ref@100
+S	s15	T	LN:1	# Alt@100
+S	s16	CGTACGT...	LN:500	# Rest of reference chr1 (100-600)
+# Links... (Similar sequential links)
+# ...
+# Paths for SAMPLE_A
+# Haplotype 1: 0|1(PS10), 0|1(PS10), 0/1(ref), 1|0(PS75), 1|0(PS75) -> Ref, Ref, Ref, Alt, Alt
+P	SAMPLE_A_hap1	s1+,s2+,s4+,s5+,s7+,s8+,s10+,s12+,s13+,s15+,s16+	*	SM:Z:SAMPLE_A	HP:i:1
+# Haplotype 2: 0|1(PS10), 0|1(PS10), 0/1(ref), 1|0(PS75), 1|0(PS75) -> Alt, Alt, Ref, Ref, Ref
+P	SAMPLE_A_hap2	s1+,s3+,s4+,s6+,s7+,s8+,s10+,s11+,s13+,s14+,s16+	*	SM:Z:SAMPLE_A	HP:i:2

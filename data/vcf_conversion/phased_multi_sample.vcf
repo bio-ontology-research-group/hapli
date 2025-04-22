@@ -1,0 +1,13 @@
+##fileformat=VCFv4.2
+##reference=file://reference.fasta
+##contig=<ID=chr1,length=600>
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=PS,Number=1,Type=Integer,Description="Phase set identifier">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	SAMPLE1	SAMPLE2
+chr1	10	rs1	A	G	100	PASS	.	GT:PS	0|1:10	1|0:10
+chr1	25	rs2	C	T	100	PASS	.	GT:PS	0|1:10	1|0:10
+chr1	50	rs3	G	GA	100	PASS	.	GT:PS	1|0:10	0|1:10
+chr1	75	rs4	T	C	100	PASS	.	GT	0/1	1/1
+chr1	100	rs5	ACGT	A	100	PASS	.	GT:PS	0|1:100	1|1:100
+chr1	120	rs6	G	T	100	PASS	.	GT:PS	0|1:100	1|1:100
+chr1	150	rs7	T	.	100	PASS	.	GT	./.	0/0

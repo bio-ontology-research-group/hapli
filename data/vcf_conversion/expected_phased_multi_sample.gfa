@@ -1,0 +1,44 @@
+# GFA representation of phased_multi_sample.vcf (Conceptual - actual IDs/sequences depend on implementation)
+# This is a simplified example, actual output might differ in segment splitting and IDs.
+# Assumes unphased_strategy='ref' for rs4 (0/1) and rs7 (./.)
+H	VN:Z:1.0
+# Segments (Reference parts and variant alleles)
+S	s1	ACGTACGTA	LN:9	# Ref 0-9 (Before pos 10)
+S	s2	A	LN:1	# Ref allele at pos 10 (0-based 9)
+S	s3	G	LN:1	# Alt allele at pos 10
+S	s4	CGTACGTACGTAC	LN:14	# Ref 10-24 (Between 10 and 25)
+S	s5	C	LN:1	# Ref allele at pos 25 (0-based 24)
+S	s6	T	LN:1	# Alt allele at pos 25
+S	s7	GTACGTACGTACGTACGTACGTACG	LN:25	# Ref 25-50 (Between 25 and 50)
+S	s8	G	LN:1	# Ref allele at pos 50 (0-based 49)
+S	s9	GA	LN:2	# Alt allele (insertion) at pos 50
+S	s10	TACGTACGTACGTACGTACGTACGT	LN:25	# Ref 50-75 (Between 50 and 75)
+S	s11	T	LN:1	# Ref allele at pos 75 (0-based 74)
+S	s12	C	LN:1	# Alt allele at pos 75
+S	s13	ACGTACGTACGTACGTACGTACG	LN:25	# Ref 75-100 (Between 75 and 100)
+S	s14	ACGT	LN:4	# Ref allele at pos 100 (0-based 99)
+S	s15	A	LN:1	# Alt allele (deletion) at pos 100
+S	s16	ACGTACGTACGTACGTACG	LN:19	# Ref 103-120 (Between 100 and 120)
+S	s17	G	LN:1	# Ref allele at pos 120 (0-based 119)
+S	s18	T	LN:1	# Alt allele at pos 120
+S	s19	ACGTACGTACGTACGTACGTACGTACGT	LN:30	# Ref 120-150 (Between 120 and 150)
+S	s20	T	LN:1	# Ref allele at pos 150 (0-based 149) - Used for missing GT
+S	s21	ACGTACGT...	LN:450	# Rest of reference chr1 (150-600)
+# Links (Connecting segments sequentially - examples)
+L	s1	+	s2	+	*	# Ref links
+L	s2	+	s4	+	*
+# ... many links ...
+L	s19	+	s20	+	*
+L	s20	+	s21	+	*
+L	s1	+	s3	+	*	# Alt links
+L	s3	+	s4	+	*
+# ... many links ...
+# Paths
+# Sample1 Haplotype 1 (0|1, 0|1, 1|0, 0/1(ref), 0|1, 0|1, ./. (ref)) -> Ref, Ref, Alt, Ref, Ref, Ref, Ref
+P	SAMPLE1_hap1	s1+,s2+,s4+,s5+,s7+,s9+,s10+,s11+,s13+,s14+,s16+,s17+,s19+,s20+,s21+	*	SM:Z:SAMPLE1	HP:i:1
+# Sample1 Haplotype 2 (0|1, 0|1, 1|0, 0/1(ref), 0|1, 0|1, ./. (ref)) -> Alt, Alt, Ref, Ref, Alt, Alt, Ref
+P	SAMPLE1_hap2	s1+,s3+,s4+,s6+,s7+,s8+,s10+,s11+,s13+,s15+,s16+,s18+,s19+,s20+,s21+	*	SM:Z:SAMPLE1	HP:i:2
+# Sample2 Haplotype 1 (1|0, 1|0, 0|1, 1/1(ref), 1|1, 1|1, 0/0 (ref)) -> Alt, Alt, Ref, Ref, Alt, Alt, Ref
+P	SAMPLE2_hap1	s1+,s3+,s4+,s6+,s7+,s8+,s10+,s11+,s13+,s15+,s16+,s18+,s19+,s20+,s21+	*	SM:Z:SAMPLE2	HP:i:1
+# Sample2 Haplotype 2 (1|0, 1|0, 0|1, 1/1(ref), 1|1, 1|1, 0/0 (ref)) -> Ref, Ref, Alt, Ref, Alt, Alt, Ref
+P	SAMPLE2_hap2	s1+,s2+,s4+,s5+,s7+,s9+,s10+,s11+,s13+,s15+,s16+,s18+,s19+,s20+,s21+	*	SM:Z:SAMPLE2	HP:i:2
