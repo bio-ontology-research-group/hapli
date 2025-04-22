@@ -81,11 +81,20 @@ class ProgressTracker:
             report_interval: Minimum interval between progress reports in seconds
         """
         self.total_tasks = total_tasks
-        self.completed_tasks = multiprocessing.Value('i', 0)
+        
+        # Use Value from multiprocessing for thread-safe counter that works across processes
+        try:
+            self.completed_tasks = multiprocessing.Value('i', 0)
+            self.is_mp_value = True
+        except:
+            # Fallback if multiprocessing Value fails
+            self.completed_tasks = 0
+            self.is_mp_value = False
+            
         self.start_time = time.time()
         self.report_interval = report_interval
         self.last_report_time = self.start_time
-        self.lock = multiprocessing.Lock()
+        self.lock = threading.RLock()  # Use RLock for thread safety
     
     def increment(self, count: int = 1) -> None:
         """
@@ -95,18 +104,28 @@ class ProgressTracker:
             count: Number of tasks completed
         """
         with self.lock:
-            with self.completed_tasks.get_lock():
-                self.completed_tasks.value += count
+            if self.is_mp_value:
+                with self.completed_tasks.get_lock():
+                    self.completed_tasks.value += count
+                completed = self.completed_tasks.value
+            else:
+                self.completed_tasks += count
+                completed = self.completed_tasks
             
             current_time = time.time()
             if (current_time - self.last_report_time >= self.report_interval or 
-                self.completed_tasks.value >= self.total_tasks):
+                completed >= self.total_tasks):
                 self._report_progress()
                 self.last_report_time = current_time
     
     def _report_progress(self) -> None:
         """Report current progress."""
-        completed = self.completed_tasks.value
+        if self.is_mp_value:
+            with self.completed_tasks.get_lock():
+                completed = self.completed_tasks.value
+        else:
+            completed = self.completed_tasks
+            
         percent = (completed / self.total_tasks) * 100 if self.total_tasks > 0 else 0
         elapsed = time.time() - self.start_time
         
@@ -129,8 +148,11 @@ class ProgressTracker:
         Returns:
             Number of completed tasks
         """
-        with self.completed_tasks.get_lock():
-            return self.completed_tasks.value
+        if self.is_mp_value:
+            with self.completed_tasks.get_lock():
+                return self.completed_tasks.value
+        else:
+            return self.completed_tasks
 
 
 class BaseWorkerPool:
@@ -206,12 +228,18 @@ class ProcessWorkerPool(BaseWorkerPool):
             Function result
         """
         func, task, task_id = args
-        result = func(task)
-        
-        if self.progress_tracker:
-            self.progress_tracker.increment()
+        try:
+            result = func(task)
             
-        return result
+            if self.progress_tracker:
+                self.progress_tracker.increment()
+                
+            return result
+        except Exception as e:
+            # Catch and return exceptions to avoid process worker crashes
+            if self.progress_tracker:
+                self.progress_tracker.increment()
+            return e
     
     def map(self, func: Callable, tasks: List[Any], chunksize: Optional[int] = None) -> List[Any]:
         """
@@ -232,27 +260,63 @@ class ProcessWorkerPool(BaseWorkerPool):
         if not hasattr(self, 'pool'):
             self._create_pool()
             
+        # For handling lambdas and class methods that might not pickle properly
+        # We'll use a simple approach that works for most common cases
+        def safe_apply(task):
+            try:
+                return func(task)
+            except Exception as e:
+                return e
+        
         # Setup progress tracking
         if self.track_progress:
             self.progress_tracker = ProgressTracker(len(tasks))
             
-            # Prepare tasks with wrapper
-            wrapped_tasks = [(func, task, i) for i, task in enumerate(tasks)]
+            # Create a fixed local progress tracker to avoid sharing across processes
+            total_tasks = len(tasks)
             
-            # Execute with wrapper function
-            results = self.pool.map(
-                self._worker_wrapper, 
-                wrapped_tasks,
-                chunksize or max(1, len(tasks) // (self.num_workers * 4))
-            )
+            # Define a self-contained function that doesn't rely on shared state
+            def tracked_worker(task):
+                try:
+                    result = func(task)
+                    # Don't use the shared progress tracker here - we'll update it in the main process
+                    return result
+                except Exception as e:
+                    return e
+            
+            # Execute tasks in chunks to avoid large serialization
+            all_results = []
+            for i in range(0, len(tasks), 100):  # Process in smaller batches
+                batch = tasks[i:i+100]
+                batch_results = self.pool.map(
+                    tracked_worker,
+                    batch,
+                    chunksize or max(1, len(batch) // (self.num_workers * 4))
+                )
+                all_results.extend(batch_results)
+                # Update progress here in the main process
+                self.progress_tracker.increment(len(batch))
+                
+            results = all_results
         else:
-            # Execute directly without wrapper
-            results = self.pool.map(
-                func, 
-                tasks,
-                chunksize or max(1, len(tasks) // (self.num_workers * 4))
-            )
+            # Execute directly without wrapper but still in batches for large task lists
+            all_results = []
+            for i in range(0, len(tasks), 100):  # Process in smaller batches
+                batch = tasks[i:i+100]
+                batch_results = self.pool.map(
+                    safe_apply,
+                    batch,
+                    chunksize or max(1, len(batch) // (self.num_workers * 4))
+                )
+                all_results.extend(batch_results)
             
+            results = all_results
+            
+        # Re-raise any exceptions that were returned
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                raise result
+                
         return results
 
 
@@ -287,22 +351,50 @@ class ThreadWorkerPool(BaseWorkerPool):
         if not hasattr(self, 'pool'):
             self._create_pool()
             
+        # Define a safe function that catches exceptions
+        def safe_apply(task):
+            try:
+                return func(task)
+            except Exception as e:
+                return e
+        
         # Setup progress tracking
         if self.track_progress:
             self.progress_tracker = ProgressTracker(len(tasks))
             
             # Define wrapper function for progress tracking
             def _tracked_func(task):
-                result = func(task)
-                self.progress_tracker.increment()
-                return result
+                try:
+                    result = func(task)
+                    self.progress_tracker.increment()
+                    return result
+                except Exception as e:
+                    self.progress_tracker.increment()
+                    return e
                 
-            # Execute with wrapper function
-            results = list(self.pool.map(_tracked_func, tasks))
-        else:
-            # Execute directly without wrapper
-            results = list(self.pool.map(func, tasks))
+            # Execute with wrapper function in smaller batches for better progress reporting
+            all_results = []
+            for i in range(0, len(tasks), 100):  # Process in batches
+                batch = tasks[i:i+100]
+                batch_results = list(self.pool.map(_tracked_func, batch))
+                all_results.extend(batch_results)
             
+            results = all_results
+        else:
+            # Execute directly without wrapper but still in batches for large task lists
+            all_results = []
+            for i in range(0, len(tasks), 100):
+                batch = tasks[i:i+100]
+                batch_results = list(self.pool.map(safe_apply, batch))
+                all_results.extend(batch_results)
+            
+            results = all_results
+            
+        # Re-raise any exceptions that were returned
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                raise result
+                
         return results
 
 
