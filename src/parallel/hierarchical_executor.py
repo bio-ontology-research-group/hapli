@@ -7,6 +7,7 @@ using a directed acyclic graph to manage execution order.
 
 import logging
 import time
+import os  # Added import
 import networkx as nx
 from typing import Dict, List, Set, Callable, Any, Optional, Tuple, Union
 from dataclasses import dataclass
