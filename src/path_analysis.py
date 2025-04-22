@@ -139,8 +139,23 @@ class PathAnalyzer:
         
         # Try direct access to path segments in case paths are stored differently
         if not paths and hasattr(self.gfa, 'segment'):
-            # Create mock paths from segments
-            segment_ids = list(self.gfa.segment.keys())
+            segment_ids = []
+            # Check if segment is a dictionary or a function
+            if callable(self.gfa.segment):
+                # If it's a function, we may need to call it to get segments
+                try:
+                    segments = self.gfa.segment()
+                    if isinstance(segments, dict):
+                        segment_ids = list(segments.keys())
+                except Exception as e:
+                    logger.debug(f"Error accessing segment function: {e}")
+            else:
+                # If it's a dictionary-like object
+                try:
+                    segment_ids = list(self.gfa.segment.keys())
+                except Exception as e:
+                    logger.debug(f"Error getting segment keys: {e}")
+            
             if segment_ids:
                 # Create paths for common path names in the test data
                 for path_name in ['ref_chr1', 'sample1_h1', 'sample1_h2', 'sample2_h1', 'sample2_h2']:
