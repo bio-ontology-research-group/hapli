@@ -13,6 +13,7 @@ import hashlib
 import subprocess
 import signal
 import json
+import shutil # Import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from tqdm import tqdm
@@ -29,20 +30,22 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def check_prerequisites(tools: List[str]) -> bool:
-    """Check if required external tools are installed."""
+    """Check if required external tools are installed using shutil.which."""
     missing_tools = []
     for tool in tools:
-        try:
-            # Use a simple command that should succeed if the tool is present
-            cmd = [tool, '--version'] if tool not in ['bgzip', 'tabix'] else [tool, '-h'] # bgzip/tabix don't have --version
-            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, text=True)
-            logger.info(f"Found {tool}")
-        except (FileNotFoundError, subprocess.CalledProcessError, OSError):
+        tool_path = shutil.which(tool)
+        if tool_path:
+            logger.info(f"Found {tool} at {tool_path}")
+        else:
+            logger.warning(f"{tool} not found in PATH.")
             missing_tools.append(tool)
 
     if missing_tools:
         logger.error(f"Missing required tools: {', '.join(missing_tools)}")
-        logger.error("Please install these tools and ensure they are in your PATH.")
+        logger.error("Please install these tools and ensure they are in your PATH accessible to this script.")
+        # Log the PATH known to the script for debugging
+        script_path = os.environ.get('PATH', 'PATH environment variable not set.')
+        logger.error(f"Script's PATH: {script_path}")
         return False
     return True
 
