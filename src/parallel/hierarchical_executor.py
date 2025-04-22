@@ -166,191 +166,81 @@ class HierarchicalExecutor:
                 cycles = list(nx.simple_cycles(self.dag))
                 raise nx.NetworkXUnfeasible(f"Dependency graph contains cycles: {cycles}")
         except nx.NetworkXNotImplemented:
-             # is_directed_acyclic_graph might raise this for MultiDiGraph, but we use DiGraph
-             logger.warning("Could not check for cycles in the dependency graph.")
-
+            logger.warning("Could not check for cycles in the dependency graph.")
 
         # Clear previous results
         self.results = {}
         self.errors = {}
         
-        # Set up logging
         logger.info(f"Starting execution of {len(self.tasks)} tasks with fail_fast={self.fail_fast}")
 
-        # Get topological order (ensures dependencies are executed first)
-        try:
-            # Use a generator for potentially large graphs
-            execution_plan_generator = nx.topological_sort(self.dag)
-        except nx.NetworkXUnfeasible as e:
-             # This catches cycles identified by topological_sort
-             raise nx.NetworkXUnfeasible(f"Dependency graph contains cycles. Cannot execute. Details: {e}") from e
-
-
+        # Get execution plan - groups of tasks that can be executed in parallel
+        execution_plan = self.get_execution_plan()
+        
         # Set up worker pool
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-            # Keep track of running futures: task_id -> Future
-            futures: Dict[str, Future] = {}
-            # Keep track of tasks ready to be submitted but waiting for worker
-            ready_to_submit: List[str] = []
-            # Keep track of tasks whose dependencies are met
-            completed_dependencies: Dict[str, Set[str]] = {task_id: set() for task_id in self.tasks}
-            # Tasks with no dependencies are ready immediately
-            tasks_in_progress_or_done = set()
-
-            # Find initial ready tasks (no dependencies)
-            for task_id in self.tasks:
-                 if not self.tasks[task_id].dependencies:
-                      ready_to_submit.append(task_id)
-                      tasks_in_progress_or_done.add(task_id)
-
-
-            while tasks_in_progress_or_done != set(self.tasks.keys()):
-                # Submit ready tasks up to the number of workers
-                while ready_to_submit and len(futures) < (self.num_workers or os.cpu_count() or 4):
-                    task_id = ready_to_submit.pop(0)
+            # Execute tasks level by level (ensures dependencies are executed first)
+            for level, task_ids in enumerate(execution_plan):
+                logger.debug(f"Executing level {level} with {len(task_ids)} tasks")
+                
+                # Dictionary to store futures for this level
+                futures = {}
+                
+                # Submit all tasks at this level
+                for task_id in task_ids:
+                    # Skip if any dependency had errors
                     task = self.tasks[task_id]
-                    logger.debug(f"Submitting task {task_id} for execution.")
+                    if any(dep in self.errors for dep in task.dependencies):
+                        msg = f"Skipping task {task_id} due to failed dependencies"
+                        logger.warning(msg)
+                        self.errors[task_id] = RuntimeError(msg)
+                        continue
                     
-                    # Get dependency results for this task
+                    # Get dependency results in correct order
                     dependency_results = []
-                    for dep_id in task.dependencies:
-                        if dep_id in self.results:
+                    try:
+                        for dep_id in task.dependencies:
+                            if dep_id not in self.results:
+                                raise ValueError(f"Dependency {dep_id} has no result. This is a bug.")
                             dependency_results.append(self.results[dep_id])
-                        else:
-                            logger.error(f"Task {task_id} has a dependency {dep_id} with no result")
-                            
-                    # Submit task with dependency results
+                    except Exception as e:
+                        logger.error(f"Error collecting dependencies for {task_id}: {e}")
+                        self.errors[task_id] = RuntimeError(f"Failed to collect dependencies: {e}")
+                        continue
+                    
+                    # Submit task with its dependency results
+                    logger.debug(f"Submitting task {task_id} for execution")
                     future = executor.submit(task.execute, tuple(dependency_results))
                     futures[task_id] = future
-
-                # Wait for at least one future to complete
-                if not futures:
-                     # This might happen if there's a gap in the graph or an error state
-                     logger.warning("No active futures, but not all tasks are done. Checking state.")
-                     # Check if remaining tasks have unmet dependencies
-                     all_task_ids = set(self.tasks.keys())
-                     remaining_task_ids = all_task_ids - tasks_in_progress_or_done
-                     if not remaining_task_ids: break # All tasks accounted for
-
-                     can_run = False
-                     for rem_task_id in remaining_task_ids:
-                          task = self.tasks[rem_task_id]
-                          deps_met = all(dep in self.results for dep in task.dependencies)
-                          if deps_met:
-                               can_run = True
-                               if rem_task_id not in ready_to_submit:
-                                    ready_to_submit.append(rem_task_id)
-                                    tasks_in_progress_or_done.add(rem_task_id)
-                     if not can_run:
-                          logger.error(f"Stall detected. Remaining tasks {remaining_task_ids} have unmet dependencies or failed dependencies.")
-                          # Check for failed dependencies
-                          for rem_task_id in remaining_task_ids:
-                               task = self.tasks[rem_task_id]
-                               failed_deps = [dep for dep in task.dependencies if dep in self.errors]
-                               if failed_deps:
-                                    logger.error(f"Task {rem_task_id} cannot run due to failed dependencies: {failed_deps}")
-                                    # Mark this task as failed due to dependency
-                                    self.errors[rem_task_id] = RuntimeError(f"Dependency failure: {failed_deps}")
-                                    tasks_in_progress_or_done.add(rem_task_id) # Mark as 'done' (failed)
-
-                          # If still stalled after checking failed deps, break
-                          if not ready_to_submit:
-                               break
-                     continue # Go back to submit loop if new tasks became ready
-
-
-                # Process completed futures using as_completed for efficiency
-                try:
-                    # Wait for the next future to complete
-                    done_futures = {f for f in as_completed(futures.values(), timeout=0.1) if f.done()}
-                except TimeoutError:
-                     continue # No futures completed in timeout, continue waiting
-
-                if not done_futures: continue
-
-                for future in done_futures:
-                    # Find the task_id associated with this future
-                    task_id = None
-                    for tid, f in futures.items():
-                        if f == future:
-                            task_id = tid
-                            break
-                    if task_id is None: continue # Should not happen
-
-                    del futures[task_id] # Remove from active futures
-
+                
+                # Wait for all futures to complete
+                for task_id, future in futures.items():
                     try:
-                        result = future.result() # Get result or raise exception
+                        result = future.result()  # Blocks until task is done
                         self.results[task_id] = result
                         logger.debug(f"Task completed: {task_id}")
-
-                        # Find successor tasks and check if they are now ready
-                        for successor_id in list(self.dag.successors(task_id)):
-                            if successor_id not in tasks_in_progress_or_done:
-                                successor_task = self.tasks[successor_id]
-                                # Check if all dependencies of the successor are now met
-                                deps_met = all(dep in self.results for dep in successor_task.dependencies)
-                                if deps_met:
-                                    if successor_id not in ready_to_submit:
-                                        ready_to_submit.append(successor_id)
-                                        tasks_in_progress_or_done.add(successor_id)
-
                     except Exception as e:
+                        logger.error(f"Task failed: {task_id} - {type(e).__name__}: {e}")
                         self.errors[task_id] = e
-                        # Error already logged inside task.execute
-                        # logger.error(f"Task failed: {task_id} - {type(e).__name__}: {e}") # Redundant log?
-                        tasks_in_progress_or_done.add(task_id) # Mark as done (failed)
-
+                        
                         if self.fail_fast:
                             logger.error(f"Fail fast enabled. Stopping execution due to task failure: {task_id}")
-                            # Cancel remaining futures
-                            for tid, f in futures.items():
-                                if f.cancel():
-                                    logger.warning(f"Cancelled task {tid} due to fail_fast")
-                                    # Remove successfully cancelled task from results if it was added
-                                    if tid in self.results:
-                                        del self.results[tid]
-                                    self.errors[tid] = RuntimeError(f"Task cancelled due to fail_fast on task {task_id}")
                             
-                            # Clear the ready_to_submit queue
-                            ready_to_submit.clear()
+                            # Mark remaining tasks in this level as failed
+                            for remaining_id, remaining_future in futures.items():
+                                if remaining_id != task_id and not remaining_future.done():
+                                    remaining_future.cancel()
+                                    self.errors[remaining_id] = RuntimeError(f"Cancelled due to fail_fast from {task_id}")
                             
-                            # Mark remaining ready tasks as cancelled/failed
-                            for rem_task_id in self.tasks.keys():
-                                if rem_task_id not in tasks_in_progress_or_done or rem_task_id in futures.keys():
-                                    self.errors[rem_task_id] = RuntimeError(f"Execution stopped due to fail_fast on task {task_id}")
-                                    tasks_in_progress_or_done.add(rem_task_id)
-                                    if rem_task_id in self.results:
-                                        del self.results[rem_task_id]
+                            # Mark all tasks in future levels as failed
+                            for future_level in range(level + 1, len(execution_plan)):
+                                for future_task_id in execution_plan[future_level]:
+                                    self.errors[future_task_id] = RuntimeError(f"Execution stopped due to fail_fast on task {task_id}")
                             
-                            # We're returning immediately, so make sure all futures are completed or cancelled
-                            futures.clear()
-                            return self.results # Return immediately
-
-                        # If not fail_fast, mark dependent tasks as failed
-                        queue = list(self.dag.successors(task_id))
-                        visited = {task_id}
-                        while queue:
-                             current_dep_fail_id = queue.pop(0)
-                             if current_dep_fail_id not in visited:
-                                  visited.add(current_dep_fail_id)
-                                  if current_dep_fail_id not in self.errors: # Don't overwrite existing errors
-                                       logger.warning(f"Marking task {current_dep_fail_id} as failed due to dependency failure on {task_id}")
-                                       self.errors[current_dep_fail_id] = RuntimeError(f"Dependency failure: {task_id}")
-                                       tasks_in_progress_or_done.add(current_dep_fail_id)
-                                  queue.extend(list(self.dag.successors(current_dep_fail_id)))
-
-
-        # Final check for any tasks that might not have been marked done
-        all_task_ids = set(self.tasks.keys())
-        missing_from_done = all_task_ids - tasks_in_progress_or_done
-        if missing_from_done:
-             logger.warning(f"Some tasks were not marked as done/failed: {missing_from_done}. Marking as error.")
-             for task_id in missing_from_done:
-                  if task_id not in self.errors:
-                       self.errors[task_id] = RuntimeError("Task did not complete execution.")
-
-
+                            return self.results  # Early return
+                
+                # If fail_fast is False, continue with the next level
+        
         return self.results
 
 
