@@ -305,6 +305,10 @@ class ProcessWorkerPool(BaseWorkerPool):
                 # Increment progress after map completes
                 self.progress_tracker.increment(len(tasks))
 
+        except RecursionError as e:
+             logger.error(f"RecursionError during ProcessPool execution: {e}", exc_info=True)
+             self._close_pool() # Ensure pool is closed on error
+             raise # Re-raise the exception for handling at higher level
         except Exception as e:
              logger.error(f"Error during ProcessPool execution: {e}", exc_info=True)
              self._close_pool() # Ensure pool is closed on error

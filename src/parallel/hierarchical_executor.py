@@ -212,10 +212,15 @@ class HierarchicalExecutor:
                     logger.debug(f"Submitting task {task_id} for execution.")
                     
                     # Get dependency results for this task
-                    dependency_results = tuple(self.results[dep_id] for dep_id in task.dependencies)
-                    
+                    dependency_results = []
+                    for dep_id in task.dependencies:
+                        if dep_id in self.results:
+                            dependency_results.append(self.results[dep_id])
+                        else:
+                            logger.error(f"Task {task_id} has a dependency {dep_id} with no result")
+                            
                     # Submit task with dependency results
-                    future = executor.submit(task.execute, dependency_results)
+                    future = executor.submit(task.execute, tuple(dependency_results))
                     futures[task_id] = future
 
                 # Wait for at least one future to complete
@@ -290,17 +295,6 @@ class HierarchicalExecutor:
                                         ready_to_submit.append(successor_id)
                                         tasks_in_progress_or_done.add(successor_id)
 
-                        # Find successor tasks and check if they are now ready
-                        for successor_id in self.dag.successors(task_id):
-                             if successor_id not in tasks_in_progress_or_done:
-                                  successor_task = self.tasks[successor_id]
-                                  # Check if all dependencies of the successor are now met
-                                  deps_met = all(dep in self.results for dep in successor_task.dependencies)
-                                  if deps_met:
-                                       if successor_id not in ready_to_submit:
-                                            ready_to_submit.append(successor_id)
-                                            tasks_in_progress_or_done.add(successor_id)
-
                     except Exception as e:
                         self.errors[task_id] = e
                         # Error already logged inside task.execute
@@ -310,19 +304,27 @@ class HierarchicalExecutor:
                         if self.fail_fast:
                             logger.error(f"Fail fast enabled. Stopping execution due to task failure: {task_id}")
                             # Cancel remaining futures
-                            for f in futures.values():
-                                f.cancel()
-                            # Mark remaining ready tasks as cancelled/failed?
-                            for rem_task_id in ready_to_submit:
-                                 self.errors[rem_task_id] = RuntimeError(f"Execution stopped due to fail_fast on task {task_id}")
-                                 tasks_in_progress_or_done.add(rem_task_id)
-                            # Mark tasks still waiting for dependencies as failed
-                            all_task_ids = set(self.tasks.keys())
-                            remaining_waiting_tasks = all_task_ids - tasks_in_progress_or_done
-                            for wait_task_id in remaining_waiting_tasks:
-                                 self.errors[wait_task_id] = RuntimeError(f"Execution stopped due to fail_fast on task {task_id}")
-                                 tasks_in_progress_or_done.add(wait_task_id)
-
+                            for tid, f in futures.items():
+                                if f.cancel():
+                                    logger.warning(f"Cancelled task {tid} due to fail_fast")
+                                    # Remove successfully cancelled task from results if it was added
+                                    if tid in self.results:
+                                        del self.results[tid]
+                                    self.errors[tid] = RuntimeError(f"Task cancelled due to fail_fast on task {task_id}")
+                            
+                            # Clear the ready_to_submit queue
+                            ready_to_submit.clear()
+                            
+                            # Mark remaining ready tasks as cancelled/failed
+                            for rem_task_id in self.tasks.keys():
+                                if rem_task_id not in tasks_in_progress_or_done or rem_task_id in futures.keys():
+                                    self.errors[rem_task_id] = RuntimeError(f"Execution stopped due to fail_fast on task {task_id}")
+                                    tasks_in_progress_or_done.add(rem_task_id)
+                                    if rem_task_id in self.results:
+                                        del self.results[rem_task_id]
+                            
+                            # We're returning immediately, so make sure all futures are completed or cancelled
+                            futures.clear()
                             return self.results # Return immediately
 
                         # If not fail_fast, mark dependent tasks as failed
