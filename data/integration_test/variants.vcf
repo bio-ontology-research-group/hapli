@@ -1,0 +1,16 @@
+##fileformat=VCFv4.2
+##fileDate=20250422
+##source=IntegrationTestDataset
+##reference=reference.fasta
+##INFO=<ID=TYPE,Number=A,Type=String,Description="Type of variant">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	Sample1	Sample2
+reference	100	.	T	C	100	PASS	TYPE=SNP	GT	1|0	0|0
+reference	250	.	A	G	100	PASS	TYPE=SNP	GT	0|0	1|0
+reference	600	.	C	CTAG	100	PASS	TYPE=INS	GT	0|0	1|1
+reference	750	.	ACTGC	A	100	PASS	TYPE=DEL	GT	1|0	0|0
+reference	1000	.	G	.	100	PASS	TYPE=NOCALL	GT	0/0	0/0
+reference	1150	.	G	GTCGA	100	PASS	TYPE=DUP	GT	0|0	0|1
+reference	1300	.	ACTGA	TGACT	100	PASS	TYPE=INV	GT	0|1	0|0
+reference	1450	.	CGATA	C	100	PASS	TYPE=DEL	GT	0|0	1|1
+reference	1530	.	ATT	.	100	PASS	TYPE=NOCALL	GT	1|0	0|0

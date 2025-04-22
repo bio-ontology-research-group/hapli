@@ -1,0 +1,86 @@
+##gff-version 3
+##sequence-region reference 1 1560
+reference	source	gene	50	250	.	+	.	ID=gene1;Name=Gene1
+reference	source	mRNA	50	250	.	+	.	ID=mRNA1.1;Parent=gene1;Name=Gene1.1
+reference	source	exon	50	100	.	+	.	ID=exon1.1.1;Parent=mRNA1.1
+reference	source	exon	150	250	.	+	.	ID=exon1.1.2;Parent=mRNA1.1
+reference	source	five_prime_UTR	50	70	.	+	.	ID=5UTR1.1;Parent=mRNA1.1
+reference	source	CDS	71	100	.	+	0	ID=CDS1.1.1;Parent=mRNA1.1
+reference	source	CDS	150	230	.	+	0	ID=CDS1.1.2;Parent=mRNA1.1
+reference	source	three_prime_UTR	231	250	.	+	.	ID=3UTR1.1;Parent=mRNA1.1
+
+reference	source	gene	300	500	.	+	.	ID=gene2;Name=Gene2
+reference	source	mRNA	300	500	.	+	.	ID=mRNA2.1;Parent=gene2;Name=Gene2.1
+reference	source	exon	300	400	.	+	.	ID=exon2.1.1;Parent=mRNA2.1
+reference	source	exon	450	500	.	+	.	ID=exon2.1.2;Parent=mRNA2.1
+reference	source	five_prime_UTR	300	320	.	+	.	ID=5UTR2.1;Parent=mRNA2.1
+reference	source	CDS	321	400	.	+	0	ID=CDS2.1.1;Parent=mRNA2.1
+reference	source	CDS	450	480	.	+	2	ID=CDS2.1.2;Parent=mRNA2.1
+reference	source	three_prime_UTR	481	500	.	+	.	ID=3UTR2.1;Parent=mRNA2.1
+
+reference	source	gene	550	650	.	+	.	ID=gene3;Name=Gene3
+reference	source	mRNA	550	650	.	+	.	ID=mRNA3.1;Parent=gene3;Name=Gene3.1
+reference	source	exon	550	600	.	+	.	ID=exon3.1.1;Parent=mRNA3.1
+reference	source	exon	620	650	.	+	.	ID=exon3.1.2;Parent=mRNA3.1
+reference	source	CDS	550	600	.	+	0	ID=CDS3.1.1;Parent=mRNA3.1
+reference	source	CDS	620	650	.	+	1	ID=CDS3.1.2;Parent=mRNA3.1
+
+reference	source	gene	700	900	.	+	.	ID=gene4;Name=Gene4
+reference	source	mRNA	700	900	.	+	.	ID=mRNA4.1;Parent=gene4;Name=Gene4.1
+reference	source	exon	700	750	.	+	.	ID=exon4.1.1;Parent=mRNA4.1
+reference	source	exon	800	900	.	+	.	ID=exon4.1.2;Parent=mRNA4.1
+reference	source	five_prime_UTR	700	720	.	+	.	ID=5UTR4.1;Parent=mRNA4.1
+reference	source	CDS	721	750	.	+	0	ID=CDS4.1.1;Parent=mRNA4.1
+reference	source	CDS	800	870	.	+	2	ID=CDS4.1.2;Parent=mRNA4.1
+reference	source	three_prime_UTR	871	900	.	+	.	ID=3UTR4.1;Parent=mRNA4.1
+
+reference	source	gene	950	1050	.	+	.	ID=gene5;Name=Gene5
+reference	source	mRNA	950	1050	.	+	.	ID=mRNA5.1;Parent=gene5;Name=Gene5.1
+reference	source	exon	950	1000	.	+	.	ID=exon5.1.1;Parent=mRNA5.1
+reference	source	exon	1030	1050	.	+	.	ID=exon5.1.2;Parent=mRNA5.1
+reference	source	CDS	950	1000	.	+	0	ID=CDS5.1.1;Parent=mRNA5.1
+reference	source	CDS	1030	1050	.	+	1	ID=CDS5.1.2;Parent=mRNA5.1
+
+reference	source	gene	1100	1200	.	-	.	ID=gene6;Name=Gene6
+reference	source	mRNA	1100	1200	.	-	.	ID=mRNA6.1;Parent=gene6;Name=Gene6.1
+reference	source	exon	1100	1150	.	-	.	ID=exon6.1.1;Parent=mRNA6.1
+reference	source	exon	1170	1200	.	-	.	ID=exon6.1.2;Parent=mRNA6.1
+reference	source	CDS	1100	1150	.	-	0	ID=CDS6.1.1;Parent=mRNA6.1
+reference	source	CDS	1170	1200	.	-	1	ID=CDS6.1.2;Parent=mRNA6.1
+
+reference	source	gene	1250	1350	.	+	.	ID=gene7;Name=Gene7
+reference	source	mRNA	1250	1350	.	+	.	ID=mRNA7.1;Parent=gene7;Name=Gene7.1
+reference	source	exon	1250	1300	.	+	.	ID=exon7.1.1;Parent=mRNA7.1
+reference	source	exon	1320	1350	.	+	.	ID=exon7.1.2;Parent=mRNA7.1
+reference	source	CDS	1250	1300	.	+	0	ID=CDS7.1.1;Parent=mRNA7.1
+reference	source	CDS	1320	1350	.	+	1	ID=CDS7.1.2;Parent=mRNA7.1
+
+reference	source	gene	1400	1500	.	+	.	ID=gene8;Name=Gene8
+reference	source	mRNA	1400	1500	.	+	.	ID=mRNA8.1;Parent=gene8;Name=Gene8.1
+reference	source	exon	1400	1450	.	+	.	ID=exon8.1.1;Parent=mRNA8.1
+reference	source	exon	1470	1500	.	+	.	ID=exon8.1.2;Parent=mRNA8.1
+reference	source	CDS	1400	1450	.	+	0	ID=CDS8.1.1;Parent=mRNA8.1
+reference	source	CDS	1470	1500	.	+	1	ID=CDS8.1.2;Parent=mRNA8.1
+
+reference	source	gene	1520	1560	.	+	.	ID=gene9;Name=Gene9
+reference	source	mRNA	1520	1560	.	+	.	ID=mRNA9.1;Parent=gene9;Name=Gene9.1
+reference	source	exon	1520	1540	.	+	.	ID=exon9.1.1;Parent=mRNA9.1
+reference	source	exon	1550	1560	.	+	.	ID=exon9.1.2;Parent=mRNA9.1
+reference	source	CDS	1520	1540	.	+	0	ID=CDS9.1.1;Parent=mRNA9.1
+reference	source	CDS	1550	1560	.	+	1	ID=CDS9.1.2;Parent=mRNA9.1
+
+reference	source	gene	200	500	.	-	.	ID=gene10;Name=Gene10
+reference	source	mRNA	200	500	.	-	.	ID=mRNA10.1;Parent=gene10;Name=Gene10.1
+reference	source	mRNA	200	500	.	-	.	ID=mRNA10.2;Parent=gene10;Name=Gene10.2
+reference	source	exon	200	250	.	-	.	ID=exon10.1.1;Parent=mRNA10.1
+reference	source	exon	300	350	.	-	.	ID=exon10.1.2;Parent=mRNA10.1
+reference	source	exon	400	500	.	-	.	ID=exon10.1.3;Parent=mRNA10.1
+reference	source	exon	200	250	.	-	.	ID=exon10.2.1;Parent=mRNA10.2
+reference	source	exon	350	500	.	-	.	ID=exon10.2.2;Parent=mRNA10.2
+reference	source	CDS	220	250	.	-	0	ID=CDS10.1.1;Parent=mRNA10.1
+reference	source	CDS	300	350	.	-	2	ID=CDS10.1.2;Parent=mRNA10.1
+reference	source	CDS	400	480	.	-	1	ID=CDS10.1.3;Parent=mRNA10.1
+reference	source	CDS	220	250	.	-	0	ID=CDS10.2.1;Parent=mRNA10.2
+reference	source	CDS	350	480	.	-	1	ID=CDS10.2.2;Parent=mRNA10.2
+reference	source	five_prime_UTR	200	219	.	-	.	ID=5UTR10.1;Parent=mRNA10.1,mRNA10.2
+reference	source	three_prime_UTR	481	500	.	-	.	ID=3UTR10.1;Parent=mRNA10.1,mRNA10.2
