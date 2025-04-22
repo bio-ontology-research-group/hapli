@@ -297,37 +297,13 @@ class ProcessWorkerPool(BaseWorkerPool):
 
         logger.debug(f"Mapping {len(tasks)} tasks with chunksize {chunksize} across {self.num_workers} workers.")
 
-        results_with_errors = []
         try:
-            # Use imap_unordered for potentially better memory usage and progress updates
-            # Note: Results will NOT be in order initially
-            map_results = self._pool.imap_unordered(self._worker_wrapper, task_args, chunksize=chunksize)
+            # Use map (not imap_unordered) to preserve input order
+            results_with_errors = self._pool.map(self._worker_wrapper, task_args, chunksize=chunksize)
 
-            # Process results as they complete
-            processed_count = 0
-            temp_results = {} # Store results temporarily with original index
-            original_indices = {id(task): i for i, task in enumerate(tasks)} # Map task id to index
-
-            for i, (result, error) in enumerate(map_results):
-                 processed_count += 1
-                 # Find original index - This is tricky with imap_unordered if tasks aren't hashable/unique
-                 # We rely on the fact that the wrapper gets (func, task) and returns (result, error)
-                 # Let's assume the order corresponds *roughly* if we just append,
-                 # but this is NOT guaranteed by imap_unordered.
-                 # A safer way requires passing index or using map.
-                 # Sticking with map for ordered results.
-
-                 if self.track_progress and self.progress_tracker:
-                      self.progress_tracker.increment() # Increment progress as results arrive
-
-                 results_with_errors.append((result, error))
-
-            # If using map instead of imap_unordered:
-            # results_with_errors = self._pool.map(self._worker_wrapper, task_args, chunksize=chunksize)
-            # if self.track_progress and self.progress_tracker:
-            #      # Increment progress after map completes (less granular)
-            #      self.progress_tracker.increment(len(tasks))
-
+            if self.track_progress and self.progress_tracker:
+                # Increment progress after map completes
+                self.progress_tracker.increment(len(tasks))
 
         except Exception as e:
              logger.error(f"Error during ProcessPool execution: {e}", exc_info=True)
@@ -347,8 +323,6 @@ class ProcessWorkerPool(BaseWorkerPool):
         if first_error is not None:
             raise first_error # Re-raise the first captured exception
 
-        # If using imap_unordered, results need reordering here.
-        # Since we switched back to map (implicitly), results are already ordered.
         return final_results
 
 
@@ -392,22 +366,23 @@ class ThreadWorkerPool(BaseWorkerPool):
         if self.track_progress:
             self.progress_tracker = ProgressTracker(len(tasks))
 
-        results = []
-        futures: List[Future] = []
+        # Create a results list with the same length as tasks, initialized with None
+        results = [None] * len(tasks)
+        future_to_index = {}
 
         try:
-            # Submit all tasks
-            for task in tasks:
+            # Submit all tasks with their original indices
+            for i, task in enumerate(tasks):
                 future = self._pool.submit(func, task)
+                future_to_index[future] = i
                 if self.track_progress and self.progress_tracker:
-                     # Add callback to increment progress when done
-                     future.add_done_callback(lambda f: self.progress_tracker.increment())
-                futures.append(future)
+                    # Add callback to increment progress when done
+                    future.add_done_callback(lambda f: self.progress_tracker.increment())
 
-            # Collect results in order, waiting for completion
-            # This automatically handles exceptions raised in workers
-            for future in futures:
-                results.append(future.result()) # future.result() re-raises exceptions
+            # Wait for all futures to complete and place results in the correct positions
+            for future in as_completed(list(future_to_index.keys())):
+                index = future_to_index[future]
+                results[index] = future.result()  # future.result() re-raises exceptions
 
         except Exception as e:
              logger.error(f"Error during ThreadPoolExecutor execution: {e}", exc_info=True)

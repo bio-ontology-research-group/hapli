@@ -210,8 +210,12 @@ class HierarchicalExecutor:
                     task_id = ready_to_submit.pop(0)
                     task = self.tasks[task_id]
                     logger.debug(f"Submitting task {task_id} for execution.")
-                    # Dependency args should be empty for initial tasks
-                    future = executor.submit(task.execute, ())
+                    
+                    # Get dependency results for this task
+                    dependency_results = tuple(self.results[dep_id] for dep_id in task.dependencies)
+                    
+                    # Submit task with dependency results
+                    future = executor.submit(task.execute, dependency_results)
                     futures[task_id] = future
 
                 # Wait for at least one future to complete
@@ -274,6 +278,17 @@ class HierarchicalExecutor:
                         result = future.result() # Get result or raise exception
                         self.results[task_id] = result
                         logger.debug(f"Task completed: {task_id}")
+
+                        # Find successor tasks and check if they are now ready
+                        for successor_id in list(self.dag.successors(task_id)):
+                            if successor_id not in tasks_in_progress_or_done:
+                                successor_task = self.tasks[successor_id]
+                                # Check if all dependencies of the successor are now met
+                                deps_met = all(dep in self.results for dep in successor_task.dependencies)
+                                if deps_met:
+                                    if successor_id not in ready_to_submit:
+                                        ready_to_submit.append(successor_id)
+                                        tasks_in_progress_or_done.add(successor_id)
 
                         # Find successor tasks and check if they are now ready
                         for successor_id in self.dag.successors(task_id):
