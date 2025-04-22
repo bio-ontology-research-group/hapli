@@ -210,7 +210,8 @@ def generate_data(ref_length: int, num_features: int, paired_haplotypes: bool, o
     # Create Ordered Groups - GFA2 uses 'O' lines for paths
     ref_path_elements = [f"{s}+" for s in segments]
     try:
-        gfa.add_line(f"O\t{REF_SEQ_ID}\t{' '.join(ref_path_elements)}\t*")
+        # Using properly formatted GFA2 tags (or no tags)
+        gfa.add_line(f"O\t{REF_SEQ_ID}\t{' '.join(ref_path_elements)}")
     except Exception as e:
         print(f"Warning: Error adding path {REF_SEQ_ID}: {e}")
 
@@ -222,16 +223,18 @@ def generate_data(ref_length: int, num_features: int, paired_haplotypes: bool, o
 
     if paired_haplotypes:
         try:
-            gfa.add_line(f"O\tsample1_h1\t{' '.join(sample1_path)}\t*")
-            gfa.add_line(f"O\tsample1_h2\t{' '.join(sample1_path)}\t*") # Both follow ref
-            gfa.add_line(f"O\tsample2_h1\t{' '.join(sample1_path)}\t*") # H1 follows ref
-            gfa.add_line(f"O\tsample2_h2\t{' '.join(sample2_path)}\t*") # H2 uses variation
+            # Using properly formatted GFA2 tags (or no tags)
+            gfa.add_line(f"O\tsample1_h1\t{' '.join(sample1_path)}")
+            gfa.add_line(f"O\tsample1_h2\t{' '.join(sample1_path)}") # Both follow ref
+            gfa.add_line(f"O\tsample2_h1\t{' '.join(sample1_path)}") # H1 follows ref
+            gfa.add_line(f"O\tsample2_h2\t{' '.join(sample2_path)}") # H2 uses variation
         except Exception as e:
             print(f"Warning: Error adding haplotype paths: {e}")
     else:
         try:
-            gfa.add_line(f"O\tsample1\t{' '.join(sample1_path)}\t*")
-            gfa.add_line(f"O\tsample2\t{' '.join(sample2_path)}\t*")
+            # Using properly formatted GFA2 tags (or no tags)
+            gfa.add_line(f"O\tsample1\t{' '.join(sample1_path)}")
+            gfa.add_line(f"O\tsample2\t{' '.join(sample2_path)}")
         except Exception as e:
             print(f"Warning: Error adding sample paths: {e}")
 
