@@ -347,7 +347,7 @@ class TestVCFtoGFAConverter(unittest.TestCase):
              if "index" in str(e).lower():
                   self.skipTest(f"Skipping region test, VCF index likely missing/failed: {e}")
              # Skip if recursion error detected (known GFApy issue)
-             elif "recursion" in str(e).lower() or "maximum recursion depth exceeded" in str(e).lower():
+             elif self._is_gfapy_recursion_error(e):
                   self.skipTest(f"Skipping region test due to GFApy recursion issue: {e}")
              else:
                   self.fail(f"Region conversion failed unexpectedly: {e}")
