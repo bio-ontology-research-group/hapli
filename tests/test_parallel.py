@@ -197,7 +197,8 @@ class TestWorkerPools(unittest.TestCase):
     def test_error_handling(self):
         """Test that worker errors are propagated."""
         # Use top-level function for process pool compatibility
-        with self.assertRaises(RecursionError):
+        # Capture expected error logs to keep test output clean
+        with self.assertLogs('src.parallel.task_manager', level='ERROR'), self.assertRaises(RecursionError):
             # Use process pool to ensure error pickling works
             execute_parallel(_test_factorial, [1000], pool_type='process',
                            track_progress=False)
@@ -513,20 +514,22 @@ class TestPerformanceScaling(unittest.TestCase):
         # Test with fail_fast=False (default for execute_parallel)
         caught_exception = None
 
-        # Use a context manager to ensure cleanup
-        try:
-            # Use 'thread' pool to avoid pickling issues with sometimes_fails if run inside method
-            # Capture expected ERROR logs from the pool map without printing them
-            # Note: execute_parallel itself doesn't log errors from the mapped function,
-            # it relies on the pool implementation to raise them.
-            # So, we don't use assertLogs here, but expect an exception.
-            _ = execute_parallel(sometimes_fails, data, pool_type='thread', track_progress=False)
-
-        except ValueError as e:
-             caught_exception = e
-        except Exception as e:
-             self.fail(f"Expected ValueError, but got {type(e).__name__}: {e}")
-
+        # Use assertLogs to capture and silence the expected error logs
+        # This improves test output clarity by preventing error logs from appearing as test errors
+        with self.assertLogs('src.parallel.task_manager', level='ERROR') as cm:
+            # Use a context manager to ensure cleanup
+            try:
+                # Use 'thread' pool to avoid pickling issues with sometimes_fails if run inside method
+                _ = execute_parallel(sometimes_fails, data, pool_type='thread', track_progress=False)
+            except ValueError as e:
+                caught_exception = e
+            except Exception as e:
+                self.fail(f"Expected ValueError, but got {type(e).__name__}: {e}")
+        
+        # Verify that the expected error logs were captured (but now they won't pollute test output)
+        log_output = "\n".join(cm.output)
+        self.assertIn("Error during ThreadPoolExecutor execution", log_output)
+        self.assertIn("Value not allowed", log_output)
 
         # Check that an exception was indeed raised (the first one encountered)
         self.assertIsInstance(caught_exception, ValueError)
