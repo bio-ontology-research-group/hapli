@@ -30,7 +30,8 @@ def download_file_with_progress(url: str, output_path: Path):
     logger.info(f"Attempting to download from: {url}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        response = requests.get(url, stream=True, timeout=60) # Added timeout
+        # Add allow_redirects=True
+        response = requests.get(url, stream=True, timeout=60, allow_redirects=True)
         response.raise_for_status()  # Raise an exception for bad status codes
 
         total_size = int(response.headers.get('content-length', 0))
@@ -40,16 +41,26 @@ def download_file_with_progress(url: str, output_path: Path):
              tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024,
                   desc=f"Downloading {output_path.name}", leave=False, disable=None) as pbar:
             for chunk in response.iter_content(chunk_size=block_size):
-                f.write(chunk)
-                pbar.update(len(chunk))
+                # Filter out keep-alive new chunks
+                if chunk:
+                    f.write(chunk)
+                    pbar.update(len(chunk))
 
         # Verify download size
-        if total_size != 0 and pbar.n != total_size:
-             logger.error(f"Download incomplete: Expected {total_size} bytes, got {pbar.n} bytes.")
+        actual_size = output_path.stat().st_size
+        if total_size != 0 and actual_size != total_size:
+             logger.error(f"Download incomplete: Expected {total_size} bytes, got {actual_size} bytes.")
              # Clean up incomplete file
              if output_path.exists():
                  output_path.unlink()
              return False
+        elif actual_size == 0 and total_size != 0:
+             # Extra check in case content-length was reported but nothing downloaded
+             logger.error(f"Download failed: Expected {total_size} bytes, but downloaded file is empty.")
+             if output_path.exists():
+                 output_path.unlink()
+             return False
+
 
         logger.info(f"Successfully downloaded {output_path.name}")
         return True
