@@ -66,7 +66,7 @@ class TSVFormatter:
                 row = {
                     'feature_id': feature_id,
                     'type': feature_summary.feature_type,
-                    'impact_type': feature_summary.impact_type.value if feature_summary.impact_type else 'UNKNOWN',
+                    'impact_type': feature_summary.impact_type.value.upper() if feature_summary.impact_type else 'UNKNOWN',
                     'sequence_identity': feature_summary.sequence_identity if hasattr(feature_summary, 'sequence_identity') else '',
                     'coverage': feature_summary.coverage if hasattr(feature_summary, 'coverage') else '',
                     'parent_features': ','.join(feature_summary.parent_features) if hasattr(feature_summary, 'parent_features') and feature_summary.parent_features else ''

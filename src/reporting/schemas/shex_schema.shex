@@ -101,10 +101,8 @@ faldo:RegionShape {
 
 # FALDO position shape
 faldo:PositionShape {
-  rdf:type [ 
-    faldo:Position 
-    faldo:ForwardStrandPosition?
-    faldo:ReverseStrandPosition?
-  ] ;
+  rdf:type [ faldo:Position ] ;
+  rdf:type [ faldo:ForwardStrandPosition ]? ;
+  rdf:type [ faldo:ReverseStrandPosition ]? ;
   faldo:position xsd:integer
 }
