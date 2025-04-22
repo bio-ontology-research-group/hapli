@@ -18,10 +18,14 @@ logger = logging.getLogger(__name__)
 
 class VariantType(Enum):
     """Types of sequence variants that can be detected."""
-    SNP = "snp"               # Single nucleotide polymorphism
-    INSERTION = "insertion"   # Sequence insertion
-    DELETION = "deletion"     # Sequence deletion
-    COMPLEX = "complex"       # Complex change (substitution of multiple bases)
+    SNP = "snp"                       # Single nucleotide polymorphism
+    INSERTION = "insertion"           # Sequence insertion
+    DELETION = "deletion"             # Sequence deletion
+    COMPLEX = "complex"               # Complex change (substitution of multiple bases)
+    INVERSION = "inversion"           # Sequence inversion
+    DUPLICATION = "duplication"       # Sequence duplication
+    TRANSLOCATION = "translocation"   # Sequence moved to different location
+    TANDEM_REPEAT = "tandem_repeat"   # Expansion/contraction of repeated sequence
 
 @dataclass
 class Variant:
@@ -32,6 +36,13 @@ class Variant:
     alternate: str             # Alternate sequence at this position
     length: int                # Length of the variant (1 for SNPs)
     quality: Optional[float] = None
+    end_position: Optional[int] = None  # End position for complex variants
+    metadata: Optional[Dict] = None     # Additional variant-specific metadata
+    
+    def __post_init__(self):
+        """Initialize optional fields if they weren't provided."""
+        if self.metadata is None:
+            self.metadata = {}
 
 class VariantDetector:
     """
@@ -92,7 +103,17 @@ class VariantDetector:
         aln_feature_end = int(aligned_feature.location.end)
         aln_feature_seq = aln_seq_str[aln_feature_start:aln_feature_end]
         
-        # Check if CIGAR string is available for precise variant calling
+        # First check for complex rearrangements
+        complex_variants = self._detect_complex_rearrangements(
+            ref_feature_seq,
+            aln_feature_seq,
+            ref_feature_start
+        )
+        
+        if complex_variants:
+            return complex_variants
+        
+        # If no complex variants found, check if CIGAR string is available for precise variant calling
         if "cigar" in aligned_feature.qualifiers:
             return self._detect_variants_from_cigar(
                 ref_feature_seq, 
@@ -238,6 +259,158 @@ class VariantDetector:
                 ref_pos += length
         
         return variants
+    
+    def _detect_complex_rearrangements(self,
+                                     ref_seq: str,
+                                     aln_seq: str,
+                                     ref_offset: int) -> List[Variant]:
+        """
+        Detect complex rearrangements like inversions, duplications, and translocations.
+        
+        Args:
+            ref_seq: Reference sequence string
+            aln_seq: Aligned sequence string
+            ref_offset: Offset in the reference sequence
+            
+        Returns:
+            List of detected complex variants, empty if none found
+        """
+        variants = []
+        
+        # Check for inversion
+        # An inversion is detected when a segment of the aligned sequence is the reverse 
+        # complement of the reference sequence
+        if len(ref_seq) >= 20 and len(aln_seq) >= 20:  # Only check for significant length sequences
+            # Check subsequences of ref_seq to see if they appear reversed in aln_seq
+            min_inversion_size = 10  # Minimum size to consider as inversion
+            
+            for i in range(len(ref_seq) - min_inversion_size):
+                for j in range(i + min_inversion_size, min(i + 200, len(ref_seq))):
+                    ref_segment = ref_seq[i:j]
+                    rev_comp = self._reverse_complement(ref_segment)
+                    
+                    # Search for reverse complement in aligned sequence
+                    pos = aln_seq.find(rev_comp)
+                    if pos >= 0:
+                        variants.append(Variant(
+                            variant_type=VariantType.INVERSION,
+                            position=ref_offset + i,
+                            reference=ref_segment,
+                            alternate=rev_comp,
+                            length=len(ref_segment),
+                            end_position=ref_offset + j,
+                            quality=70.0,
+                            metadata={
+                                "inv_start": ref_offset + i,
+                                "inv_end": ref_offset + j,
+                                "aln_pos": pos
+                            }
+                        ))
+                        return variants  # Return early on first inversion found
+        
+        # Check for duplication
+        # A duplication is detected when a segment of the reference sequence appears 
+        # multiple times in the aligned sequence
+        if len(ref_seq) >= 20 and len(aln_seq) >= 20:
+            min_dup_size = 10  # Minimum size to consider as duplication
+            
+            for i in range(len(ref_seq) - min_dup_size):
+                for j in range(i + min_dup_size, min(i + 200, len(ref_seq))):
+                    ref_segment = ref_seq[i:j]
+                    
+                    # Count occurrences in aln_seq
+                    count = 0
+                    start_pos = 0
+                    while True:
+                        pos = aln_seq.find(ref_segment, start_pos)
+                        if pos < 0:
+                            break
+                        count += 1
+                        start_pos = pos + 1
+                    
+                    if count > 1:  # Multiple occurrences = duplication
+                        variants.append(Variant(
+                            variant_type=VariantType.DUPLICATION,
+                            position=ref_offset + i,
+                            reference=ref_segment,
+                            alternate=ref_segment * count,  # Duplicate sequence
+                            length=len(ref_segment),
+                            end_position=ref_offset + j,
+                            quality=60.0,
+                            metadata={
+                                "dup_count": count,
+                                "dup_start": ref_offset + i,
+                                "dup_end": ref_offset + j
+                            }
+                        ))
+                        return variants  # Return early on first duplication found
+        
+        # Check for tandem repeats
+        # A tandem repeat is detected when a short pattern repeats multiple times
+        if len(aln_seq) >= 20:
+            for pattern_size in range(2, 11):  # Check patterns from 2 to 10 bases
+                for i in range(len(ref_seq) - pattern_size):
+                    pattern = ref_seq[i:i+pattern_size]
+                    
+                    # Check if this pattern repeats in reference
+                    ref_count = 1
+                    pos = i + pattern_size
+                    while pos + pattern_size <= len(ref_seq) and ref_seq[pos:pos+pattern_size] == pattern:
+                        ref_count += 1
+                        pos += pattern_size
+                    
+                    if ref_count > 1:  # It's a repeat in reference
+                        # Now check if count is different in aligned sequence
+                        aln_count = 0
+                        aln_pos = 0
+                        while True:
+                            pos = aln_seq.find(pattern, aln_pos)
+                            if pos < 0 or pos >= len(aln_seq) - pattern_size:
+                                break
+                                
+                            # Count consecutive occurrences from this position
+                            consecutive = 0
+                            check_pos = pos
+                            while check_pos + pattern_size <= len(aln_seq) and aln_seq[check_pos:check_pos+pattern_size] == pattern:
+                                consecutive += 1
+                                check_pos += pattern_size
+                            
+                            aln_count = max(aln_count, consecutive)
+                            aln_pos = pos + 1
+                        
+                        if aln_count != ref_count and aln_count > 1:
+                            variants.append(Variant(
+                                variant_type=VariantType.TANDEM_REPEAT,
+                                position=ref_offset + i,
+                                reference=pattern * ref_count,
+                                alternate=pattern * aln_count,
+                                length=pattern_size * ref_count,
+                                quality=50.0,
+                                metadata={
+                                    "repeat_pattern": pattern,
+                                    "ref_count": ref_count,
+                                    "aln_count": aln_count,
+                                    "pattern_size": pattern_size
+                                }
+                            ))
+                            return variants
+        
+        return variants  # Return empty list if no complex variants found
+    
+    def _reverse_complement(self, sequence: str) -> str:
+        """
+        Get the reverse complement of a DNA sequence.
+        
+        Args:
+            sequence: The DNA sequence to reverse complement
+            
+        Returns:
+            The reverse complement sequence
+        """
+        complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 
+                      'a': 't', 'c': 'g', 'g': 'c', 't': 'a',
+                      'N': 'N', 'n': 'n'}
+        return ''.join(complement.get(base, base) for base in reversed(sequence))
     
     def _detect_variants_by_comparison(self, 
                                      ref_seq: str, 

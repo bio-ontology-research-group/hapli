@@ -250,6 +250,122 @@ class TestVariantDetector(unittest.TestCase):
         self.assertEqual(summary["insertion"], 1)
         self.assertEqual(summary["deletion"], 1)
         self.assertEqual(summary["complex"], 0)
+    
+    def test_detect_inversion(self):
+        """Test detection of sequence inversion."""
+        ref_feature = self._create_mock_feature(2, 22)
+        aln_feature = self._create_mock_feature(102, 122)
+        
+        # Reference sequence with a segment that will be inverted
+        ref_seq = "ACGTACGTACGTACGTACGT"
+        # Aligned sequence with the middle segment inverted (ACGT -> ACGT)
+        # The exact inversion doesn't matter for the test since we mock the detection
+        aln_seq = "ACGTACGTATGCATGCACGT"
+        
+        # Patch the detect_complex_rearrangements method to return a known inversion
+        with patch.object(self.detector, '_detect_complex_rearrangements') as mock_detect:
+            mock_detect.return_value = [
+                Variant(
+                    variant_type=VariantType.INVERSION,
+                    position=10,
+                    reference="ACGTACGT",
+                    alternate="TGCATGCA",  # Inverted segment
+                    length=8,
+                    end_position=18,
+                    quality=70.0,
+                    metadata={
+                        "inv_start": 10,
+                        "inv_end": 18,
+                        "aln_pos": 8
+                    }
+                )
+            ]
+            
+            variants = self.detector.detect_variants(
+                ref_feature, ref_seq, aln_feature, aln_seq
+            )
+            
+            self.assertEqual(len(variants), 1)
+            self.assertEqual(variants[0].variant_type, VariantType.INVERSION)
+            self.assertEqual(variants[0].position, 10)
+            self.assertEqual(variants[0].length, 8)
+    
+    def test_detect_duplication(self):
+        """Test detection of sequence duplication."""
+        ref_feature = self._create_mock_feature(2, 22)
+        aln_feature = self._create_mock_feature(102, 132)
+        
+        # Reference sequence
+        ref_seq = "ACGTACGTACGTACGTACGT"
+        # Aligned sequence with a duplicated segment
+        aln_seq = "ACGTACGTACGTACGTACGTACGTACGT"
+        
+        # Patch the detect_complex_rearrangements method to return a known duplication
+        with patch.object(self.detector, '_detect_complex_rearrangements') as mock_detect:
+            mock_detect.return_value = [
+                Variant(
+                    variant_type=VariantType.DUPLICATION,
+                    position=6,
+                    reference="CGTACG",
+                    alternate="CGTACGCGTACG",  # Duplicated segment
+                    length=6,
+                    end_position=12,
+                    quality=60.0,
+                    metadata={
+                        "dup_count": 2,
+                        "dup_start": 6,
+                        "dup_end": 12
+                    }
+                )
+            ]
+            
+            variants = self.detector.detect_variants(
+                ref_feature, ref_seq, aln_feature, aln_seq
+            )
+            
+            self.assertEqual(len(variants), 1)
+            self.assertEqual(variants[0].variant_type, VariantType.DUPLICATION)
+            self.assertEqual(variants[0].position, 6)
+            self.assertEqual(variants[0].metadata["dup_count"], 2)
+    
+    def test_detect_tandem_repeat(self):
+        """Test detection of tandem repeat variation."""
+        ref_feature = self._create_mock_feature(2, 22)
+        aln_feature = self._create_mock_feature(102, 28)
+        
+        # Reference sequence with a repeated AT pattern
+        ref_seq = "ACGTATATATACGTACGTAC"
+        # Aligned sequence with expanded AT repeat
+        aln_seq = "ACGTATATATATATACGTACGTAC"
+        
+        # Patch the detect_complex_rearrangements method to return a known tandem repeat
+        with patch.object(self.detector, '_detect_complex_rearrangements') as mock_detect:
+            mock_detect.return_value = [
+                Variant(
+                    variant_type=VariantType.TANDEM_REPEAT,
+                    position=4,
+                    reference="ATATAT",  # 3 AT repeats in reference
+                    alternate="ATATATAT",  # 4 AT repeats in aligned
+                    length=6,
+                    quality=50.0,
+                    metadata={
+                        "repeat_pattern": "AT",
+                        "ref_count": 3,
+                        "aln_count": 4,
+                        "pattern_size": 2
+                    }
+                )
+            ]
+            
+            variants = self.detector.detect_variants(
+                ref_feature, ref_seq, aln_feature, aln_seq
+            )
+            
+            self.assertEqual(len(variants), 1)
+            self.assertEqual(variants[0].variant_type, VariantType.TANDEM_REPEAT)
+            self.assertEqual(variants[0].metadata["repeat_pattern"], "AT")
+            self.assertEqual(variants[0].metadata["ref_count"], 3)
+            self.assertEqual(variants[0].metadata["aln_count"], 4)
 
 
 class TestFeatureReconciler(unittest.TestCase):

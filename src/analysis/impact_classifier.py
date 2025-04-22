@@ -21,6 +21,9 @@ class ImpactType(Enum):
     TRUNCATED = "truncated"       # Feature is present but with start/end truncation
     EXPANDED = "expanded"         # Feature is present but with expanded boundaries
     FRAGMENTED = "fragmented"     # Feature is split across multiple locations
+    INVERTED = "inverted"         # Feature is present but inverted
+    DUPLICATED = "duplicated"     # Feature is present with duplications
+    REARRANGED = "rearranged"     # Feature is extensively rearranged
     UNCERTAIN = "uncertain"       # Cannot determine impact with confidence
 
 class ImpactClassifier:
@@ -49,7 +52,8 @@ class ImpactClassifier:
                                aligned_feature: Optional[SeqFeature],
                                alignment_score: Optional[float] = None,
                                coverage: Optional[float] = None,
-                               identity: Optional[float] = None) -> Tuple[ImpactType, Dict]:
+                               identity: Optional[float] = None,
+                               variants: Optional[List] = None) -> Tuple[ImpactType, Dict]:
         """
         Classify the impact on a single feature.
         
@@ -59,6 +63,7 @@ class ImpactClassifier:
             alignment_score: Optional explicit alignment score
             coverage: Optional explicit coverage value
             identity: Optional explicit sequence identity value
+            variants: Optional list of detected variants
             
         Returns:
             A tuple containing:
@@ -79,6 +84,17 @@ class ImpactClassifier:
         # Default values if still not available
         coverage = coverage or 0.0
         identity = identity or 0.0
+        
+        # First check for complex rearrangements if variants are provided
+        if variants:
+            complex_impact = self._classify_from_variants(variants)
+            if complex_impact:
+                impact_type, metadata = complex_impact
+                metadata.update({
+                    "coverage": coverage,
+                    "identity": identity
+                })
+                return impact_type, metadata
         
         # Get feature lengths for structural analysis
         ref_length = reference_feature.location.end - reference_feature.location.start
@@ -111,25 +127,6 @@ class ImpactClassifier:
                 "identity": identity
             }
         
-        # Significant length difference suggests structural change
-        if abs(ref_length - aligned_length) / ref_length > 0.1:
-            if aligned_length < ref_length:
-                return ImpactType.TRUNCATED, {
-                    "coverage": coverage,
-                    "identity": identity,
-                    "ref_length": ref_length,
-                    "aligned_length": aligned_length,
-                    "length_ratio": aligned_length / ref_length
-                }
-            else:
-                return ImpactType.EXPANDED, {
-                    "coverage": coverage,
-                    "identity": identity,
-                    "ref_length": ref_length,
-                    "aligned_length": aligned_length,
-                    "length_ratio": aligned_length / ref_length
-                }
-        
         # Check if the feature is fragmented (multiple partial alignments)
         if hasattr(aligned_feature, "sub_features") and aligned_feature.sub_features:
             return ImpactType.FRAGMENTED, {
@@ -143,6 +140,65 @@ class ImpactClassifier:
             "coverage": coverage,
             "identity": identity
         }
+    
+    def _classify_from_variants(self, variants: List) -> Optional[Tuple[ImpactType, Dict]]:
+        """
+        Classify impact based on detected variants.
+        
+        Args:
+            variants: List of detected variants
+            
+        Returns:
+            Optional tuple of (ImpactType, metadata) if a clear impact is found,
+            None otherwise
+        """
+        from src.analysis.variant_detector import VariantType
+        
+        # Check for specific complex variant types
+        for variant in variants:
+            if variant.variant_type == VariantType.INVERSION:
+                return ImpactType.INVERTED, {
+                    "inversion_length": variant.length,
+                    "inversion_start": variant.position,
+                    "inversion_end": variant.end_position
+                }
+                
+            elif variant.variant_type == VariantType.DUPLICATION:
+                return ImpactType.DUPLICATED, {
+                    "duplication_length": variant.length,
+                    "duplication_count": variant.metadata.get("dup_count", 2),
+                    "duplication_start": variant.position
+                }
+                
+            elif variant.variant_type == VariantType.TRANSLOCATION:
+                return ImpactType.REARRANGED, {
+                    "translocation_length": variant.length,
+                    "original_position": variant.position,
+                    "new_position": variant.metadata.get("new_position", 0)
+                }
+                
+            elif variant.variant_type == VariantType.TANDEM_REPEAT:
+                # For tandem repeats, decide based on the change in repeat count
+                ref_count = variant.metadata.get("ref_count", 1)
+                aln_count = variant.metadata.get("aln_count", 1)
+                
+                if aln_count > ref_count:
+                    return ImpactType.EXPANDED, {
+                        "repeat_pattern": variant.metadata.get("repeat_pattern", ""),
+                        "ref_repeat_count": ref_count,
+                        "aln_repeat_count": aln_count,
+                        "expansion_factor": aln_count / ref_count
+                    }
+                else:
+                    return ImpactType.TRUNCATED, {
+                        "repeat_pattern": variant.metadata.get("repeat_pattern", ""),
+                        "ref_repeat_count": ref_count,
+                        "aln_repeat_count": aln_count,
+                        "contraction_factor": ref_count / aln_count
+                    }
+        
+        # If no specific complex variant was found
+        return None
     
     def classify_feature_set(self, 
                            reference_features: Dict[str, SeqFeature],
