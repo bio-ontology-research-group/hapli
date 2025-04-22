@@ -93,14 +93,23 @@ def download_file_with_progress(url, output_path, is_ftp=True):
         logger.error(f"Error downloading file: {e}")
         return False
 
-def extract_gzip(gzip_path, output_path, remove_gz=False):
+def extract_gzip(gzip_path, output_path=None, remove_gz=False):
     """
     Extract a gzip file to the specified output path.
+    
+    Args:
+        gzip_path: Path to the gzipped file
+        output_path: Path to extract to (if None, removes only the .gz extension)
+        remove_gz: Whether to remove the original gzipped file after extraction
     """
     try:
+        # If output_path is not specified, remove only the .gz extension
+        if output_path is None:
+            output_path = str(gzip_path).replace('.gz', '')
+        
         with gzip.open(gzip_path, 'rb') as f_in:
             with open(output_path, 'wb') as f_out:
-                logger.info(f"Extracting {gzip_path}")
+                logger.info(f"Extracting {gzip_path} to {output_path}")
                 shutil.copyfileobj(f_in, f_out)
         
         if remove_gz and os.path.exists(output_path):
@@ -145,7 +154,8 @@ def download_chromosome_specific_gff(output_dir, source='ensembl', chromosomes=N
             if success:
                 downloaded_files.append(output_path)
                 if extract:
-                    extract_path = output_path.with_suffix('').with_suffix('')
+                    # Only remove .gz suffix, keeping the .gff3 extension
+                    extract_path = output_path.with_suffix('')
                     extract_gzip(output_path, extract_path, remove_gz=False)
     
     return downloaded_files
@@ -185,7 +195,8 @@ def download_gff3(output_dir, source='ensembl', extract=False):
     success = download_file_with_progress(url, output_path, is_ftp=is_ftp)
     
     if success and extract:
-        extract_path = output_path.with_suffix('').with_suffix('')  # Remove .gff3.gz
+        # Only remove .gz suffix, keeping the .gff3 extension
+        extract_path = output_path.with_suffix('')  # Remove just .gz
         extract_gzip(output_path, extract_path, remove_gz=False)
         return extract_path
     
