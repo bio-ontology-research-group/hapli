@@ -40,7 +40,17 @@ class VCFtoGFAConverter:
                                'alt': Use the first alternate allele (if available).
                                'skip': Effectively use reference up to variant, skip variant allele.
                                'bubble': (Not implemented) Would create complex graph structure.
+                               
+        Raises:
+            FileNotFoundError: If the input VCF or FASTA file does not exist.
+            VCFtoGFAConversionError: If initialization fails for other reasons.
         """
+        # Check if input files exist
+        if not os.path.exists(vcf_filepath):
+            raise FileNotFoundError(f"VCF file not found: {vcf_filepath}")
+        if not os.path.exists(fasta_filepath):
+            raise FileNotFoundError(f"FASTA file not found: {fasta_filepath}")
+            
         self.vcf_filepath = vcf_filepath
         self.fasta_filepath = fasta_filepath
         self.output_gfa_filepath = output_gfa_filepath
@@ -144,7 +154,7 @@ class VCFtoGFAConverter:
                      logger.warning(f"Segment {segment_id} sequence contained non-ACGTN characters (preview: '{original_seq_preview}...'). Replaced with 'N'.")
 
                 segment = gfapy.line.Segment(
-                    name=segment_id,
+                    segment_id,  # First positional argument is the segment ID
                     sequence=sequence,
                     LN=len(sequence) # Add LN tag explicitly
                 )

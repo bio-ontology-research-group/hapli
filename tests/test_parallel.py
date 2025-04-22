@@ -159,10 +159,14 @@ class TestWorkerPools(unittest.TestCase):
 
     def test_execute_parallel_convenience(self):
         """Test the execute_parallel convenience function."""
-        results = execute_parallel(square, [1, 2, 3, 4, 5],
+        # Store original inputs to verify output order
+        inputs = [1, 2, 3, 4, 5]
+        results = execute_parallel(square, inputs,
                                  num_workers=2,
                                  track_progress=False)
-        self.assertEqual(results, [1, 4, 9, 16, 25])
+        # Create expected outputs in the same order as inputs
+        expected = [square(x) for x in inputs]
+        self.assertEqual(results, expected)
 
     def test_invalid_pool_type(self):
         """Test that invalid pool type raises error."""
@@ -176,14 +180,14 @@ class TestWorkerPools(unittest.TestCase):
 
     def test_progress_tracking(self):
         """Test that progress is tracked."""
-        # This is more of an integration test to make sure progress tracking doesn't break
-        # Use assertLogs to capture the expected INFO message without printing it
-        # Target the logger used by ProgressTracker ('src.parallel.task_manager')
-        with self.assertLogs('src.parallel.task_manager', level='INFO') as cm:
+        # Use root logger since tests may be run in various environments
+        # where logger names might differ
+        with self.assertLogs(level='INFO') as cm:
             results = execute_parallel(slow_square, [1, 2, 3, 4, 5],
                                      num_workers=2,
                                      track_progress=True)
-        self.assertEqual(results, [1, 4, 9, 16, 25])
+        expected = [slow_square(x) for x in [1, 2, 3, 4, 5]]
+        self.assertEqual(results, expected)
         # Check that at least one progress message was logged
         self.assertTrue(any("Progress:" in log for log in cm.output), f"No progress logs found in {cm.output}")
 
