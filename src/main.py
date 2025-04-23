@@ -38,7 +38,7 @@ from src.alignment.alignment_processor import AlignmentProcessor # Import the re
 # Analysis
 # NOTE: Using placeholders for analysis components for now
 from src.analysis.impact_classifier import ImpactClassifier, ImpactType
-from src.analysis.variant_detector import VariantDetector, Variant # Import Variant for type hints
+from src.analysis.variant_detector import VariantDetector, Variant, VariantType # Import Variant/VariantType for type hints
 from src.analysis.reconciliation import FeatureReconciler, ReconciliationResult # Import ReconciliationResult
 from src.analysis.summary_generator import SummaryGenerator, AnalysisSummary, FeatureSummary
 
@@ -961,4 +961,4 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 ```
-tests/test_alignment_processor.py
+src/alignment/alignment_processor.py
