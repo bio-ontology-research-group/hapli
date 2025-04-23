@@ -15,6 +15,8 @@ from src.alignment.minimap_wrapper import MinimapAligner, AlignmentResult
 
 # Test data paths
 TEST_DATA_DIR = Path(__file__).parent / "data"
+# Create the test data directory if it doesn't exist
+TEST_DATA_DIR.mkdir(exist_ok=True)
 REFERENCE_FILE = TEST_DATA_DIR / "reference.fasta"
 REGIONS_FILE = TEST_DATA_DIR / "regions.fasta"
 SNP_VARIANTS_FILE = TEST_DATA_DIR / "snp_variants.fasta"
