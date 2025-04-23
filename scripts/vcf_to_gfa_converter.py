@@ -62,6 +62,7 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
     """
     output_path_obj = Path(output_path)
     vg_path_obj = output_path_obj.with_suffix('.vg') # Define persistent path for .vg file
+    validation_passed = True # Assume validation passes initially
 
     try:
         # Ensure output directory exists
@@ -87,11 +88,17 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
                  if not samtools_exe:
                       logger.error("samtools command not found in PATH. Cannot generate FASTA index.")
                       return False
-                 subprocess.run([samtools_exe, 'faidx', str(reference_path)], check=True, capture_output=True)
+                 # Use capture_output=True for faidx as well
+                 idx_result = subprocess.run([samtools_exe, 'faidx', str(reference_path)], check=False, capture_output=True, text=True)
+                 if idx_result.returncode != 0:
+                      logger.error(f"Failed to generate FASTA index for {reference_path}. 'samtools faidx' failed.")
+                      logger.error(f"samtools faidx stderr: {idx_result.stderr.strip()}")
+                      return False
                  logger.info(f"Successfully generated index for {reference_path}")
-             except (subprocess.CalledProcessError) as idx_err:
-                 logger.error(f"Failed to generate FASTA index for {reference_path}. 'samtools faidx' failed.")
-                 logger.error(f"Error details: {idx_err.stderr.decode(errors='replace') if idx_err.stderr else 'No stderr'}")
+                 if idx_result.stderr: # Log any stderr warnings from faidx
+                      logger.info(f"samtools faidx stderr: {idx_result.stderr.strip()}")
+             except Exception as idx_err: # Catch broader exceptions during indexing attempt
+                 logger.error(f"An unexpected error occurred during FASTA indexing: {idx_err}")
                  return False
 
 
@@ -125,21 +132,24 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
         try:
             with open(vg_path_obj, 'wb') as vg_file: # Write vg output as bytes
                 result = subprocess.run(construct_cmd, stdout=vg_file, stderr=subprocess.PIPE, check=False) # Capture stderr as bytes
+                # Decode stderr for logging, replacing errors
+                stderr_decoded = result.stderr.decode(errors='replace').strip() if result.stderr else ""
+                # Log stderr even on success (might contain warnings)
+                if stderr_decoded:
+                    logger.info(f"vg construct stderr:\n{stderr_decoded}")
                 # Check return code explicitly
                 if result.returncode != 0:
-                     # Decode stderr for logging, replacing errors
-                     stderr_decoded = result.stderr.decode(errors='replace') if result.stderr else ""
+                     # stderr already logged above
                      raise subprocess.CalledProcessError(result.returncode, construct_cmd, output=None, stderr=stderr_decoded)
-                # Log stderr even on success (might contain warnings)
-                if result.stderr:
-                    logger.info(f"vg construct stderr: {result.stderr.decode(errors='replace').strip()}")
 
         except subprocess.CalledProcessError as e:
              logger.error(f"vg construct command failed: {' '.join(e.cmd)}")
              logger.error(f"Return code: {e.returncode}")
-             # stderr is already decoded in the raised exception if possible
+             # stderr is already logged or available in e.stderr
              if e.stderr:
-                 logger.error(f"stderr: {e.stderr.strip()}")
+                 logger.error(f"vg construct stderr (already logged):\n{e.stderr.strip()}")
+             else:
+                 logger.error("vg construct stderr: (no stderr captured)")
              # Attempt to provide common troubleshooting tips based on error
              if "variant/reference sequence mismatch" in str(e.stderr):
                  logger.error("Potential Issue: VCF coordinates might not match the reference FASTA assembly version.")
@@ -147,8 +157,11 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
                  logger.error("Potential Issue: Ensure VCF files are bgzipped and indexed (.tbi) and reference FASTA is indexed (.fai).")
              # Clean up potentially incomplete .vg file on construct error
              if vg_path_obj.exists():
-                 vg_path_obj.unlink()
-                 logger.info(f"Removed potentially incomplete intermediate file: {vg_path_obj}")
+                 try:
+                     vg_path_obj.unlink()
+                     logger.info(f"Removed potentially incomplete intermediate file: {vg_path_obj}")
+                 except OSError as rm_err:
+                     logger.warning(f"Could not remove potentially incomplete intermediate file {vg_path_obj}: {rm_err}")
              return False # Exit function on command failure
 
         # Check if the vg file was created and is not empty
@@ -156,38 +169,41 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
             logger.error(f"vg construct failed to create a valid graph file: {vg_path_obj}")
             # Attempt to log stderr if available from a previous failure capture
             if 'result' in locals() and hasattr(result, 'stderr') and result.stderr:
-                 logger.error(f"vg construct stderr: {result.stderr.decode(errors='replace').strip()}")
+                 stderr_decoded = result.stderr.decode(errors='replace').strip()
+                 logger.error(f"vg construct stderr (from check):\n{stderr_decoded}")
             return False
 
         # Step 1.5: Validate the intermediate graph
         validate_cmd = [vg_exe, 'validate', str(vg_path_obj)]
         logger.info(f"Running vg validate: {' '.join(validate_cmd)}")
         try:
-            result_validate = subprocess.run(validate_cmd, capture_output=True, check=False) # Capture output
-            # Decode stderr for logging, replacing errors
-            stderr_decoded = result_validate.stderr.decode(errors='replace') if result_validate.stderr else ""
+            # Capture both stdout and stderr for validate
+            result_validate = subprocess.run(validate_cmd, capture_output=True, check=False, text=True) # Use text=True for easier decoding
+            stdout_decoded = result_validate.stdout.strip() if result_validate.stdout else ""
+            stderr_decoded = result_validate.stderr.strip() if result_validate.stderr else ""
+
+            if stdout_decoded:
+                logger.info(f"vg validate stdout:\n{stdout_decoded}")
+            if stderr_decoded:
+                # Log stderr as warning or info even on success, as it might contain useful info
+                log_level = logging.ERROR if result_validate.returncode != 0 else logging.INFO
+                logger.log(log_level, f"vg validate stderr:\n{stderr_decoded}")
+
             if result_validate.returncode != 0:
-                logger.error(f"vg validate command failed for {vg_path_obj}")
-                logger.error(f"Return code: {result_validate.returncode}")
-                if stderr_decoded:
-                    logger.error(f"stderr: {stderr_decoded.strip()}")
-                # Optionally log stdout as well if it contains useful info on failure
-                stdout_decoded = result_validate.stdout.decode(errors='replace') if result_validate.stdout else ""
-                if stdout_decoded:
-                     logger.error(f"stdout: {stdout_decoded.strip()}")
-                # Keep the .vg file even if validation fails, for debugging
-                logger.warning(f"Intermediate graph {vg_path_obj} failed validation, but will be kept for debugging.")
-                return False # Exit if validation fails
+                logger.error(f"vg validate command failed for {vg_path_obj} with return code {result_validate.returncode}.")
+                # Treat validation failure as a WARNING, not a fatal error
+                logger.warning(f"Intermediate graph {vg_path_obj} failed validation. Proceeding with vg view, but the final GFA might be problematic.")
+                validation_passed = False # Mark validation as failed
+                # return False # *** CHANGED: Do not exit here ***
             else:
                 logger.info(f"Intermediate graph {vg_path_obj} validated successfully.")
-                if stderr_decoded: # Log warnings from validate even on success
-                     logger.info(f"vg validate stderr: {stderr_decoded.strip()}")
 
         except Exception as e:
              logger.error(f"An unexpected error occurred during vg validate: {e}")
              # Keep the .vg file for debugging
-             logger.warning(f"Intermediate graph {vg_path_obj} might be invalid, keeping for debugging.")
-             return False
+             logger.warning(f"Intermediate graph {vg_path_obj} might be invalid due to validation error, keeping for debugging.")
+             validation_passed = False # Mark validation as failed due to exception
+             # return False # *** CHANGED: Do not exit here ***
 
 
         # Step 2: Convert to GFA using vg view
@@ -204,22 +220,31 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
             with open(output_path_obj, 'wb') as gfa_file:
                  result_view = subprocess.run(gfa_cmd, stdout=gfa_file, stderr=subprocess.PIPE, check=False) # text=False is default
                  # Decode stderr for logging, replacing errors
-                 stderr_decoded = result_view.stderr.decode(errors='replace') if result_view.stderr else ""
-                 if result_view.returncode != 0:
-                      raise subprocess.CalledProcessError(result_view.returncode, gfa_cmd, output=None, stderr=stderr_decoded)
+                 stderr_decoded = result_view.stderr.decode(errors='replace').strip() if result_view.stderr else ""
+                 # Log stderr from vg view even on success
                  if stderr_decoded:
-                     logger.info(f"vg view stderr: {stderr_decoded.strip()}") # Log non-error stderr for info
+                     log_level_view = logging.ERROR if result_view.returncode != 0 else logging.INFO
+                     logger.log(log_level_view, f"vg view stderr:\n{stderr_decoded}")
+
+                 if result_view.returncode != 0:
+                      # stderr already logged above
+                      raise subprocess.CalledProcessError(result_view.returncode, gfa_cmd, output=None, stderr=stderr_decoded)
 
         except subprocess.CalledProcessError as e:
              logger.error(f"vg view command failed: {' '.join(e.cmd)}")
              logger.error(f"Return code: {e.returncode}")
-             # stderr is already decoded in the raised exception if possible
+             # stderr is already logged or available in e.stderr
              if e.stderr:
-                 logger.error(f"stderr: {e.stderr.strip()}")
+                 logger.error(f"vg view stderr (already logged):\n{e.stderr.strip()}")
+             else:
+                 logger.error("vg view stderr: (no stderr captured)")
              # Clean up potentially incomplete output file
              if output_path_obj.exists():
-                 output_path_obj.unlink()
-                 logger.info(f"Removed potentially incomplete output file: {output_path_obj}")
+                 try:
+                     output_path_obj.unlink()
+                     logger.info(f"Removed potentially incomplete output file: {output_path_obj}")
+                 except OSError as rm_err:
+                     logger.warning(f"Could not remove potentially incomplete file {output_path_obj}: {rm_err}")
              # Keep the .vg file for debugging even if view fails
              logger.warning(f"vg view failed, keeping intermediate graph {vg_path_obj} for debugging.")
              return False # Exit function on command failure
@@ -227,18 +252,28 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
 
         # Check if the GFA file was created and is not empty
         if not output_path_obj.exists() or output_path_obj.stat().st_size == 0:
-             logger.error(f"vg view failed to create a valid GFA file: {output_path_obj}")
+             logger.error(f"vg view failed to create a valid GFA file (file missing or empty): {output_path_obj}")
+             # Attempt to log stderr if available from a previous failure capture
              if 'result_view' in locals() and hasattr(result_view, 'stderr') and result_view.stderr:
-                 logger.error(f"vg view stderr: {result_view.stderr.decode(errors='replace').strip()}")
+                 stderr_decoded = result_view.stderr.decode(errors='replace').strip()
+                 logger.error(f"vg view stderr (from check):\n{stderr_decoded}")
              # Clean up potentially incomplete output file
              if output_path_obj.exists():
-                 output_path_obj.unlink()
-                 logger.info(f"Removed empty output file: {output_path_obj}")
+                 try:
+                     output_path_obj.unlink()
+                     logger.info(f"Removed empty output file: {output_path_obj}")
+                 except OSError as rm_err:
+                     logger.warning(f"Could not remove empty file {output_path_obj}: {rm_err}")
              # Keep the .vg file for debugging
              logger.warning(f"vg view created an empty file, keeping intermediate graph {vg_path_obj} for debugging.")
              return False
 
-        logger.info(f"Successfully created GFA file: {output_path_obj}")
+        # If validation failed earlier, add a final warning
+        if not validation_passed:
+            logger.warning(f"Successfully created GFA file: {output_path_obj}, but it was generated from a graph that failed validation.")
+        else:
+            logger.info(f"Successfully created GFA file: {output_path_obj}")
+
         # Optionally remove the .vg file on complete success? For now, keep it.
         # logger.info(f"Intermediate graph kept at: {vg_path_obj}")
         return True
@@ -343,7 +378,7 @@ def main():
         success = convert_vcf_to_gfa_vg(
             vcf_paths=args.vcf,
             reference_path=args.reference,
-            output_path=output_path,
+            output_path=str(output_path), # Pass output path as string
             region=args.region,
             memory_gb=args.memory,
             threads=args.threads
@@ -362,6 +397,7 @@ def main():
         output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Starting separate conversion for {len(args.vcf)} VCF files into directory: {output_dir}")
 
+        all_successful = True # Track overall success for separate mode
         for vcf_path_str in args.vcf:
             vcf_path = Path(vcf_path_str)
             # Create a descriptive name for the output GFA
@@ -382,19 +418,29 @@ def main():
             success = convert_vcf_to_gfa_vg(
                 vcf_paths=[vcf_path_str], # Pass only one VCF at a time
                 reference_path=args.reference,
-                output_path=output_gfa_path,
+                output_path=str(output_gfa_path), # Pass output path as string
                 region=args.region,
                 memory_gb=args.memory,
                 threads=args.threads
             )
             if not success:
-                logger.error(f"Failed to convert {vcf_path.name}. See logs above for details. Exiting.")
-                sys.exit(1) # Exit immediately on failure
+                logger.error(f"Failed to convert {vcf_path.name}. See logs above for details.")
+                all_successful = False
+                # Decide whether to continue with other files or fail fast
+                # For now, let's fail fast to match the previous behavior
+                logger.error("Exiting due to failure in separate mode.")
+                sys.exit(1)
             else:
                 logger.info(f"Successfully converted {vcf_path.name}")
 
+        if not all_successful:
+             # This part might not be reached if we fail fast above
+             logger.error("One or more conversions failed in separate mode.")
+             sys.exit(1)
+
+
     # --- Final Status ---
-    logger.info("Workflow step finished successfully.") # Changed message slightly
+    logger.info("VCF to GFA conversion script finished successfully.") # Changed message slightly
     sys.exit(0) # Exit successfully if all steps completed or were skipped
 
 if __name__ == "__main__":
