@@ -288,7 +288,7 @@ output_file: output.tsv
         # Print captured logs for debugging
         print(f"Captured logs: {cm.output}")
         # Check if the ConfigurationError message was logged
-        self.assertTrue(any("Missing required files" in log for log in cm.output))
+        self.assertTrue(any("Missing required files" in log for log in cm.output), f"Error message not found in logs: {cm.output}")
 
 
     def test_error_handling_runtime(self):
