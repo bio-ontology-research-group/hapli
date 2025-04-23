@@ -960,5 +960,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-```
-src/alignment/alignment_processor.py
