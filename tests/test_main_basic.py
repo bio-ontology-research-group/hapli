@@ -217,9 +217,12 @@ output_file: output.tsv
         """Test error handling for configuration errors using assertLogs."""
         args = ["--gfa-file", "nonexistent.gfa"] # Missing other required args
 
+        # Configure logging first to ensure logs are captured
+        self.tool.configure_logging('ERROR')
+        
         # Expect ConfigurationError during config.load()
-        # Capture logs from the root logger or 'src.config' if specific
-        with self.assertLogs(level='ERROR') as cm:
+        # Capture logs from the specific logger used in the tool
+        with self.assertLogs('src.main', level='ERROR') as cm:
              # Mock Config.load to raise the expected error
              with patch.object(Config, 'load', side_effect=ConfigurationError("Missing required files")):
                   exit_code = self.tool.run(args)
@@ -239,12 +242,15 @@ output_file: output.tsv
             "--log-level", "INFO" # Ensure level is sufficient for CRITICAL
         ]
 
+        # Configure logging first to ensure logs are captured
+        self.tool.configure_logging('CRITICAL')
+        
         # Mock a later step (e.g., load_input_files) to raise an error
         runtime_error_msg = "Test runtime error during file load"
         with patch.object(HaplotypeAnnotationTool, 'load_input_files',
                          side_effect=Exception(runtime_error_msg)):
-            # Capture logs from the root logger at CRITICAL level
-            with self.assertLogs(level='CRITICAL') as cm:
+            # Capture logs from the specific logger used in the tool
+            with self.assertLogs('src.main', level='CRITICAL') as cm:
                 exit_code = self.tool.run(valid_args)
 
         self.assertNotEqual(exit_code, 0)
@@ -258,6 +264,9 @@ output_file: output.tsv
         # Create directory for intermediate data
         os.makedirs(self.intermediate_dir, exist_ok=True)
 
+        # Configure logging to ensure logs are captured
+        self.tool.configure_logging('INFO')
+        
         # Set up mock intermediate data and analysis summaries
         self.tool.intermediate_data = {
             'input_files': {
