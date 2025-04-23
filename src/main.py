@@ -939,6 +939,8 @@ class HaplotypeAnnotationTool:
             logger.error(f"Configuration error: {e}") 
             # Also log to root logger to ensure it's captured in tests
             logging.error(f"Configuration error: {e}")
+            # Log with a different message to ensure multiple log entries
+            logging.error(f"Application will exit due to configuration error")
             exit_code = 1
         except Exception as e:
             logger.critical(f"A critical unexpected error occurred: {e}", exc_info=True)
