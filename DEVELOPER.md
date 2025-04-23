@@ -199,6 +199,71 @@ The module recognizes several common naming patterns for haplotypes in GFA paths
 - Paths without recognizable patterns are considered as their own sample group
 - The module also looks for metadata tags (SM for sample, HP for haplotype) if available
 
+### Alignment Module (`src/alignment/`)
+
+The Alignment module provides functionality for sequence alignment using minimap2:
+
+#### Minimap2 Wrapper (`src/alignment/minimap_wrapper.py`)
+
+* Provides a Python interface to the minimap2 aligner via the mappy library
+* Configures alignment parameters for different sequence types
+* Handles various input formats (strings, SeqRecords, files)
+* Processes alignment results into a standardized format
+
+**Key Components:**
+- `MinimapAligner`: Main class for minimap2 alignment
+- `AlignmentResult`: Data class for storing alignment results
+
+**Alignment Parameters:**
+- **Presets:** Predefined parameter sets for different sequence types
+  - `map-pb`/`map-ont`: PacBio/Oxford Nanopore genomic reads
+  - `map-hifi`: PacBio HiFi genomic reads
+  - `sr`: Short genomic paired-end reads
+  - `splice`: Long-read spliced alignment
+  - `asm5`/`asm10`/`asm20`: Assembly to reference alignment
+  - `cdna`: cDNA alignment
+- **Custom Parameters:**
+  - `k`: k-mer size (11-15 for short reads, 15-19 for genomic)
+  - `w`: minimizer window size
+  - `min_intron_len`/`max_intron_len`: intron length bounds for splice mapping
+  - `scoring`: tuple of (match, mismatch, gap_open, gap_extend)
+
+**Usage Example:**
+```python
+from src.alignment.minimap_wrapper import MinimapAligner
+
+# Create an aligner with appropriate preset
+aligner = MinimapAligner(preset="map-ont")  # For Oxford Nanopore reads
+
+# Load reference sequence
+aligner.load_reference(reference_seq)
+# Or load from file
+aligner.load_reference_file("reference.fasta")
+
+# Align a query sequence
+alignments = aligner.align_sequence(query_seq)
+
+# Process alignment results
+for aln in alignments:
+    print(f"Alignment score: {aln.score}")
+    print(f"Identity: {aln.identity:.2f}")
+    print(f"CIGAR: {aln.cigar}")
+    print(f"Query region: {aln.query_start}-{aln.query_end}")
+    print(f"Target region: {aln.target_start}-{aln.target_end}")
+```
+
+**Test Data:**
+The test suite uses artificially generated test data based on the PhiX174 viral genome:
+- Reference sequence (~5.4kb)
+- Extracted regions (100-500bp segments)
+- Variant sequences with:
+  - SNPs (single nucleotide polymorphisms)
+  - Insertions (1-10bp)
+  - Deletions (1-10bp)
+  - Complex combinations of the above
+
+The test data is automatically generated when running the tests if it doesn't exist.
+
 ### Analysis Module (`src/analysis/`)
 
 The Analysis module provides comprehensive functionality to evaluate and characterize feature alignments:
