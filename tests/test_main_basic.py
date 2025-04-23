@@ -182,36 +182,56 @@ output_file: output.tsv
 
 
     def test_logging_configuration(self):
-        """Test that logging is properly configured using assertLogs."""
+        """Test that logging is properly configured using a custom log handler."""
+        # Create a StringIO object to capture log output
+        log_capture = StringIO()
+        # Create a handler that writes to the StringIO object
+        handler = logging.StreamHandler(log_capture)
+        formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
+        handler.setFormatter(formatter)
+        
+        # Add the handler to the root logger
+        root_logger = logging.getLogger()
+        root_logger.addHandler(handler)
+        
         # Test DEBUG level
-        # assertLogs captures logs from the specified logger AND its children
-        with self.assertLogs(level='DEBUG') as cm_debug:
-            self.tool.configure_logging('DEBUG')
-            # Log messages using different loggers to test propagation
-            logging.getLogger('src.main').debug("Test main debug")
-            logging.getLogger('src.parsers').info("Test parser info")
-            logging.getLogger().warning("Test root warning") # Root logger
-
-        # Check captured output (cm.output is a list of log strings)
-        self.assertIn("DEBUG:src.main:Test main debug", cm_debug.output[1]) # Index 1 because configure_logging logs INFO first
-        self.assertIn("INFO:src.parsers:Test parser info", cm_debug.output[2])
-        self.assertIn("WARNING:root:Test root warning", cm_debug.output[3])
-
+        self.tool.configure_logging('DEBUG')
+        # Log messages using different loggers to test propagation
+        logging.getLogger('src.main').debug("Test main debug")
+        logging.getLogger('src.parsers').info("Test parser info")
+        logging.getLogger().warning("Test root warning")
+        
+        # Get the captured log output
+        log_output = log_capture.getvalue()
+        
+        # Check captured output
+        self.assertIn("INFO:src.main:Logging configured at DEBUG level", log_output)
+        self.assertIn("DEBUG:src.main:Test main debug", log_output)
+        self.assertIn("INFO:src.parsers:Test parser info", log_output)
+        self.assertIn("WARNING:root:Test root warning", log_output)
+        
+        # Clear the log capture for the next test
+        log_capture.truncate(0)
+        log_capture.seek(0)
+        
         # Test INFO level
-        with self.assertLogs(level='INFO') as cm_info:
-            self.tool.configure_logging('INFO')
-            logging.getLogger('src.main').debug("Test main debug") # Should not be captured
-            logging.getLogger('src.main').info("Test main info")
-            logging.getLogger().error("Test root error")
-
-        # Check captured output - only 2 logs are actually captured
-        self.assertEqual(len(cm_info.output), 2) # configure_logging + main info or root error
-        self.assertTrue(any("Logging configured at INFO level" in log for log in cm_info.output))
-        # At least one of these should be present
-        self.assertTrue(any("Test main info" in log for log in cm_info.output) or 
-                       any("Test root error" in log for log in cm_info.output))
-        # Verify debug message is NOT present
-        self.assertFalse(any("Test main debug" in log for log in cm_info.output))
+        self.tool.configure_logging('INFO')
+        logging.getLogger('src.main').debug("Test main debug") # Should not be captured at INFO level
+        logging.getLogger('src.main').info("Test main info")
+        logging.getLogger().error("Test root error")
+        
+        # Get the captured log output
+        log_output = log_capture.getvalue()
+        
+        # Check captured output
+        self.assertIn("INFO:src.main:Logging configured at INFO level", log_output)
+        self.assertIn("INFO:src.main:Test main info", log_output)
+        self.assertIn("ERROR:root:Test root error", log_output)
+        # Verify debug message is NOT present (since we're at INFO level)
+        self.assertNotIn("DEBUG:src.main:Test main debug", log_output)
+        
+        # Clean up
+        root_logger.removeHandler(handler)
 
 
     def test_error_handling_config(self):
@@ -265,7 +285,18 @@ output_file: output.tsv
         # Create directory for intermediate data
         os.makedirs(self.intermediate_dir, exist_ok=True)
 
-        # Configure logging to ensure logs are captured
+        # Create a StringIO object to capture log output
+        log_capture = StringIO()
+        # Create a handler that writes to the StringIO object
+        handler = logging.StreamHandler(log_capture)
+        formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
+        handler.setFormatter(formatter)
+        
+        # Add the handler to the logger
+        logger = logging.getLogger('src.main')
+        logger.addHandler(handler)
+        
+        # Configure logging
         self.tool.configure_logging('INFO')
         
         # Set up mock intermediate data and analysis summaries
@@ -300,7 +331,6 @@ output_file: output.tsv
         # Mock features dict needed for saving features_info
         self.tool.features = {'gene1': MagicMock(type='gene')}
 
-
         # Mock config - provide necessary file paths for saving config itself
         mock_config_data = {
             'gfa_file': self.gfa_file,
@@ -309,15 +339,21 @@ output_file: output.tsv
             'intermediate_dir': self.intermediate_dir,
             'save_intermediate': True # Assume this was set
         }
+        
         # Patch the config object within the tool instance
         with patch.object(self.tool.config, 'get_all', return_value=mock_config_data):
-             # Capture logs to check success message
-             with self.assertLogs(level='INFO') as cm:
-                  # Save the data
-                  self.tool.save_intermediate_data(self.intermediate_dir)
-
-        # Check log message - match the actual log format
-        self.assertTrue(any("Saved intermediate data" in log and self.intermediate_dir in log for log in cm.output))
+            # Save the data
+            self.tool.save_intermediate_data(self.intermediate_dir)
+        
+        # Get the captured log output
+        log_output = log_capture.getvalue()
+        
+        # Check log message - verify it contains the expected text
+        self.assertIn("Saved intermediate data", log_output)
+        self.assertIn(self.intermediate_dir, log_output)
+        
+        # Clean up
+        logger.removeHandler(handler)
 
         # Check that files were created
         input_files_path = os.path.join(self.intermediate_dir, 'input_files.json')
