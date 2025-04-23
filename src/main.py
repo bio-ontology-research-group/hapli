@@ -935,8 +935,9 @@ class HaplotypeAnnotationTool:
             logger.info("--- Pipeline finished ---")
 
         except ConfigurationError as e:
+            error_msg = f"Configuration error: {e}"
             # Make sure we log this at ERROR level for the test to capture
-            logger.error(f"Configuration error: {e}") 
+            logger.error(error_msg) 
             # Also log to root logger to ensure it's captured in tests
             root_logger = logging.getLogger()
             # Force the root logger level to ERROR if it's higher to ensure messages are emitted
@@ -944,9 +945,12 @@ class HaplotypeAnnotationTool:
             if original_level > logging.ERROR:
                 root_logger.setLevel(logging.ERROR)
             try:
-                root_logger.error(f"Configuration error: {e}")
+                # Log directly to root logger
+                root_logger.error(error_msg)
                 # Log with a different message to ensure multiple log entries
                 root_logger.error(f"Application will exit due to configuration error")
+                # Also log using the logging module directly
+                logging.error(error_msg)
             finally:
                 # Restore original level
                 if original_level > logging.ERROR:

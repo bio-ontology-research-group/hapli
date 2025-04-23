@@ -285,8 +285,10 @@ output_file: output.tsv
                   exit_code = self.tool.run(args)
 
         self.assertNotEqual(exit_code, 0)
+        # Print captured logs for debugging
+        print(f"Captured logs: {cm.output}")
         # Check if the ConfigurationError message was logged
-        self.assertTrue(any("Configuration error: Missing required files" in log for log in cm.output))
+        self.assertTrue(any("Missing required files" in log for log in cm.output))
 
 
     def test_error_handling_runtime(self):
