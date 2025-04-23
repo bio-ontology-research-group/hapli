@@ -109,8 +109,32 @@ class AlignmentDisplay:
         
         # Check if we have alignment visualization data
         if not alignment.aligned_query or not alignment.aligned_target or not alignment.alignment_indicator:
-            output.append("Detailed alignment visualization not available.")
-            return "\n".join(output)
+            # Generate a simple visualization if not available
+            if alignment.query_sequence and alignment.target_sequence:
+                # Create a simple visualization with the first 60 characters
+                q_len = min(60, len(alignment.query_sequence))
+                t_len = min(60, len(alignment.target_sequence))
+                
+                q_seq = alignment.query_sequence[:q_len]
+                t_seq = alignment.target_sequence[:t_len]
+                
+                # Create a simple match indicator
+                indicator = ""
+                for i in range(min(q_len, t_len)):
+                    if q_seq[i] == t_seq[i]:
+                        indicator += "|"
+                    else:
+                        indicator += "."
+                
+                output.append(f"{alignment.query_start:7d} {self._format_sequence(q_seq, 'query')}")
+                output.append(f"        {self._format_matches(indicator)}")
+                output.append(f"{alignment.target_start:7d} {self._format_sequence(t_seq, 'target')}")
+                output.append("")
+                
+                return "\n".join(output)
+            else:
+                output.append("Detailed alignment visualization not available.")
+                return "\n".join(output)
         
         # Format the alignment in chunks to fit the line width
         chunk_size = self.line_width - 10  # Leave room for position numbers
@@ -265,15 +289,16 @@ class AlignmentDisplay:
         # Add each alignment as a table row
         for i, aln in enumerate(alignments, 1):
             stats = aln.statistics
-            row = (
-                f"{i:3d} "
-                f"{aln.query_name[:15]:15s} "
-                f"{aln.target_name[:15]:15s} "
-                f"{stats.identity:.2%} "
-                f"{stats.coverage:.2%} "
-                f"{aln.score:8.1f} "
-                f"{stats.alignment_type.value:15s}"
-            )
+            
+            # Format each field with proper width
+            query_name = aln.query_name[:15].ljust(15)
+            target_name = aln.target_name[:15].ljust(15)
+            identity = f"{stats.identity:.2%}".ljust(10)
+            coverage = f"{stats.coverage:.2%}".ljust(10)
+            score = f"{aln.score:8.1f}"
+            aln_type = stats.alignment_type.value[:15].ljust(15)
+            
+            row = f"{i:3d} {query_name} {target_name} {identity} {coverage} {score} {aln_type}"
             output.append(row)
         
         return "\n".join(output)
