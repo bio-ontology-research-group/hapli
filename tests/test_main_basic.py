@@ -266,6 +266,12 @@ output_file: output.tsv
         # Configure logging first to ensure logs are captured
         self.tool.configure_logging('ERROR')
         
+        # Ensure root logger has a handler to capture logs
+        root_logger = logging.getLogger()
+        if not root_logger.handlers:
+            handler = logging.StreamHandler()
+            root_logger.addHandler(handler)
+        
         # Expect ConfigurationError during config.load()
         # Capture logs from the root logger
         with self.assertLogs(level='ERROR') as cm:
