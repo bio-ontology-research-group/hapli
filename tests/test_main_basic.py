@@ -190,11 +190,13 @@ output_file: output.tsv
         formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
         handler.setFormatter(formatter)
         
-        # Add the handler to the specific logger we want to capture
-        logger = logging.getLogger('src.main')
-        logger.addHandler(handler)
-        # Ensure the logger level is set appropriately
-        logger.setLevel(logging.DEBUG)
+        # Add the handler to the root logger to capture all logs
+        root_logger = logging.getLogger()
+        root_logger.addHandler(handler)
+        # Save original level to restore later
+        original_level = root_logger.level
+        # Ensure the root logger level is set to DEBUG to capture all logs
+        root_logger.setLevel(logging.DEBUG)
         
         # Test DEBUG level
         self.tool.configure_logging('DEBUG')
@@ -216,11 +218,17 @@ output_file: output.tsv
         log_capture.truncate(0)
         log_capture.seek(0)
         
-        # Reset the logger for the next test
-        logger = logging.getLogger('src.main')
-        logger.addHandler(handler)
+        # Clear the log capture for the next test
+        log_capture.truncate(0)
+        log_capture.seek(0)
+        
+        # Reset the root logger for the next test
+        root_logger = logging.getLogger()
+        # Ensure the handler is still attached
+        if handler not in root_logger.handlers:
+            root_logger.addHandler(handler)
         # Set appropriate level for INFO test
-        logger.setLevel(logging.INFO)
+        root_logger.setLevel(logging.INFO)
         
         # Test INFO level
         self.tool.configure_logging('INFO')
@@ -239,7 +247,10 @@ output_file: output.tsv
         self.assertNotIn("DEBUG:src.main:Test main debug", log_output)
         
         # Clean up
-        logger.removeHandler(handler)
+        root_logger = logging.getLogger()
+        root_logger.removeHandler(handler)
+        # Restore original level
+        root_logger.setLevel(original_level)
 
 
     def test_error_handling_config(self):
