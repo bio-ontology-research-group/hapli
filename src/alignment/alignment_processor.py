@@ -623,5 +623,3 @@ class AlignmentProcessor:
         except Exception as e:
             logger.error(f"Failed to export alignments to TSV: {e}", exc_info=True)
 
-```
-src/config.py
