@@ -191,7 +191,7 @@ class TestAlignmentProcessorWithMockData(unittest.TestCase):
             # Mock load_reference to avoid the actual alignment
             with patch.object(MinimapAligner, 'load_reference'):
                 # Run the alignment process
-                self.processor._align_parent_features(["path1"], ["gene"])
+                self.processor._align_parent_features(["path1"], ["gene"], min_identity=0.8, min_coverage=0.8)
                 
                 # Check if we got multiple alignments for the feature
                 self.assertIn("path1", self.processor.aligned_features)
@@ -222,7 +222,7 @@ class TestAlignmentProcessorWithMockData(unittest.TestCase):
             # Mock load_reference to avoid the actual alignment
             with patch.object(MinimapAligner, 'load_reference'):
                 # Run the alignment process
-                self.processor._align_parent_features(["path1"], ["gene"])
+                self.processor._align_parent_features(["path1"], ["gene"], min_identity=0.8, min_coverage=0.8)
                 
                 # Check if the feature was aligned with partial coordinates
                 self.assertIn("path1", self.processor.aligned_features)
@@ -244,7 +244,7 @@ class TestAlignmentProcessorWithMockData(unittest.TestCase):
             # Mock load_reference to avoid the actual alignment
             with patch.object(MinimapAligner, 'load_reference'):
                 # Run the alignment process
-                self.processor._align_parent_features(["path1"], ["gene"])
+                self.processor._align_parent_features(["path1"], ["gene"], min_identity=0.8, min_coverage=0.8)
                 
                 # Check if we got no alignments for the feature
                 self.assertIn("path1", self.processor.aligned_features)
