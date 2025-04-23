@@ -249,7 +249,7 @@ output_file: output.tsv
 
         self.assertNotEqual(exit_code, 0)
         # Check if the critical error message was logged
-        expected_log = f"A critical unexpected error occurred during the pipeline execution: {runtime_error_msg}"
+        expected_log = f"A critical unexpected error occurred: {runtime_error_msg}"
         self.assertTrue(any(expected_log in log for log in cm.output))
 
 
