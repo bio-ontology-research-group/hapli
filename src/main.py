@@ -935,7 +935,10 @@ class HaplotypeAnnotationTool:
             logger.info("--- Pipeline finished ---")
 
         except ConfigurationError as e:
-            logger.error(f"Configuration error: {e}") # Error should have been logged by load_config too
+            # Make sure we log this at ERROR level for the test to capture
+            logger.error(f"Configuration error: {e}") 
+            # Also log to root logger to ensure it's captured in tests
+            logging.error(f"Configuration error: {e}")
             exit_code = 1
         except Exception as e:
             logger.critical(f"A critical unexpected error occurred: {e}", exc_info=True)

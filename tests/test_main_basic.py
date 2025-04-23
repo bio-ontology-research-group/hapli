@@ -267,8 +267,8 @@ output_file: output.tsv
         self.tool.configure_logging('ERROR')
         
         # Expect ConfigurationError during config.load()
-        # Capture logs from the specific logger used in the tool
-        with self.assertLogs('src.main', level='ERROR') as cm:
+        # Capture logs from the root logger since that's what the tool uses
+        with self.assertLogs(level='ERROR') as cm:
              # Mock Config.load to raise the expected error
              with patch.object(Config, 'load', side_effect=ConfigurationError("Missing required files")):
                   exit_code = self.tool.run(args)
