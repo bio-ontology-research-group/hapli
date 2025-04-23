@@ -2,6 +2,7 @@
 Processor for the two-phase feature alignment strategy.
 """
 import logging
+import os
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 import networkx as nx
@@ -30,7 +31,7 @@ class AlignmentProcessor:
     It handles feature duplications and multiple alignments.
     """
 
-    def __init__(self, gfa_parser, gff_parser, fasta_parser, feature_graph: FeatureGraph, minimap_preset: str = "splice"):
+    def __init__(self, gfa_parser=None, gff_parser=None, fasta_parser=None, feature_graph=None, minimap_preset: str = "splice"):
         """
         Initialize the alignment processor with pre-loaded parsers and graph.
 
@@ -515,6 +516,42 @@ class AlignmentProcessor:
             Returns an empty list if the feature was not aligned to the path.
         """
         return self.aligned_features.get(path_id, {}).get(feature_id, [])
+        
+    def load_data(self, gfa_file: str, gff_file: str, fasta_file: str):
+        """
+        Load data from files into the processor.
+        
+        Args:
+            gfa_file: Path to GFA file
+            gff_file: Path to GFF3 file
+            fasta_file: Path to FASTA file
+        """
+        import os
+        from src.parsers.gfa_parser import GFAParser
+        from src.parsers.gff_parser import GFF3Parser
+        from src.parsers.fasta_parser import FastaParser
+        from src.parsers.feature_graph import FeatureGraph
+        
+        # Check if files exist
+        for file_path in [gfa_file, gff_file, fasta_file]:
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"File not found: {file_path}")
+        
+        # Initialize parsers
+        self.gfa_parser = GFAParser()
+        self.gff_parser = GFF3Parser()
+        self.fasta_parser = FastaParser()
+        
+        # Parse files
+        self.gfa_parser.parse(gfa_file)
+        gff_records = self.gff_parser.parse(gff_file)
+        self.fasta_parser.parse(fasta_file)
+        
+        # Build feature graph
+        self.feature_graph = FeatureGraph()
+        self.feature_graph.build_from_gff(gff_records)
+        
+        logger.info(f"Loaded data from GFA: {gfa_file}, GFF: {gff_file}, FASTA: {fasta_file}")
 
     def export_alignments_tsv(self, output_file: str):
         """

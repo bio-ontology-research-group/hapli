@@ -111,16 +111,23 @@ class TestAlignmentProcessorWithMockData(unittest.TestCase):
     
     def setUp(self):
         """Set up mock test data."""
-        self.processor = AlignmentProcessor()
+        # Create mocks first
+        gfa_parser_mock = MagicMock()
+        gff_parser_mock = MagicMock()
+        fasta_parser_mock = MagicMock()
+        feature_graph_mock = MagicMock()
+        
+        # Initialize with mocks
+        self.processor = AlignmentProcessor(
+            gfa_parser=gfa_parser_mock,
+            gff_parser=gff_parser_mock,
+            fasta_parser=fasta_parser_mock,
+            feature_graph=feature_graph_mock,
+            minimap_preset="map-ont"
+        )
         
         # Use a test-friendly aligner
         self.processor.aligner = MinimapAligner(preset="map-ont", k=5)
-        
-        # Mock parsers and data
-        self.processor.gfa_parser = MagicMock()
-        self.processor.gff_parser = MagicMock()
-        self.processor.fasta_parser = MagicMock()
-        self.processor.feature_graph = MagicMock()
         
         # Create mock path sequences
         self.processor.path_sequences = {
@@ -339,7 +346,9 @@ class TestAlignmentProcessorWithSyntheticData(unittest.TestCase):
         
         # Load the data
         try:
-            self.processor.load_data(self.gfa_file, self.gff_file, self.fasta_file)
+            # Mock the feature graph build_from_gff method to avoid errors
+            with patch('src.parsers.feature_graph.FeatureGraph.build_from_gff'):
+                self.processor.load_data(self.gfa_file, self.gff_file, self.fasta_file)
             self.path_ids = ["path1", "path2"]
         except Exception as e:
             self.fail(f"Failed to load synthetic test data: {e}")
