@@ -3,6 +3,7 @@
 Script to convert VCF files to GFA format using vg.
 Allows converting multiple VCF files either jointly or separately.
 Includes fail-fast error handling and resume capability.
+Intermediate .vg files are kept for debugging.
 """
 
 import argparse
@@ -46,7 +47,7 @@ def check_prerequisites():
 
 def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, memory_gb=16, threads=None):
     """
-    Convert VCF to GFA using the vg toolkit.
+    Convert VCF to GFA using the vg toolkit. Intermediate .vg file is kept.
 
     Args:
         vcf_paths: List of VCF file paths (bgzipped and indexed).
@@ -59,205 +60,205 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
     Returns:
         True if conversion was successful, False otherwise.
     """
-    temp_dir_base = None # Initialize to prevent UnboundLocalError in finally
+    output_path_obj = Path(output_path)
+    vg_path_obj = output_path_obj.with_suffix('.vg') # Define persistent path for .vg file
+
     try:
-        # Ensure output directory exists before potentially creating temp files or output
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        # Ensure output directory exists
+        output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Intermediate .vg file will be saved to: {vg_path_obj}")
 
-        # Create temporary directory for intermediate files
-        # Use a directory relative to the output path for better cleanup/permissions
-        temp_dir_base = Path(output_path).parent / "tmp_vg_convert"
-        temp_dir_base.mkdir(exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix=f"{Path(output_path).stem}_", dir=temp_dir_base) as temp_dir:
-            logger.info(f"Using temporary directory: {temp_dir}")
-            # Construct vg command for multiple VCFs
-            vcf_args = []
-            for vcf_path in vcf_paths:
-                # Check VCF index exists
-                tbi_path = Path(f"{vcf_path}.tbi")
-                if not tbi_path.exists():
-                     logger.error(f"Required index file (.tbi) not found for {vcf_path}")
-                     return False
-                vcf_args.extend(['-v', str(vcf_path)])
-
-            # Check reference index exists
-            fai_path = Path(f"{reference_path}.fai")
-            if not fai_path.exists():
-                 logger.warning(f"Reference index file (.fai) not found for {reference_path}. Attempting to generate it...")
-                 try:
-                     samtools_exe = shutil.which('samtools')
-                     if not samtools_exe:
-                          logger.error("samtools command not found in PATH. Cannot generate FASTA index.")
-                          return False
-                     subprocess.run([samtools_exe, 'faidx', str(reference_path)], check=True, capture_output=True)
-                     logger.info(f"Successfully generated index for {reference_path}")
-                 except (subprocess.CalledProcessError) as idx_err:
-                     logger.error(f"Failed to generate FASTA index for {reference_path}. 'samtools faidx' failed.")
-                     logger.error(f"Error details: {idx_err.stderr.decode(errors='replace') if idx_err.stderr else 'No stderr'}")
-                     return False
-
-
-            region_args = []
-            if region:
-                # vg construct expects region like 'chr:start-end' or just 'chr'
-                region_args = ['-R', region]
-
-            # Determine number of threads
-            num_threads = threads if threads is not None else (os.cpu_count() or 8)
-
-            # Step 1: Construct the graph using vg construct
-            vg_path = os.path.join(temp_dir, "graph.vg")
-            vg_exe = shutil.which('vg') # Find vg executable
-            if not vg_exe:
-                 logger.error("vg command not found in PATH.")
+        # Construct vg command for multiple VCFs
+        vcf_args = []
+        for vcf_path in vcf_paths:
+            # Check VCF index exists
+            tbi_path = Path(f"{vcf_path}.tbi")
+            if not tbi_path.exists():
+                 logger.error(f"Required index file (.tbi) not found for {vcf_path}")
                  return False
+            vcf_args.extend(['-v', str(vcf_path)])
 
-            construct_cmd = [
-                vg_exe, 'construct',
-                '-r', str(reference_path),
-                *vcf_args,
-                '-m', str(memory_gb), # Memory in GB - vg construct expects an integer value
-                *region_args,
-                '-t', str(num_threads),
-                # '-a' # Add -a if you want all alleles included, otherwise it's ref+alt
-                # Consider adding --validate to check graph structure
-            ]
-
-            logger.info(f"Running vg construct: {' '.join(construct_cmd)} > {vg_path}")
-            # Redirect stdout to the vg_path file
-            try:
-                with open(vg_path, 'wb') as vg_file: # Write vg output as bytes
-                    result = subprocess.run(construct_cmd, stdout=vg_file, stderr=subprocess.PIPE, check=False) # Capture stderr as bytes
-                    # Check return code explicitly
-                    if result.returncode != 0:
-                         # Decode stderr for logging, replacing errors
-                         stderr_decoded = result.stderr.decode(errors='replace') if result.stderr else ""
-                         raise subprocess.CalledProcessError(result.returncode, construct_cmd, output=None, stderr=stderr_decoded)
-                    # Log stderr even on success (might contain warnings)
-                    if result.stderr:
-                        logger.info(f"vg construct stderr: {result.stderr.decode(errors='replace').strip()}")
-
-            except subprocess.CalledProcessError as e:
-                 logger.error(f"vg construct command failed: {' '.join(e.cmd)}")
-                 logger.error(f"Return code: {e.returncode}")
-                 # stderr is already decoded in the raised exception if possible
-                 if e.stderr:
-                     logger.error(f"stderr: {e.stderr.strip()}")
-                 # Attempt to provide common troubleshooting tips based on error
-                 if "variant/reference sequence mismatch" in str(e.stderr):
-                     logger.error("Potential Issue: VCF coordinates might not match the reference FASTA assembly version.")
-                 elif "index file" in str(e.stderr) and "not found" in str(e.stderr):
-                     logger.error("Potential Issue: Ensure VCF files are bgzipped and indexed (.tbi) and reference FASTA is indexed (.fai).")
-                 return False # Exit function on command failure
-
-            # Check if the vg file was created and is not empty
-            if not os.path.exists(vg_path) or os.path.getsize(vg_path) == 0:
-                logger.error(f"vg construct failed to create a valid graph file: {vg_path}")
-                # Attempt to log stderr if available from a previous failure capture
-                if 'result' in locals() and hasattr(result, 'stderr') and result.stderr:
-                     logger.error(f"vg construct stderr: {result.stderr.decode(errors='replace').strip()}")
-                return False
-
-            # Step 1.5: Validate the intermediate graph
-            validate_cmd = [vg_exe, 'validate', vg_path]
-            logger.info(f"Running vg validate: {' '.join(validate_cmd)}")
-            try:
-                result_validate = subprocess.run(validate_cmd, capture_output=True, check=False) # Capture output
-                # Decode stderr for logging, replacing errors
-                stderr_decoded = result_validate.stderr.decode(errors='replace') if result_validate.stderr else ""
-                if result_validate.returncode != 0:
-                    logger.error(f"vg validate command failed for {vg_path}")
-                    logger.error(f"Return code: {result_validate.returncode}")
-                    if stderr_decoded:
-                        logger.error(f"stderr: {stderr_decoded.strip()}")
-                    # Optionally log stdout as well if it contains useful info on failure
-                    stdout_decoded = result_validate.stdout.decode(errors='replace') if result_validate.stdout else ""
-                    if stdout_decoded:
-                         logger.error(f"stdout: {stdout_decoded.strip()}")
-                    return False # Exit if validation fails
-                else:
-                    logger.info(f"Intermediate graph {vg_path} validated successfully.")
-                    if stderr_decoded: # Log warnings from validate even on success
-                         logger.info(f"vg validate stderr: {stderr_decoded.strip()}")
-
-            except Exception as e:
-                 logger.error(f"An unexpected error occurred during vg validate: {e}")
+        # Check reference index exists
+        fai_path = Path(f"{reference_path}.fai")
+        if not fai_path.exists():
+             logger.warning(f"Reference index file (.fai) not found for {reference_path}. Attempting to generate it...")
+             try:
+                 samtools_exe = shutil.which('samtools')
+                 if not samtools_exe:
+                      logger.error("samtools command not found in PATH. Cannot generate FASTA index.")
+                      return False
+                 subprocess.run([samtools_exe, 'faidx', str(reference_path)], check=True, capture_output=True)
+                 logger.info(f"Successfully generated index for {reference_path}")
+             except (subprocess.CalledProcessError) as idx_err:
+                 logger.error(f"Failed to generate FASTA index for {reference_path}. 'samtools faidx' failed.")
+                 logger.error(f"Error details: {idx_err.stderr.decode(errors='replace') if idx_err.stderr else 'No stderr'}")
                  return False
 
 
-            # Step 2: Convert to GFA using vg view
-            gfa_cmd = [
-                vg_exe, 'view',
-                vg_path,
-                '-F', '-g',  # Output in GFA format
-                # Consider adding --validate to check GFA structure
-            ]
+        region_args = []
+        if region:
+            # vg construct expects region like 'chr:start-end' or just 'chr'
+            region_args = ['-R', region]
 
-            logger.info(f"Running vg view: {' '.join(gfa_cmd)} > {output_path}")
-            # Redirect stdout to the final output_path GFA file
-            try:
-                # Write stdout directly as bytes, capture stderr as bytes
-                with open(output_path, 'wb') as gfa_file:
-                     result_view = subprocess.run(gfa_cmd, stdout=gfa_file, stderr=subprocess.PIPE, check=False) # text=False is default
+        # Determine number of threads
+        num_threads = threads if threads is not None else (os.cpu_count() or 8)
+
+        # Step 1: Construct the graph using vg construct
+        vg_exe = shutil.which('vg') # Find vg executable
+        if not vg_exe:
+             logger.error("vg command not found in PATH.")
+             return False
+
+        construct_cmd = [
+            vg_exe, 'construct',
+            '-r', str(reference_path),
+            *vcf_args,
+            '-m', str(memory_gb), # Memory in GB - vg construct expects an integer value
+            *region_args,
+            '-t', str(num_threads),
+            # '-a' # Add -a if you want all alleles included, otherwise it's ref+alt
+            # Consider adding --validate to check graph structure
+        ]
+
+        logger.info(f"Running vg construct: {' '.join(construct_cmd)} > {vg_path_obj}")
+        # Redirect stdout to the persistent vg_path_obj file
+        try:
+            with open(vg_path_obj, 'wb') as vg_file: # Write vg output as bytes
+                result = subprocess.run(construct_cmd, stdout=vg_file, stderr=subprocess.PIPE, check=False) # Capture stderr as bytes
+                # Check return code explicitly
+                if result.returncode != 0:
                      # Decode stderr for logging, replacing errors
-                     stderr_decoded = result_view.stderr.decode(errors='replace') if result_view.stderr else ""
-                     if result_view.returncode != 0:
-                          raise subprocess.CalledProcessError(result_view.returncode, gfa_cmd, output=None, stderr=stderr_decoded)
-                     if stderr_decoded:
-                         logger.info(f"vg view stderr: {stderr_decoded.strip()}") # Log non-error stderr for info
+                     stderr_decoded = result.stderr.decode(errors='replace') if result.stderr else ""
+                     raise subprocess.CalledProcessError(result.returncode, construct_cmd, output=None, stderr=stderr_decoded)
+                # Log stderr even on success (might contain warnings)
+                if result.stderr:
+                    logger.info(f"vg construct stderr: {result.stderr.decode(errors='replace').strip()}")
 
-            except subprocess.CalledProcessError as e:
-                 logger.error(f"vg view command failed: {' '.join(e.cmd)}")
-                 logger.error(f"Return code: {e.returncode}")
-                 # stderr is already decoded in the raised exception if possible
-                 if e.stderr:
-                     logger.error(f"stderr: {e.stderr.strip()}")
-                 # Clean up potentially incomplete output file
-                 if os.path.exists(output_path):
-                     os.remove(output_path)
-                     logger.info(f"Removed potentially incomplete output file: {output_path}")
-                 return False # Exit function on command failure
+        except subprocess.CalledProcessError as e:
+             logger.error(f"vg construct command failed: {' '.join(e.cmd)}")
+             logger.error(f"Return code: {e.returncode}")
+             # stderr is already decoded in the raised exception if possible
+             if e.stderr:
+                 logger.error(f"stderr: {e.stderr.strip()}")
+             # Attempt to provide common troubleshooting tips based on error
+             if "variant/reference sequence mismatch" in str(e.stderr):
+                 logger.error("Potential Issue: VCF coordinates might not match the reference FASTA assembly version.")
+             elif "index file" in str(e.stderr) and "not found" in str(e.stderr):
+                 logger.error("Potential Issue: Ensure VCF files are bgzipped and indexed (.tbi) and reference FASTA is indexed (.fai).")
+             # Clean up potentially incomplete .vg file on construct error
+             if vg_path_obj.exists():
+                 vg_path_obj.unlink()
+                 logger.info(f"Removed potentially incomplete intermediate file: {vg_path_obj}")
+             return False # Exit function on command failure
+
+        # Check if the vg file was created and is not empty
+        if not vg_path_obj.exists() or vg_path_obj.stat().st_size == 0:
+            logger.error(f"vg construct failed to create a valid graph file: {vg_path_obj}")
+            # Attempt to log stderr if available from a previous failure capture
+            if 'result' in locals() and hasattr(result, 'stderr') and result.stderr:
+                 logger.error(f"vg construct stderr: {result.stderr.decode(errors='replace').strip()}")
+            return False
+
+        # Step 1.5: Validate the intermediate graph
+        validate_cmd = [vg_exe, 'validate', str(vg_path_obj)]
+        logger.info(f"Running vg validate: {' '.join(validate_cmd)}")
+        try:
+            result_validate = subprocess.run(validate_cmd, capture_output=True, check=False) # Capture output
+            # Decode stderr for logging, replacing errors
+            stderr_decoded = result_validate.stderr.decode(errors='replace') if result_validate.stderr else ""
+            if result_validate.returncode != 0:
+                logger.error(f"vg validate command failed for {vg_path_obj}")
+                logger.error(f"Return code: {result_validate.returncode}")
+                if stderr_decoded:
+                    logger.error(f"stderr: {stderr_decoded.strip()}")
+                # Optionally log stdout as well if it contains useful info on failure
+                stdout_decoded = result_validate.stdout.decode(errors='replace') if result_validate.stdout else ""
+                if stdout_decoded:
+                     logger.error(f"stdout: {stdout_decoded.strip()}")
+                # Keep the .vg file even if validation fails, for debugging
+                logger.warning(f"Intermediate graph {vg_path_obj} failed validation, but will be kept for debugging.")
+                return False # Exit if validation fails
+            else:
+                logger.info(f"Intermediate graph {vg_path_obj} validated successfully.")
+                if stderr_decoded: # Log warnings from validate even on success
+                     logger.info(f"vg validate stderr: {stderr_decoded.strip()}")
+
+        except Exception as e:
+             logger.error(f"An unexpected error occurred during vg validate: {e}")
+             # Keep the .vg file for debugging
+             logger.warning(f"Intermediate graph {vg_path_obj} might be invalid, keeping for debugging.")
+             return False
 
 
-            # Check if the GFA file was created and is not empty
-            if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-                 logger.error(f"vg view failed to create a valid GFA file: {output_path}")
-                 if 'result_view' in locals() and hasattr(result_view, 'stderr') and result_view.stderr:
-                     logger.error(f"vg view stderr: {result_view.stderr.decode(errors='replace').strip()}")
-                 # Clean up potentially incomplete output file
-                 if os.path.exists(output_path):
-                     os.remove(output_path)
-                     logger.info(f"Removed empty output file: {output_path}")
-                 return False
+        # Step 2: Convert to GFA using vg view
+        gfa_cmd = [
+            vg_exe, 'view',
+            str(vg_path_obj), # Use the persistent path
+            '-F', '-g',       # Output in GFA format
+        ]
 
-            logger.info(f"Successfully created GFA file: {output_path}")
-            return True
+        logger.info(f"Running vg view: {' '.join(gfa_cmd)} > {output_path_obj}")
+        # Redirect stdout to the final output_path GFA file
+        try:
+            # Write stdout directly as bytes, capture stderr as bytes
+            with open(output_path_obj, 'wb') as gfa_file:
+                 result_view = subprocess.run(gfa_cmd, stdout=gfa_file, stderr=subprocess.PIPE, check=False) # text=False is default
+                 # Decode stderr for logging, replacing errors
+                 stderr_decoded = result_view.stderr.decode(errors='replace') if result_view.stderr else ""
+                 if result_view.returncode != 0:
+                      raise subprocess.CalledProcessError(result_view.returncode, gfa_cmd, output=None, stderr=stderr_decoded)
+                 if stderr_decoded:
+                     logger.info(f"vg view stderr: {stderr_decoded.strip()}") # Log non-error stderr for info
+
+        except subprocess.CalledProcessError as e:
+             logger.error(f"vg view command failed: {' '.join(e.cmd)}")
+             logger.error(f"Return code: {e.returncode}")
+             # stderr is already decoded in the raised exception if possible
+             if e.stderr:
+                 logger.error(f"stderr: {e.stderr.strip()}")
+             # Clean up potentially incomplete output file
+             if output_path_obj.exists():
+                 output_path_obj.unlink()
+                 logger.info(f"Removed potentially incomplete output file: {output_path_obj}")
+             # Keep the .vg file for debugging even if view fails
+             logger.warning(f"vg view failed, keeping intermediate graph {vg_path_obj} for debugging.")
+             return False # Exit function on command failure
+
+
+        # Check if the GFA file was created and is not empty
+        if not output_path_obj.exists() or output_path_obj.stat().st_size == 0:
+             logger.error(f"vg view failed to create a valid GFA file: {output_path_obj}")
+             if 'result_view' in locals() and hasattr(result_view, 'stderr') and result_view.stderr:
+                 logger.error(f"vg view stderr: {result_view.stderr.decode(errors='replace').strip()}")
+             # Clean up potentially incomplete output file
+             if output_path_obj.exists():
+                 output_path_obj.unlink()
+                 logger.info(f"Removed empty output file: {output_path_obj}")
+             # Keep the .vg file for debugging
+             logger.warning(f"vg view created an empty file, keeping intermediate graph {vg_path_obj} for debugging.")
+             return False
+
+        logger.info(f"Successfully created GFA file: {output_path_obj}")
+        # Optionally remove the .vg file on complete success? For now, keep it.
+        # logger.info(f"Intermediate graph kept at: {vg_path_obj}")
+        return True
 
     except Exception as e:
         logger.error(f"An unexpected error occurred during VCF to GFA conversion for output {output_path}: {e}")
         import traceback
         logger.error(traceback.format_exc())
         # Clean up potentially incomplete output file
-        if 'output_path' in locals() and os.path.exists(output_path):
-             # Check if it was created by this function run or existed before
-             # This is tricky, maybe just attempt removal if size is 0 or it was touched recently?
-             # For simplicity, let's remove if it exists after an error here.
+        if 'output_path_obj' in locals() and output_path_obj.exists():
              try:
-                 os.remove(output_path)
-                 logger.info(f"Removed potentially incomplete output file due to error: {output_path}")
+                 output_path_obj.unlink()
+                 logger.info(f"Removed potentially incomplete output file due to error: {output_path_obj}")
              except OSError as rm_err:
-                 logger.warning(f"Could not remove potentially incomplete file {output_path}: {rm_err}")
+                 logger.warning(f"Could not remove potentially incomplete file {output_path_obj}: {rm_err}")
+        # Keep the .vg file if it exists
+        if 'vg_path_obj' in locals() and vg_path_obj.exists():
+             logger.warning(f"Unexpected error occurred, keeping intermediate graph {vg_path_obj} for debugging.")
         return False
-    finally:
-         # Clean up the base temporary directory if it exists and is empty
-         if temp_dir_base and temp_dir_base.exists():
-             try:
-                 # Check if empty before removing
-                 if not any(temp_dir_base.iterdir()):
-                     temp_dir_base.rmdir()
-                     logger.debug(f"Removed empty base temporary directory: {temp_dir_base}")
-             except OSError as e:
-                 logger.warning(f"Could not remove base temporary directory {temp_dir_base}: {e}")
+    # No finally block needed to clean up temp dir
 
 
 def main():
