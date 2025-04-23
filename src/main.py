@@ -12,6 +12,7 @@ import logging
 import argparse
 import json
 import time
+import networkx as nx
 from typing import Dict, List, Any, Optional, Tuple, Set
 
 # Configuration and Core
