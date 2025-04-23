@@ -941,28 +941,10 @@ class HaplotypeAnnotationTool:
             # Log to module logger
             logger.error(error_msg)
             
-            # Get root logger and ensure it's configured to show ERROR level
-            root_logger = logging.getLogger()
-            original_level = root_logger.level
+            # Log directly to the root logger to ensure it's captured in tests
+            logging.error(error_msg)
+            logging.error(f"Application will exit due to configuration error")
             
-            # Temporarily set root logger to ERROR level if needed
-            if original_level > logging.ERROR:
-                root_logger.setLevel(logging.ERROR)
-                
-            try:
-                # Log directly to root logger with the full error message
-                root_logger.error(error_msg)
-                
-                # Log the raw exception text directly to ensure it appears in logs
-                root_logger.error(f"Missing required files {str(e)}")
-                
-                # Log additional message
-                root_logger.error("Application will exit due to configuration error")
-            finally:
-                # Restore original level
-                if original_level > logging.ERROR:
-                    root_logger.setLevel(original_level)
-                    
             exit_code = 1
         except Exception as e:
             logger.critical(f"A critical unexpected error occurred: {e}", exc_info=True)
