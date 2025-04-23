@@ -210,7 +210,8 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
         gfa_cmd = [
             vg_exe, 'view',
             str(vg_path_obj), # Use the persistent path
-            '-F', '-g',       # Output in GFA format
+            # '-F', # *** REMOVED: Input is VG, not GFA ***
+            '-g',       # Output in GFA format
         ]
 
         logger.info(f"Running vg view: {' '.join(gfa_cmd)} > {output_path_obj}")
