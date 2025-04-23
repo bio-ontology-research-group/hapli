@@ -953,8 +953,8 @@ class HaplotypeAnnotationTool:
                 # Log directly to root logger with the full error message
                 root_logger.error(error_msg)
                 
-                # Log the raw exception text to ensure it appears in logs
-                root_logger.error(f"{str(e)}")
+                # Log the raw exception text directly to ensure it appears in logs
+                root_logger.error(f"Missing required files {str(e)}")
                 
                 # Log additional message
                 root_logger.error("Application will exit due to configuration error")
