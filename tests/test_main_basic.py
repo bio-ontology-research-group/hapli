@@ -271,8 +271,6 @@ output_file: output.tsv
         with self.assertLogs(level='ERROR') as cm:
              # Mock Config.load to raise the expected error
              with patch.object(Config, 'load', side_effect=ConfigurationError("Missing required files")):
-                  # Force a log message to ensure assertLogs passes
-                  logging.error("Configuration error: Missing required files")
                   exit_code = self.tool.run(args)
 
         self.assertNotEqual(exit_code, 0)
