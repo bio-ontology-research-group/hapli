@@ -59,6 +59,7 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
     Returns:
         True if conversion was successful, False otherwise.
     """
+    temp_dir_base = None # Initialize to prevent UnboundLocalError in finally
     try:
         # Ensure output directory exists before potentially creating temp files or output
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -92,7 +93,7 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
                      logger.info(f"Successfully generated index for {reference_path}")
                  except (subprocess.CalledProcessError) as idx_err:
                      logger.error(f"Failed to generate FASTA index for {reference_path}. 'samtools faidx' failed.")
-                     logger.error(f"Error details: {idx_err.stderr.decode() if idx_err.stderr else 'No stderr'}")
+                     logger.error(f"Error details: {idx_err.stderr.decode(errors='replace') if idx_err.stderr else 'No stderr'}")
                      return False
 
 
@@ -125,27 +126,27 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
             logger.info(f"Running vg construct: {' '.join(construct_cmd)} > {vg_path}")
             # Redirect stdout to the vg_path file
             try:
-                with open(vg_path, 'w') as vg_file:
-                    result = subprocess.run(construct_cmd, stdout=vg_file, stderr=subprocess.PIPE, text=True, check=False) # Use check=False initially
+                with open(vg_path, 'wb') as vg_file: # Write vg output as bytes
+                    result = subprocess.run(construct_cmd, stdout=vg_file, stderr=subprocess.PIPE, check=False) # Capture stderr as bytes
                     # Check return code explicitly
                     if result.returncode != 0:
-                         # Raise CalledProcessError manually to trigger the except block
-                         raise subprocess.CalledProcessError(result.returncode, construct_cmd, output=result.stdout, stderr=result.stderr)
+                         # Decode stderr for logging, replacing errors
+                         stderr_decoded = result.stderr.decode(errors='replace') if result.stderr else ""
+                         raise subprocess.CalledProcessError(result.returncode, construct_cmd, output=None, stderr=stderr_decoded)
                     # Log stderr even on success (might contain warnings)
                     if result.stderr:
-                        logger.info(f"vg construct stderr: {result.stderr.strip()}")
+                        logger.info(f"vg construct stderr: {result.stderr.decode(errors='replace').strip()}")
 
             except subprocess.CalledProcessError as e:
                  logger.error(f"vg construct command failed: {' '.join(e.cmd)}")
                  logger.error(f"Return code: {e.returncode}")
-                 if e.stdout: # Should be empty as it was redirected
-                     logger.error(f"stdout: {e.stdout.strip()}")
+                 # stderr is already decoded in the raised exception if possible
                  if e.stderr:
                      logger.error(f"stderr: {e.stderr.strip()}")
                  # Attempt to provide common troubleshooting tips based on error
-                 if "variant/reference sequence mismatch" in e.stderr:
+                 if "variant/reference sequence mismatch" in str(e.stderr):
                      logger.error("Potential Issue: VCF coordinates might not match the reference FASTA assembly version.")
-                 elif "index file" in e.stderr and "not found" in e.stderr:
+                 elif "index file" in str(e.stderr) and "not found" in str(e.stderr):
                      logger.error("Potential Issue: Ensure VCF files are bgzipped and indexed (.tbi) and reference FASTA is indexed (.fai).")
                  return False # Exit function on command failure
 
@@ -154,7 +155,7 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
                 logger.error(f"vg construct failed to create a valid graph file: {vg_path}")
                 # Attempt to log stderr if available from a previous failure capture
                 if 'result' in locals() and hasattr(result, 'stderr') and result.stderr:
-                     logger.error(f"vg construct stderr: {result.stderr.strip()}")
+                     logger.error(f"vg construct stderr: {result.stderr.decode(errors='replace').strip()}")
                 return False
 
             # Step 2: Convert to GFA using vg view
@@ -168,18 +169,20 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
             logger.info(f"Running vg view: {' '.join(gfa_cmd)} > {output_path}")
             # Redirect stdout to the final output_path GFA file
             try:
-                with open(output_path, 'w') as gfa_file:
-                     result_view = subprocess.run(gfa_cmd, stdout=gfa_file, stderr=subprocess.PIPE, text=True, check=False) # Use check=False
+                # Write stdout directly as bytes, capture stderr as bytes
+                with open(output_path, 'wb') as gfa_file:
+                     result_view = subprocess.run(gfa_cmd, stdout=gfa_file, stderr=subprocess.PIPE, check=False) # text=False is default
+                     # Decode stderr for logging, replacing errors
+                     stderr_decoded = result_view.stderr.decode(errors='replace') if result_view.stderr else ""
                      if result_view.returncode != 0:
-                          raise subprocess.CalledProcessError(result_view.returncode, gfa_cmd, output=result_view.stdout, stderr=result_view.stderr)
-                     if result_view.stderr:
-                         logger.info(f"vg view stderr: {result_view.stderr.strip()}") # Log non-error stderr for info
+                          raise subprocess.CalledProcessError(result_view.returncode, gfa_cmd, output=None, stderr=stderr_decoded)
+                     if stderr_decoded:
+                         logger.info(f"vg view stderr: {stderr_decoded.strip()}") # Log non-error stderr for info
 
             except subprocess.CalledProcessError as e:
                  logger.error(f"vg view command failed: {' '.join(e.cmd)}")
                  logger.error(f"Return code: {e.returncode}")
-                 if e.stdout: # Should be empty as it was redirected
-                     logger.error(f"stdout: {e.stdout.strip()}")
+                 # stderr is already decoded in the raised exception if possible
                  if e.stderr:
                      logger.error(f"stderr: {e.stderr.strip()}")
                  # Clean up potentially incomplete output file
@@ -193,7 +196,7 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
             if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
                  logger.error(f"vg view failed to create a valid GFA file: {output_path}")
                  if 'result_view' in locals() and hasattr(result_view, 'stderr') and result_view.stderr:
-                     logger.error(f"vg view stderr: {result_view.stderr.strip()}")
+                     logger.error(f"vg view stderr: {result_view.stderr.decode(errors='replace').strip()}")
                  # Clean up potentially incomplete output file
                  if os.path.exists(output_path):
                      os.remove(output_path)
@@ -220,7 +223,7 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
         return False
     finally:
          # Clean up the base temporary directory if it exists and is empty
-         if 'temp_dir_base' in locals() and temp_dir_base.exists():
+         if temp_dir_base and temp_dir_base.exists():
              try:
                  # Check if empty before removing
                  if not any(temp_dir_base.iterdir()):
