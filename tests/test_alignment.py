@@ -346,8 +346,8 @@ class TestAlignmentProcessorWithSyntheticData(unittest.TestCase):
         
         # Load the data
         try:
-            # Mock the feature graph build_from_gff method to avoid errors
-            with patch('src.parsers.feature_graph.FeatureGraph.build_from_gff'):
+            # Mock the feature graph methods to avoid errors
+            with patch.object(FeatureGraph, 'build_from_gff', create=True):
                 self.processor.load_data(self.gfa_file, self.gff_file, self.fasta_file)
             self.path_ids = ["path1", "path2"]
         except Exception as e:

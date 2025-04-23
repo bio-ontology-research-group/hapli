@@ -554,7 +554,13 @@ class AlignmentProcessor:
         
         # Build feature graph
         self.feature_graph = FeatureGraph()
-        self.feature_graph.build_from_gff(gff_records)
+        # Use the appropriate method to build the graph
+        if hasattr(self.feature_graph, 'build_from_gff'):
+            self.feature_graph.build_from_gff(gff_records)
+        elif hasattr(self.feature_graph, 'build_graph'):
+            self.feature_graph.build_graph(gff_records)
+        else:
+            logger.warning("FeatureGraph has no build method, graph will be empty")
         
         logger.info(f"Loaded data from GFA: {gfa_file}, GFF: {gff_file}, FASTA: {fasta_file}")
 
