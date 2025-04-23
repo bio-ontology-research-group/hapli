@@ -302,7 +302,43 @@ class AlignmentResult:
         - aligned_target: The target sequence with gaps
         - alignment_indicator: Shows matches (|), mismatches (.), and gaps (space)
         """
-        if not self.query_sequence or not self.target_sequence or not self.cigar_operations:
+        if not self.query_sequence or not self.target_sequence:
+            return
+            
+        # For SNP alignments with just an 'M' operation, we need to create a simple visualization
+        if len(self.cigar_operations) == 1 and self.cigar_operations[0].operation == 'M':
+            q_segment = self.query_sequence[self.query_start:self.query_end]
+            t_segment = self.target_sequence[self.target_start:self.target_end]
+            
+            # Create match indicators
+            indicator = []
+            for q, t in zip(q_segment, t_segment):
+                if q == t:
+                    indicator.append('|')  # Match
+                else:
+                    indicator.append('.')  # Mismatch
+            
+            self.aligned_query = q_segment
+            self.aligned_target = t_segment
+            self.alignment_indicator = ''.join(indicator)
+            return
+            
+        # For more complex alignments with multiple operations
+        if not self.cigar_operations:
+            # If no CIGAR operations, create a simple visualization
+            length = min(len(self.query_sequence), len(self.target_sequence))
+            self.aligned_query = self.query_sequence[:length]
+            self.aligned_target = self.target_sequence[:length]
+            
+            # Create match indicators
+            indicator = []
+            for q, t in zip(self.aligned_query, self.aligned_target):
+                if q == t:
+                    indicator.append('|')  # Match
+                else:
+                    indicator.append('.')  # Mismatch
+            
+            self.alignment_indicator = ''.join(indicator)
             return
         
         query_aligned = []
