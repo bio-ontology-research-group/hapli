@@ -190,9 +190,11 @@ output_file: output.tsv
         formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
         handler.setFormatter(formatter)
         
-        # Add the handler to the root logger
-        root_logger = logging.getLogger()
-        root_logger.addHandler(handler)
+        # Add the handler to the specific logger we want to capture
+        logger = logging.getLogger('src.main')
+        logger.addHandler(handler)
+        # Ensure the logger level is set appropriately
+        logger.setLevel(logging.DEBUG)
         
         # Test DEBUG level
         self.tool.configure_logging('DEBUG')
@@ -214,6 +216,12 @@ output_file: output.tsv
         log_capture.truncate(0)
         log_capture.seek(0)
         
+        # Reset the logger for the next test
+        logger = logging.getLogger('src.main')
+        logger.addHandler(handler)
+        # Set appropriate level for INFO test
+        logger.setLevel(logging.INFO)
+        
         # Test INFO level
         self.tool.configure_logging('INFO')
         logging.getLogger('src.main').debug("Test main debug") # Should not be captured at INFO level
@@ -231,7 +239,7 @@ output_file: output.tsv
         self.assertNotIn("DEBUG:src.main:Test main debug", log_output)
         
         # Clean up
-        root_logger.removeHandler(handler)
+        logger.removeHandler(handler)
 
 
     def test_error_handling_config(self):
