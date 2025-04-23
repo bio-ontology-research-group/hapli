@@ -349,7 +349,7 @@ output_file: output.tsv
         log_output = log_capture.getvalue()
         
         # Check log message - verify it contains the expected text
-        self.assertIn("Saved intermediate data", log_output)
+        self.assertIn("Successfully saved intermediate data files to", log_output)
         self.assertIn(self.intermediate_dir, log_output)
         
         # Clean up
