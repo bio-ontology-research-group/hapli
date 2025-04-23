@@ -255,7 +255,8 @@ class TestTerminalDisplay(unittest.TestCase):
         
         # Check that there's a row for each alignment
         lines = output.split('\n')
-        data_rows = [line for line in lines if line.strip() and line[0].isdigit()]
+        # Find lines that start with a digit (row numbers)
+        data_rows = [line for line in lines if line.strip() and line.strip()[0].isdigit()]
         self.assertEqual(len(data_rows), len(alignments))
 
 
