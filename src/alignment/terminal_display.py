@@ -269,8 +269,8 @@ class AlignmentDisplay:
                 f"{i:3d} "
                 f"{aln.query_name[:15]:15s} "
                 f"{aln.target_name[:15]:15s} "
-                f"{stats.identity:.2%:10s} "
-                f"{stats.coverage:.2%:10s} "
+                f"{stats.identity:.2%} "
+                f"{stats.coverage:.2%} "
                 f"{aln.score:8.1f} "
                 f"{stats.alignment_type.value:15s}"
             )

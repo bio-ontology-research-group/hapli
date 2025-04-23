@@ -242,7 +242,38 @@ class AlignmentResult:
         
         # Calculate identity and coverage
         if stats.alignment_length > 0:
-            stats.identity = matches / (matches + mismatches + insertions + deletions)
+            # Identity is the percentage of matching bases relative to alignment length
+            # For SNP alignments, we need to be more accurate about matches vs mismatches
+            if self.query_sequence and self.target_sequence and 'M' in self.cigar_string:
+                # For 'M' operations, we need to count actual matches by comparing sequences
+                actual_matches = 0
+                actual_mismatches = 0
+                
+                q_pos = self.query_start
+                t_pos = self.target_start
+                
+                for op in self.cigar_operations:
+                    if op.operation == 'M':
+                        # Compare the sequences base by base
+                        for i in range(op.length):
+                            if q_pos + i < len(self.query_sequence) and t_pos + i < len(self.target_sequence):
+                                if self.query_sequence[q_pos + i] == self.target_sequence[t_pos + i]:
+                                    actual_matches += 1
+                                else:
+                                    actual_mismatches += 1
+                        q_pos += op.length
+                        t_pos += op.length
+                    elif op.operation == 'I':
+                        q_pos += op.length
+                    elif op.operation == 'D':
+                        t_pos += op.length
+                
+                # Update matches and mismatches with actual counts
+                stats.matches = actual_matches
+                stats.mismatches = actual_mismatches
+                
+            # Calculate identity using updated match/mismatch counts
+            stats.identity = stats.matches / (stats.matches + stats.mismatches + stats.insertions + stats.deletions)
         
         if stats.query_length > 0:
             stats.coverage = (self.query_end - self.query_start) / stats.query_length

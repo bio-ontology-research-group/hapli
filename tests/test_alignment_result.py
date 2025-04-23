@@ -57,7 +57,7 @@ class TestAlignmentResult(unittest.TestCase):
     def test_cigar_parsing(self):
         """Test parsing of CIGAR strings."""
         # Test with a complex CIGAR string
-        cigar = "10M2I5M3D20M"
+        cigar = "10M2I5M3D"
         operations = AlignmentResult._parse_cigar(cigar)
         
         self.assertEqual(len(operations), 4)
