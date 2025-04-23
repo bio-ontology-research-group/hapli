@@ -954,7 +954,7 @@ class HaplotypeAnnotationTool:
                 root_logger.error(error_msg)
                 
                 # Log the raw exception text to ensure it appears in logs
-                root_logger.error(f"Raw error details: {str(e)}")
+                root_logger.error(f"{str(e)}")
                 
                 # Log additional message
                 root_logger.error("Application will exit due to configuration error")
