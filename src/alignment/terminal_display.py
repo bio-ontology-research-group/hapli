@@ -132,6 +132,8 @@ class AlignmentDisplay:
                 output.append("")
             else:
                 output.append("Detailed alignment visualization not available.")
+            
+            return "\n".join(output)
         
         # Format the alignment in chunks to fit the line width
         chunk_size = self.line_width - 10  # Leave room for position numbers
