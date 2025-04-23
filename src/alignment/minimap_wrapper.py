@@ -1,6 +1,7 @@
 """
 Wrapper for the mappy (minimap2) alignment library.
 """
+import os
 import logging
 from typing import Dict, List, Optional, Tuple, Union, Any
 from dataclasses import dataclass
@@ -120,12 +121,17 @@ class MinimapAligner:
             FileNotFoundError: If the reference file does not exist
         """
         try:
+            # Check if file exists first to avoid unhelpful mappy errors
+            if not os.path.exists(reference_file):
+                logger.error(f"Reference file not found: {reference_file}")
+                raise FileNotFoundError(f"Reference file not found: {reference_file}")
+                
             self.aligner = mp.Aligner(reference_file, preset=self.preset, **self.kwargs)
             if not self.aligner:
-                logger.error("Failed to load reference file")
-                raise ValueError("Failed to initialize mappy aligner with reference file")
-        except FileNotFoundError:
-            logger.error(f"Reference file not found")
+                logger.error(f"Failed to load reference file: {reference_file}")
+                raise ValueError(f"Failed to initialize mappy aligner with file: {reference_file}")
+        except Exception as e:
+            logger.error(f"Error loading reference file: {str(e)}")
             raise
     
     def align_sequence(self, query_seq: str, min_score: int = 40, min_len: int = 50) -> List[AlignmentResult]:
@@ -182,14 +188,18 @@ class MinimapAligner:
         # Calculate sequence identity from CIGAR string
         identity = self._calculate_identity_from_cigar(aln.cigar_str)
         
+        # Check for strand - mappy uses negative/positive positions to indicate strand
+        # In mappy, strand is indicated by r_st > r_en
+        is_reverse = aln.r_st > aln.r_en
+        
         return AlignmentResult(
             query_start=aln.q_st,
             query_end=aln.q_en,
-            target_start=aln.r_st,
-            target_end=aln.r_en,
+            target_start=min(aln.r_st, aln.r_en),
+            target_end=max(aln.r_st, aln.r_en),
             score=aln.mapq,
             cigar=aln.cigar_str,
-            strand=not aln.is_reverse,  # True for forward, False for reverse
+            strand=not is_reverse,  # True for forward, False for reverse
             identity=identity,
             raw_alignment=aln
         )

@@ -44,13 +44,30 @@ class TestMinimapWrapper(unittest.TestCase):
             else:
                 raise FileNotFoundError(f"Test data preparation script not found: {prepare_script}")
         
-        # Load test data
-        cls.reference = SeqIO.read(REFERENCE_FILE, "fasta")
-        cls.regions = list(SeqIO.parse(REGIONS_FILE, "fasta"))
-        cls.snp_variants = list(SeqIO.parse(SNP_VARIANTS_FILE, "fasta"))
-        cls.insertion_variants = list(SeqIO.parse(INSERTION_VARIANTS_FILE, "fasta"))
-        cls.deletion_variants = list(SeqIO.parse(DELETION_VARIANTS_FILE, "fasta"))
-        cls.complex_variants = list(SeqIO.parse(COMPLEX_VARIANTS_FILE, "fasta"))
+        # Load test data using context managers to properly close files
+        with open(REFERENCE_FILE, "r") as ref_handle:
+            cls.reference = SeqIO.read(ref_handle, "fasta")
+            
+        # Load the other files
+        cls.regions = []
+        with open(REGIONS_FILE, "r") as handle:
+            cls.regions = list(SeqIO.parse(handle, "fasta"))
+            
+        cls.snp_variants = []
+        with open(SNP_VARIANTS_FILE, "r") as handle:
+            cls.snp_variants = list(SeqIO.parse(handle, "fasta"))
+            
+        cls.insertion_variants = []
+        with open(INSERTION_VARIANTS_FILE, "r") as handle:
+            cls.insertion_variants = list(SeqIO.parse(handle, "fasta"))
+            
+        cls.deletion_variants = []
+        with open(DELETION_VARIANTS_FILE, "r") as handle:
+            cls.deletion_variants = list(SeqIO.parse(handle, "fasta"))
+            
+        cls.complex_variants = []
+        with open(COMPLEX_VARIANTS_FILE, "r") as handle:
+            cls.complex_variants = list(SeqIO.parse(handle, "fasta"))
     
     def setUp(self):
         """Set up a fresh aligner for each test."""
@@ -207,15 +224,18 @@ class TestMinimapWrapper(unittest.TestCase):
         # Create a list of sequences
         sequences = [str(region.seq) for region in self.regions]
         
-        # Align all sequences
-        results = self.aligner.align_multiple_sequences(sequences)
-        
-        # Check that we got results for all sequences
-        self.assertEqual(len(results), len(sequences))
-        
-        # Check that each sequence has at least one alignment
-        for i, alignments in results.items():
-            self.assertGreater(len(alignments), 0)
+        try:
+            # Align all sequences
+            results = self.aligner.align_multiple_sequences(sequences)
+            
+            # Check that we got results for all sequences
+            self.assertEqual(len(results), len(sequences))
+            
+            # Check that each sequence has at least one alignment
+            for i, alignments in results.items():
+                self.assertGreater(len(alignments), 0)
+        except Exception as e:
+            self.fail(f"align_multiple_sequences raised exception: {str(e)}")
     
     def test_get_alignment_statistics(self):
         """Test getting alignment statistics."""
