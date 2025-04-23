@@ -257,6 +257,11 @@ class AlignmentProcessor:
         """
         Phase 1: Align top-level features (e.g., genes) to paths.
         """
+        # Initialize aligned_features for all paths if not already done
+        for path_id in path_ids:
+            if path_id not in self.aligned_features:
+                self.aligned_features[path_id] = {}
+                
         parent_features = []
         for feature_type in feature_types:
             # Use the provided GFF parser instance
