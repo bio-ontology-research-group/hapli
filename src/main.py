@@ -329,7 +329,7 @@ class HaplotypeAnnotationTool:
         if root_logger.level == numeric_level and root_logger.hasHandlers():
              # Avoid reconfiguring if already set to the same level and has handlers
              # This helps prevent duplicate handlers in some testing scenarios
-             logger.debug(f"Logger already configured at {log_level} level.")
+             logger.info(f"Logging configured at {log_level} level")
              return
 
         root_logger.setLevel(numeric_level) # Set level on root logger
