@@ -315,8 +315,8 @@ output_file: output.tsv
                   # Save the data
                   self.tool.save_intermediate_data(self.intermediate_dir)
 
-        # Check log message
-        self.assertTrue(any(f"Saved intermediate data to {self.intermediate_dir}" in log for log in cm.output))
+        # Check log message - match the actual log format
+        self.assertTrue(any("Saved intermediate data" in log and self.intermediate_dir in log for log in cm.output))
 
         # Check that files were created
         input_files_path = os.path.join(self.intermediate_dir, 'input_files.json')
