@@ -367,9 +367,17 @@ class TestAlignmentProcessorWithSyntheticData(unittest.TestCase):
     
     def test_align_features_to_paths(self):
         """Test aligning features to paths."""
+        # Ensure path sequences are available
+        self.processor.path_sequences = {
+            "path1": "ACGTACGTACGTACGTACGTTGCATGCATGCATGCATGCA",  # seg1+seg2
+            "path2": "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"   # seg1+seg3
+        }
+        
         # Mock the alignment to ensure we get expected results
-        with patch.object(MinimapAligner, 'align_sequence') as mock_align:
-            # Create a mock alignment result
+        with patch.object(MinimapAligner, 'align_sequence') as mock_align, \
+             patch.object(MinimapAligner, 'load_reference'):
+            
+            # Create a mock alignment result with all required attributes
             mock_alignment = MagicMock()
             mock_alignment.query_start = 0
             mock_alignment.query_end = 50
@@ -377,6 +385,10 @@ class TestAlignmentProcessorWithSyntheticData(unittest.TestCase):
             mock_alignment.target_end = 60
             mock_alignment.mapping_quality = 60
             mock_alignment.cigar = "50M"
+            mock_alignment.strand = "+"
+            mock_alignment.is_primary = True
+            mock_alignment.edit_distance = 0
+            mock_alignment.alignment_length = 50
             
             # Return this alignment for any alignment attempt
             mock_align.return_value = [mock_alignment]
@@ -394,8 +406,16 @@ class TestAlignmentProcessorWithSyntheticData(unittest.TestCase):
     
     def test_feature_duplications(self):
         """Test handling of feature duplications."""
+        # Ensure path sequences are available
+        self.processor.path_sequences = {
+            "path1": "ACGTACGTACGTACGTACGTTGCATGCATGCATGCATGCA",  # seg1+seg2
+            "path2": "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"   # seg1+seg3
+        }
+        
         # We have two genes in our synthetic data, test aligning both
-        with patch.object(MinimapAligner, 'align_sequence') as mock_align:
+        with patch.object(MinimapAligner, 'align_sequence') as mock_align, \
+             patch.object(MinimapAligner, 'load_reference'):
+            
             # Create different mock alignments for each gene
             gene1_alignment = MagicMock()
             gene1_alignment.query_start = 0
@@ -404,6 +424,10 @@ class TestAlignmentProcessorWithSyntheticData(unittest.TestCase):
             gene1_alignment.target_end = 60
             gene1_alignment.mapping_quality = 60
             gene1_alignment.cigar = "50M"
+            gene1_alignment.strand = "+"
+            gene1_alignment.is_primary = True
+            gene1_alignment.edit_distance = 0
+            gene1_alignment.alignment_length = 50
             
             gene2_alignment = MagicMock()
             gene2_alignment.query_start = 0
@@ -412,6 +436,10 @@ class TestAlignmentProcessorWithSyntheticData(unittest.TestCase):
             gene2_alignment.target_end = 60
             gene2_alignment.mapping_quality = 50
             gene2_alignment.cigar = "40M"
+            gene2_alignment.strand = "+"
+            gene2_alignment.is_primary = True
+            gene2_alignment.edit_distance = 0
+            gene2_alignment.alignment_length = 40
             
             # Create a side_effect function instead of a fixed list
             # This provides more flexibility for an arbitrary number of calls
