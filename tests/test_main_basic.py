@@ -267,12 +267,24 @@ output_file: output.tsv
             },
             'selected_paths': ['path1']
         }
-        # Create a mock AnalysisSummary (assuming structure)
+        # Create a mock AnalysisSummary (matching actual structure)
         mock_summary = AnalysisSummary(
              path_id='path1',
-             features=[
-                 FeatureSummary(feature_id='gene1', impact=ImpactType.PRESENT, metrics={'cov': 1.0}, variants=[], reconciliation_status='OK')
-             ]
+             feature_count=1,
+             feature_by_impact={ImpactType.PRESENT.value: 1},
+             variant_counts={},
+             reconciliation_counts={},
+             feature_summaries={
+                 'gene1': FeatureSummary(
+                     feature_id='gene1',
+                     feature_type='gene',
+                     impact_type=ImpactType.PRESENT,
+                     sequence_identity=1.0,
+                     coverage=1.0,
+                     variants=[],
+                     path_id='path1'
+                 )
+             }
         )
         self.tool.analysis_summaries = {'path1': mock_summary}
         # Mock features dict needed for saving features_info
@@ -331,10 +343,10 @@ output_file: output.tsv
              summaries_data = json.load(f)
              self.assertIn('path1', summaries_data)
              self.assertEqual(summaries_data['path1']['path_id'], 'path1')
-             self.assertEqual(len(summaries_data['path1']['features']), 1)
-             self.assertEqual(summaries_data['path1']['features'][0]['feature_id'], 'gene1')
+             self.assertIn('feature_summaries', summaries_data['path1'])
+             self.assertIn('gene1', summaries_data['path1']['feature_summaries'])
              # Use .name for Enum comparison after loading from JSON
-             self.assertEqual(summaries_data['path1']['features'][0]['impact'], ImpactType.PRESENT.name)
+             self.assertEqual(summaries_data['path1']['feature_summaries']['gene1']['impact_type'], ImpactType.PRESENT.name)
 
 
 if __name__ == '__main__':
