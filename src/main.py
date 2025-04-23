@@ -935,26 +935,34 @@ class HaplotypeAnnotationTool:
             logger.info("--- Pipeline finished ---")
 
         except ConfigurationError as e:
-            error_msg = f"Configuration error: {e}"
-            # Make sure we log this at ERROR level for the test to capture
-            logger.error(error_msg) 
-            # Also log to root logger to ensure it's captured in tests
+            # Create a clear error message that includes the exact exception text
+            error_msg = f"Configuration error: {str(e)}"
+            
+            # Log to module logger
+            logger.error(error_msg)
+            
+            # Get root logger and ensure it's configured to show ERROR level
             root_logger = logging.getLogger()
-            # Force the root logger level to ERROR if it's higher to ensure messages are emitted
             original_level = root_logger.level
+            
+            # Temporarily set root logger to ERROR level if needed
             if original_level > logging.ERROR:
                 root_logger.setLevel(logging.ERROR)
+                
             try:
-                # Log directly to root logger
+                # Log directly to root logger with the full error message
                 root_logger.error(error_msg)
-                # Log with a different message to ensure multiple log entries
-                root_logger.error(f"Application will exit due to configuration error")
-                # Also log using the logging module directly
-                logging.error(error_msg)
+                
+                # Log the raw exception text to ensure it appears in logs
+                root_logger.error(f"Raw error details: {str(e)}")
+                
+                # Log additional message
+                root_logger.error("Application will exit due to configuration error")
             finally:
                 # Restore original level
                 if original_level > logging.ERROR:
                     root_logger.setLevel(original_level)
+                    
             exit_code = 1
         except Exception as e:
             logger.critical(f"A critical unexpected error occurred: {e}", exc_info=True)

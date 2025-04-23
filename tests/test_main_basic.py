@@ -275,20 +275,23 @@ output_file: output.tsv
         # Log a message before assertLogs to ensure the logger is properly initialized
         root_logger.error("Initializing test_error_handling_config")
         
+        # Create a specific error message that we can easily identify
+        error_message = "Missing required files TEST_UNIQUE_STRING"
+        
         # Expect ConfigurationError during config.load()
         # Capture logs from the root logger
         with self.assertLogs(level='ERROR') as cm:
              # Force a log message to ensure assertLogs passes
              root_logger.error("Starting error handling test")
-             # Mock Config.load to raise the expected error
-             with patch.object(Config, 'load', side_effect=ConfigurationError("Missing required files")):
+             # Mock Config.load to raise the expected error with our unique message
+             with patch.object(Config, 'load', side_effect=ConfigurationError(error_message)):
                   exit_code = self.tool.run(args)
 
         self.assertNotEqual(exit_code, 0)
         # Print captured logs for debugging
         print(f"Captured logs: {cm.output}")
         # Check if the ConfigurationError message was logged
-        self.assertTrue(any("Missing required files" in log for log in cm.output), f"Error message not found in logs: {cm.output}")
+        self.assertTrue(any(error_message in log for log in cm.output), f"Error message not found in logs: {cm.output}")
 
 
     def test_error_handling_runtime(self):
