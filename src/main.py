@@ -843,15 +843,28 @@ class HaplotypeAnnotationTool:
                          summaries_dict[path_id] = summary.to_dict()
                      else: # Placeholder if no to_dict method
                           # Create a basic dict representation manually
+                          feature_summaries_dict = {}
+                          for feat_id, feat_summary in summary.feature_summaries.items():
+                              if hasattr(feat_summary, 'to_dict'):
+                                  feature_summaries_dict[feat_id] = feat_summary.to_dict()
+                              else:
+                                  # Basic conversion for feature summary
+                                  feature_summaries_dict[feat_id] = {
+                                      "feature_id": feat_summary.feature_id,
+                                      "feature_type": feat_summary.feature_type,
+                                      "impact_type": feat_summary.impact_type.name if feat_summary.impact_type else "UNKNOWN",
+                                      "sequence_identity": feat_summary.sequence_identity,
+                                      "coverage": feat_summary.coverage,
+                                      "path_id": feat_summary.path_id
+                                  }
+                          
                           summaries_dict[path_id] = {
                                "path_id": summary.path_id,
                                "feature_count": summary.feature_count,
                                "impact_counts": summary.feature_by_impact,
                                "variant_counts": summary.variant_counts,
                                "reconciliation_counts": summary.reconciliation_counts,
-                               # Feature summaries might be complex, maybe just list IDs?
-                               "feature_ids": list(summary.feature_summaries.keys()),
-                               "_conversion_warning": "Summary object lacked to_dict method"
+                               "feature_summaries": feature_summaries_dict
                           }
 
                 with open(summaries_file, 'w') as f:

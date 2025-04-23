@@ -199,6 +199,12 @@ output_file: output.tsv
         root_logger.setLevel(logging.DEBUG)
         
         # Test DEBUG level
+        # First clear any existing handlers to avoid the "already configured" message
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            if handler != handler:  # Don't remove our test handler
+                root_logger.removeHandler(handler)
+                
         self.tool.configure_logging('DEBUG')
         # Log messages using different loggers to test propagation
         logging.getLogger('src.main').debug("Test main debug")
@@ -411,7 +417,7 @@ output_file: output.tsv
              self.assertIn('feature_summaries', summaries_data['path1'])
              self.assertIn('gene1', summaries_data['path1']['feature_summaries'])
              # Use .name for Enum comparison after loading from JSON
-             self.assertEqual(summaries_data['path1']['feature_summaries']['gene1']['impact_type'], ImpactType.PRESENT.name)
+             self.assertEqual(summaries_data['path1']['feature_summaries']['gene1']['impact_type'], 'PRESENT')
 
 
 if __name__ == '__main__':
