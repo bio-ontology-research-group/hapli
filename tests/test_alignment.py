@@ -69,12 +69,12 @@ class TestMinimapAligner(unittest.TestCase):
         alignments = self.aligner.align_sequence(self.perfect_match, min_score=0, min_len=1)
         self.assertGreater(len(alignments), 0)
         if len(alignments) > 0:
-            self.assertEqual(alignments[0].q_st, 0)
-            self.assertEqual(alignments[0].q_en, len(self.perfect_match))
+            self.assertEqual(alignments[0].query_start, 0)
+            self.assertEqual(alignments[0].query_end, len(self.perfect_match))
             # Don't check exact positions as they can vary with minimap2 parameters
             # Just verify that the alignment is in the reference
-            self.assertGreaterEqual(alignments[0].r_st, 0)
-            self.assertLessEqual(alignments[0].r_en, len(self.ref_seq))
+            self.assertGreaterEqual(alignments[0].target_start, 0)
+            self.assertLessEqual(alignments[0].target_end, len(self.ref_seq))
         
     def test_align_mismatch(self):
         """Test aligning a sequence with mismatches."""
@@ -169,20 +169,20 @@ class TestAlignmentProcessorWithMockData(unittest.TestCase):
         """Test handling of multiple alignments for a feature."""
         # Create mock alignments for a feature
         mock_align1 = MagicMock()
-        mock_align1.q_st = 0
-        mock_align1.q_en = 10
-        mock_align1.r_st = 0
-        mock_align1.r_en = 10
-        mock_align1.mapq = 60
-        mock_align1.cigar_str = "10M"
+        mock_align1.query_start = 0
+        mock_align1.query_end = 10
+        mock_align1.target_start = 0
+        mock_align1.target_end = 10
+        mock_align1.mapping_quality = 60
+        mock_align1.cigar = "10M"
         
         mock_align2 = MagicMock()
-        mock_align2.q_st = 0
-        mock_align2.q_en = 10
-        mock_align2.r_st = 10
-        mock_align2.r_en = 20
-        mock_align2.mapq = 50
-        mock_align2.cigar_str = "10M"
+        mock_align2.query_start = 0
+        mock_align2.query_end = 10
+        mock_align2.target_start = 10
+        mock_align2.target_end = 20
+        mock_align2.mapping_quality = 50
+        mock_align2.cigar = "10M"
         
         # Mock the aligner to return multiple alignments
         with patch.object(MinimapAligner, 'align_sequence') as mock_align:
@@ -208,12 +208,12 @@ class TestAlignmentProcessorWithMockData(unittest.TestCase):
         """Test boundary conditions for alignments."""
         # Create a partial alignment (only part of the sequence aligns)
         mock_partial = MagicMock()
-        mock_partial.q_st = 2  # Starts at position 2 of query
-        mock_partial.q_en = 8  # Ends at position 8 of query
-        mock_partial.r_st = 5  # Starts at position 5 of reference
-        mock_partial.r_en = 11  # Ends at position 11 of reference
-        mock_partial.mapq = 40
-        mock_partial.cigar_str = "6M"
+        mock_partial.query_start = 2  # Starts at position 2 of query
+        mock_partial.query_end = 8  # Ends at position 8 of query
+        mock_partial.target_start = 5  # Starts at position 5 of reference
+        mock_partial.target_end = 11  # Ends at position 11 of reference
+        mock_partial.mapping_quality = 40
+        mock_partial.cigar = "6M"
         
         # Mock the aligner to return the partial alignment
         with patch.object(MinimapAligner, 'align_sequence') as mock_align:
@@ -254,21 +254,21 @@ class TestAlignmentProcessorWithMockData(unittest.TestCase):
         """Test the hierarchical alignment strategy."""
         # Create parent alignment
         mock_parent_align = MagicMock()
-        mock_parent_align.q_st = 0
-        mock_parent_align.q_en = 10
-        mock_parent_align.r_st = 0
-        mock_parent_align.r_en = 10
-        mock_parent_align.mapq = 60
-        mock_parent_align.cigar_str = "10M"
+        mock_parent_align.query_start = 0
+        mock_parent_align.query_end = 10
+        mock_parent_align.target_start = 0
+        mock_parent_align.target_end = 10
+        mock_parent_align.mapping_quality = 60
+        mock_parent_align.cigar = "10M"
         
         # Create child alignment
         mock_child_align = MagicMock()
-        mock_child_align.q_st = 0
-        mock_child_align.q_en = 6
-        mock_child_align.r_st = 2
-        mock_child_align.r_en = 8
-        mock_child_align.mapq = 60
-        mock_child_align.cigar_str = "6M"
+        mock_child_align.query_start = 0
+        mock_child_align.query_end = 6
+        mock_child_align.target_start = 2
+        mock_child_align.target_end = 8
+        mock_child_align.mapping_quality = 60
+        mock_child_align.cigar = "6M"
         
         # Mock alignments
         with patch.object(MinimapAligner, 'align_sequence') as mock_align, \
@@ -371,12 +371,12 @@ class TestAlignmentProcessorWithSyntheticData(unittest.TestCase):
         with patch.object(MinimapAligner, 'align_sequence') as mock_align:
             # Create a mock alignment result
             mock_alignment = MagicMock()
-            mock_alignment.q_st = 0
-            mock_alignment.q_en = 50
-            mock_alignment.r_st = 10
-            mock_alignment.r_en = 60
-            mock_alignment.mapq = 60
-            mock_alignment.cigar_str = "50M"
+            mock_alignment.query_start = 0
+            mock_alignment.query_end = 50
+            mock_alignment.target_start = 10
+            mock_alignment.target_end = 60
+            mock_alignment.mapping_quality = 60
+            mock_alignment.cigar = "50M"
             
             # Return this alignment for any alignment attempt
             mock_align.return_value = [mock_alignment]
@@ -398,20 +398,20 @@ class TestAlignmentProcessorWithSyntheticData(unittest.TestCase):
         with patch.object(MinimapAligner, 'align_sequence') as mock_align:
             # Create different mock alignments for each gene
             gene1_alignment = MagicMock()
-            gene1_alignment.q_st = 0
-            gene1_alignment.q_en = 50
-            gene1_alignment.r_st = 10
-            gene1_alignment.r_en = 60
-            gene1_alignment.mapq = 60
-            gene1_alignment.cigar_str = "50M"
+            gene1_alignment.query_start = 0
+            gene1_alignment.query_end = 50
+            gene1_alignment.target_start = 10
+            gene1_alignment.target_end = 60
+            gene1_alignment.mapping_quality = 60
+            gene1_alignment.cigar = "50M"
             
             gene2_alignment = MagicMock()
-            gene2_alignment.q_st = 0
-            gene2_alignment.q_en = 40
-            gene2_alignment.r_st = 20
-            gene2_alignment.r_en = 60
-            gene2_alignment.mapq = 50
-            gene2_alignment.cigar_str = "40M"
+            gene2_alignment.query_start = 0
+            gene2_alignment.query_end = 40
+            gene2_alignment.target_start = 20
+            gene2_alignment.target_end = 60
+            gene2_alignment.mapping_quality = 50
+            gene2_alignment.cigar = "40M"
             
             # Create a side_effect function instead of a fixed list
             # This provides more flexibility for an arbitrary number of calls

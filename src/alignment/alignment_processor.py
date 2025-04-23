@@ -330,23 +330,23 @@ class AlignmentProcessor:
                     # Create a new SeqFeature for the aligned location on the path
                     # Use alignment coordinates on the reference (path sequence)
                     aligned_feature = SeqFeature(
-                        location=FeatureLocation(aln.r_st, aln.r_en, strand=feature.location.strand), # Use original strand
+                        location=FeatureLocation(aln.target_start, aln.target_end, strand=feature.location.strand), # Use original strand
                         type=feature.type,
                         id=feature_id,
                         qualifiers=feature.qualifiers.copy() # Copy original qualifiers
                     )
 
                     # Add alignment-specific details to qualifiers
-                    aligned_feature.qualifiers['alignment_score'] = [str(aln.mapq)] # Mapping quality
-                    aligned_feature.qualifiers['alignment_cigar'] = [aln.cigar_str]
-                    aligned_feature.qualifiers['alignment_target_span'] = [f"{aln.r_st}-{aln.r_en}"]
-                    aligned_feature.qualifiers['alignment_query_span'] = [f"{aln.q_st}-{aln.q_en}"]
+                    aligned_feature.qualifiers['alignment_score'] = [str(aln.mapping_quality)] # Mapping quality
+                    aligned_feature.qualifiers['alignment_cigar'] = [aln.cigar]
+                    aligned_feature.qualifiers['alignment_target_span'] = [f"{aln.target_start}-{aln.target_end}"]
+                    aligned_feature.qualifiers['alignment_query_span'] = [f"{aln.query_start}-{aln.query_end}"]
                     aligned_feature.qualifiers['alignment_strand'] = [aln.strand] # Strand relative to target
                     aligned_feature.qualifiers['original_location'] = [original_location_str]
                     aligned_feature.qualifiers['is_primary'] = [aln.is_primary]
                     # Add NM (edit distance) and blen (alignment length) if needed for downstream calcs
-                    aligned_feature.qualifiers['edit_distance_NM'] = [aln.NM]
-                    aligned_feature.qualifiers['alignment_length_blen'] = [aln.blen]
+                    aligned_feature.qualifiers['edit_distance_NM'] = [aln.edit_distance]
+                    aligned_feature.qualifiers['alignment_length_blen'] = [aln.alignment_length]
 
 
                     aligned_features_list.append(aligned_feature)
@@ -451,8 +451,8 @@ class AlignmentProcessor:
                         for aln in child_alignments:
                             # Coordinates are relative to the parent_region_seq
                             # Map them back to the full path coordinates
-                            child_path_start = parent_path_start + aln.r_st
-                            child_path_end = parent_path_start + aln.r_en
+                            child_path_start = parent_path_start + aln.target_start
+                            child_path_end = parent_path_start + aln.target_end
 
                             # Create a new SeqFeature for the aligned child on the path
                             aligned_child_feature = SeqFeature(
@@ -463,18 +463,18 @@ class AlignmentProcessor:
                             )
 
                             # Add alignment-specific details
-                            aligned_child_feature.qualifiers['alignment_score'] = [str(aln.mapq)]
-                            aligned_child_feature.qualifiers['alignment_cigar'] = [aln.cigar_str]
-                            aligned_child_feature.qualifiers['alignment_target_span'] = [f"{aln.r_st}-{aln.r_en}"] # Relative to parent region
-                            aligned_child_feature.qualifiers['alignment_query_span'] = [f"{aln.q_st}-{aln.q_en}"]
+                            aligned_child_feature.qualifiers['alignment_score'] = [str(aln.mapping_quality)]
+                            aligned_child_feature.qualifiers['alignment_cigar'] = [aln.cigar]
+                            aligned_child_feature.qualifiers['alignment_target_span'] = [f"{aln.target_start}-{aln.target_end}"] # Relative to parent region
+                            aligned_child_feature.qualifiers['alignment_query_span'] = [f"{aln.query_start}-{aln.query_end}"]
                             aligned_child_feature.qualifiers['alignment_strand'] = [aln.strand]
                             aligned_child_feature.qualifiers['original_location'] = [original_location_str]
                             aligned_child_feature.qualifiers['parent_feature'] = [parent_id] # Link to parent ID
                             aligned_child_feature.qualifiers['parent_instance'] = [parent_instance_label] # Link to specific parent alignment instance
                             aligned_child_feature.qualifiers['parent_path_location'] = [f"{parent_path_start}-{parent_path_end}"] # Parent location on path
                             aligned_child_feature.qualifiers['is_primary'] = [aln.is_primary]
-                            aligned_child_feature.qualifiers['edit_distance_NM'] = [aln.NM]
-                            aligned_child_feature.qualifiers['alignment_length_blen'] = [aln.blen]
+                            aligned_child_feature.qualifiers['edit_distance_NM'] = [aln.edit_distance]
+                            aligned_child_feature.qualifiers['alignment_length_blen'] = [aln.alignment_length]
 
 
                             # Store the aligned child feature, associated with the path
