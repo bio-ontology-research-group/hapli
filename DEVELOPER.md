@@ -252,6 +252,109 @@ for aln in alignments:
     print(f"Target region: {aln.target_start}-{aln.target_end}")
 ```
 
+#### Alignment Result Processing (`src/alignment/alignment_result.py`)
+
+* Provides standardized data structures for alignment results
+* Converts minimap2 alignments to a comprehensive format
+* Calculates detailed alignment statistics (identity, coverage, gaps, etc.)
+* Supports serialization/deserialization for result storage
+* Includes text-based alignment visualization
+
+**Key Components:**
+- `AlignmentResult`: Comprehensive representation of an alignment
+- `AlignmentStatistics`: Statistical metrics for alignments
+- `CigarOperation`: Representation of CIGAR string operations
+- `AlignmentType`: Enumeration of alignment quality categories
+
+**Data Structure:**
+The `AlignmentResult` class contains:
+- Basic alignment information (query/target names, sequences)
+- Alignment coordinates (start/end positions)
+- Alignment details (score, CIGAR string, strand)
+- Computed statistics (identity, coverage, matches, mismatches, gaps)
+- Visualization data (aligned sequences with gap characters)
+
+**Usage Example:**
+```python
+from src.alignment.alignment_result import AlignmentResult
+
+# Create from minimap2 alignment
+result = AlignmentResult.from_minimap2(alignment, query_seq, target_seq)
+
+# Access alignment information
+print(result.get_summary())
+print(f"Identity: {result.statistics.identity:.2%}")
+print(f"Coverage: {result.statistics.coverage:.2%}")
+
+# Serialize to JSON
+json_data = result.to_json()
+with open("alignment_result.json", "w") as f:
+    f.write(json_data)
+
+# Deserialize from JSON
+with open("alignment_result.json") as f:
+    data = json.load(f)
+    restored_result = AlignmentResult.from_dict(data)
+```
+
+#### Terminal Display (`src/alignment/terminal_display.py`)
+
+* Renders alignments as text-based representations
+* Shows sequence matches/mismatches with ASCII characters
+* Uses color coding (via ANSI escape codes) for terminal display
+* Includes options for compact vs. detailed views
+
+**Key Components:**
+- `AlignmentDisplay`: Main class for rendering alignments
+- `display_alignment_result()`: Convenience function for single alignment display
+- `print_alignment_result()`: Function to directly print an alignment to console
+
+**Display Features:**
+- Color-coded sequence representation (green for matches, red for gaps, etc.)
+- Match/mismatch indicators (|, ., space)
+- Position numbering for reference
+- Compact summary tables for multiple alignments
+- Detailed statistics display
+
+**Terminal Visualization:**
+The alignment visualization shows:
+```
+Alignment: query1 to target1
+Score: 60.0
+Identity: 95.00%
+Coverage: 100.00%
+Matches: 95, Mismatches: 5, Gaps: 0
+Query: 0-100 (Forward)
+Target: 0-100
+
+      0 ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT
+        ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+      0 ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT
+
+     60 ACGTACGTACGTACGTACGTACGT
+        ||||||||.||||.||||||.|||
+     60 ACGTACGTTCGTTAGTACGTTCGT
+```
+
+**Usage Example:**
+```python
+from src.alignment.terminal_display import AlignmentDisplay, print_alignment_result
+
+# Direct printing of an alignment
+print_alignment_result(alignment_result, use_color=True, detailed=True)
+
+# More control with the AlignmentDisplay class
+display = AlignmentDisplay(use_color=True, line_width=100)
+
+# Display a single alignment
+output = display.display_alignment(alignment_result, detailed=True)
+print(output)
+
+# Display multiple alignments in compact form
+output = display.display_compact_summary(alignment_results)
+print(output)
+```
+
 **Test Data:**
 The test suite uses artificially generated test data based on the PhiX174 viral genome:
 - Reference sequence (~5.4kb)
