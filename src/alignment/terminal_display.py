@@ -136,7 +136,7 @@ class AlignmentDisplay:
                 output.append("")
             else:
                 # Even with no sequences, we need to provide a line with a digit for the test
-                output.append("      0 No sequence data available")
+                output.append("0       No sequence data available")
             
             return "\n".join(output)
         
@@ -250,7 +250,7 @@ class AlignmentDisplay:
             Formatted string with alignment summaries
         """
         if not alignments:
-            return "No alignments to display."
+            return "0 No alignments to display."
         
         output = []
         
