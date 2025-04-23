@@ -929,7 +929,8 @@ def main():
                         help='Specific sample IDs to download/extract (e.g., HG01383 NA12878). Overrides defaults in download script.')
     parser.add_argument('--region', type=str, default=None, # Changed default to None
                         help='Restrict VCF conversion to a specific region (e.g., "22", "1:1M-2M"). Recommended if VCFs span multiple contigs.')
-    parser.add_argument('--vg-mem', type=int, default=16,
+    # Increased default memory for vg construct
+    parser.add_argument('--vg-mem', type=int, default=32,
                         help='Memory limit (GB) for vg construct.')
     parser.add_argument('--vg-threads', type=int, default=os.cpu_count() or 8,
                         help='Number of threads for vg construct.')

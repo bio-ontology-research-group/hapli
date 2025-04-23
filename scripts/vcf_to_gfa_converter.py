@@ -158,6 +158,33 @@ def convert_vcf_to_gfa_vg(vcf_paths, reference_path, output_path, region=None, m
                      logger.error(f"vg construct stderr: {result.stderr.decode(errors='replace').strip()}")
                 return False
 
+            # Step 1.5: Validate the intermediate graph
+            validate_cmd = [vg_exe, 'validate', vg_path]
+            logger.info(f"Running vg validate: {' '.join(validate_cmd)}")
+            try:
+                result_validate = subprocess.run(validate_cmd, capture_output=True, check=False) # Capture output
+                # Decode stderr for logging, replacing errors
+                stderr_decoded = result_validate.stderr.decode(errors='replace') if result_validate.stderr else ""
+                if result_validate.returncode != 0:
+                    logger.error(f"vg validate command failed for {vg_path}")
+                    logger.error(f"Return code: {result_validate.returncode}")
+                    if stderr_decoded:
+                        logger.error(f"stderr: {stderr_decoded.strip()}")
+                    # Optionally log stdout as well if it contains useful info on failure
+                    stdout_decoded = result_validate.stdout.decode(errors='replace') if result_validate.stdout else ""
+                    if stdout_decoded:
+                         logger.error(f"stdout: {stdout_decoded.strip()}")
+                    return False # Exit if validation fails
+                else:
+                    logger.info(f"Intermediate graph {vg_path} validated successfully.")
+                    if stderr_decoded: # Log warnings from validate even on success
+                         logger.info(f"vg validate stderr: {stderr_decoded.strip()}")
+
+            except Exception as e:
+                 logger.error(f"An unexpected error occurred during vg validate: {e}")
+                 return False
+
+
             # Step 2: Convert to GFA using vg view
             gfa_cmd = [
                 vg_exe, 'view',
