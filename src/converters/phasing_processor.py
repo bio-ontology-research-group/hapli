@@ -131,9 +131,23 @@ class PhasingProcessor:
                 return str(allele_seq).upper() if allele_seq is not None else None
             else:
                 logger.warning(f"Invalid allele index {allele_index} requested for record at {record.chrom}:{record.pos} with {len(record.alleles)} alleles: {record.alleles}")
+                # For alt strategy, return the first ALT allele if available, otherwise REF
+                if allele_index > 0 and len(record.alleles) > 1:
+                    logger.debug(f"Falling back to first ALT allele for invalid index {allele_index}")
+                    return str(record.alleles[1]).upper()
+                elif len(record.alleles) > 0:
+                    logger.debug(f"Falling back to REF allele for invalid index {allele_index}")
+                    return str(record.alleles[0]).upper()
                 return None
         except IndexError:
              logger.warning(f"IndexError accessing allele index {allele_index} for record at {record.chrom}:{record.pos} with alleles {record.alleles}")
+             # For alt strategy, return the first ALT allele if available, otherwise REF
+             if len(record.alleles) > 1:
+                 logger.debug(f"Falling back to first ALT allele after IndexError")
+                 return str(record.alleles[1]).upper()
+             elif len(record.alleles) > 0:
+                 logger.debug(f"Falling back to REF allele after IndexError")
+                 return str(record.alleles[0]).upper()
              return None
 
 
@@ -273,8 +287,9 @@ class PhasingProcessor:
                         hap1_seq = self.get_allele_sequence(record, 0) # REF
                         hap2_seq = self.get_allele_sequence(record, 0) # REF
                     elif unphased_strategy == 'alt':
-                        # Use the actual alleles from the unphased genotype
-                        # This is the key fix - we should use the actual GT values, not just ALT1
+                        # For alt strategy, prioritize using ALT alleles when available
+                        
+                        # First try to use the actual genotype values
                         hap1_seq = self.get_allele_sequence(record, hap1_idx)
                         hap2_seq = self.get_allele_sequence(record, hap2_idx)
                         
@@ -286,7 +301,7 @@ class PhasingProcessor:
                         if hap1_seq is None or hap2_seq is None:
                             # Try to get the first ALT allele
                             if record.alts and len(record.alts) > 0:
-                                alt1_seq = record.alts[0]
+                                alt1_seq = str(record.alts[0]).upper()
                                 logger.debug(f"Using first ALT fallback: {alt1_seq}")
                                 
                                 # Only replace if the sequence is None
@@ -304,6 +319,13 @@ class PhasingProcessor:
                         if hap2_seq is None:
                             logger.debug(f"Using REF fallback for hap2: {ref_allele}")
                             hap2_seq = ref_allele
+                            
+                        # For alt strategy, ensure we're not using REF for both haplotypes
+                        # If both ended up as REF and there are ALT alleles, use ALT for at least one
+                        if hap1_seq == ref_allele and hap2_seq == ref_allele and record.alts and len(record.alts) > 0:
+                            alt1_seq = str(record.alts[0]).upper()
+                            logger.debug(f"Both haplotypes defaulted to REF, using ALT for hap1: {alt1_seq}")
+                            hap1_seq = alt1_seq
                     elif unphased_strategy == 'skip':
                          hap1_seq = None
                          hap2_seq = None

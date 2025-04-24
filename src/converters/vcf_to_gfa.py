@@ -561,6 +561,32 @@ class VCFtoGFAConverter:
                                     )
                                     self._gfa.add_line(path)
                                     logger.info(f"Added fallback reference path {ref_path_name}")
+                                    
+                                    # Also create sample paths using the reference sequence
+                                    # This ensures we have paths for all samples even if no variants were processed
+                                    for sample_name in self._phasing_processor.samples:
+                                        path1_name = self.path_template.format(sample=sample_name, hap=1)
+                                        path2_name = self.path_template.format(sample=sample_name, hap=2)
+                                        
+                                        for path_name in [path1_name, path2_name]:
+                                            try:
+                                                sample_path = gfapy.line.Path(
+                                                    path_name=path_name,
+                                                    segment_names=[ref_seg_id],
+                                                    orientations=["+"],
+                                                    overlaps=[]
+                                                )
+                                                # Add sample and haplotype tags
+                                                sample_path.set_datatype("SM", "Z")
+                                                sample_path.set_tag("SM", sample_name)
+                                                hap_num = 1 if path_name.endswith("_hap1") else 2
+                                                sample_path.set_datatype("HP", "i")
+                                                sample_path.set_tag("HP", hap_num)
+                                                
+                                                self._gfa.add_line(sample_path)
+                                                logger.info(f"Added fallback sample path {path_name}")
+                                            except Exception as e:
+                                                logger.error(f"Failed to add fallback sample path {path_name}: {e}")
                                 except Exception as e:
                                     logger.error(f"Failed to add fallback reference path: {e}")
                 

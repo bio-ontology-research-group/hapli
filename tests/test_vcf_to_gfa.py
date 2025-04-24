@@ -269,11 +269,11 @@ class TestVCFtoGFAConverter(unittest.TestCase):
                 with open(self.output_gfa, 'r') as f:
                     print(f"GFA file content ({file_size} bytes):\n{f.read()}")
             
-            # Reduce expectations for validation to make test pass
+            # Validate with appropriate expectations for alt strategy
             gfa = self._validate_gfa_structure(
                 self.output_gfa,
                 min_segments=1, min_links=0,  # Minimal expectations to get test passing
-                expected_paths=None  # Don't validate paths yet
+                expected_paths={"SAMPLE1_hap1", "SAMPLE1_hap2", "SAMPLE2_hap1", "SAMPLE2_hap2"}
             )
             
             # If we get here, basic validation passed
