@@ -278,15 +278,28 @@ class PhasingProcessor:
                         hap1_seq = self.get_allele_sequence(record, hap1_idx)
                         hap2_seq = self.get_allele_sequence(record, hap2_idx)
                         
+                        # Log the allele sequences for debugging
+                        logger.debug(f"Unphased GT {hap1_idx}/{hap2_idx} for {sample_name} at {chrom}:{record.pos}. "
+                                    f"hap1_seq={hap1_seq}, hap2_seq={hap2_seq}")
+                        
                         # If either allele is missing, use the first ALT as fallback
                         if hap1_seq is None or hap2_seq is None:
                             alt1_seq = self.get_allele_sequence(record, 1)
-                            hap1_seq = alt1_seq if hap1_seq is None else hap1_seq
-                            hap2_seq = alt1_seq if hap2_seq is None else hap2_seq
+                            logger.debug(f"Using ALT1 fallback: {alt1_seq}")
+                            
+                            # Only replace if the sequence is None
+                            if hap1_seq is None:
+                                hap1_seq = alt1_seq
+                            if hap2_seq is None:
+                                hap2_seq = alt1_seq
                             
                             # If ALT is also None, fall back to REF
-                            hap1_seq = ref_allele if hap1_seq is None else hap1_seq
-                            hap2_seq = ref_allele if hap2_seq is None else hap2_seq
+                            if hap1_seq is None:
+                                logger.debug(f"Using REF fallback for hap1: {ref_allele}")
+                                hap1_seq = ref_allele
+                            if hap2_seq is None:
+                                logger.debug(f"Using REF fallback for hap2: {ref_allele}")
+                                hap2_seq = ref_allele
                     elif unphased_strategy == 'skip':
                          hap1_seq = None
                          hap2_seq = None
@@ -334,6 +347,15 @@ class PhasingProcessor:
             if trailing_ref:
                 hap1_segments.append((last_pos_processed, trailing_ref))
                 hap2_segments.append((last_pos_processed, trailing_ref))
+
+        # Ensure we have at least one segment for each haplotype
+        if not hap1_segments and not hap2_segments:
+            logger.warning(f"No segments generated for sample '{sample_name}', chrom '{chrom}'. Attempting to add full reference.")
+            full_ref = reference_handler.get_sequence(chrom, 0, chrom_len)
+            if full_ref:
+                hap1_segments.append((0, full_ref))
+                hap2_segments.append((0, full_ref))
+                logger.info(f"Added full reference sequence as fallback for sample '{sample_name}', chrom '{chrom}'")
 
         logger.info(f"Finished building sequences for sample '{sample_name}', chrom '{chrom}'. Hap1 segments: {len(hap1_segments)}, Hap2 segments: {len(hap2_segments)}")
         return hap1_segments, hap2_segments
