@@ -212,12 +212,15 @@ output_file: output.tsv
         # Set root logger to DEBUG to capture all messages
         root_logger.setLevel(logging.DEBUG)
         
-        # Configure the tool's logging
+        # Configure the tool's logging to DEBUG level
         self.tool.configure_logging('DEBUG')
         
         # Clear the log capture before our test messages
         log_capture.truncate(0)
         log_capture.seek(0)
+        
+        # Ensure the root logger is still at DEBUG level after tool configuration
+        root_logger.setLevel(logging.DEBUG)
         
         # Log messages using different loggers to test propagation
         main_logger = logging.getLogger('src.main')
@@ -229,11 +232,8 @@ output_file: output.tsv
         log_output = log_capture.getvalue()
         
         # Check for the presence of our test messages
-        # If the test is still failing, skip the debug message check
-        if "DEBUG:src.main:Test main debug" not in log_output:
-            self.skipTest("Debug logging not captured correctly in test discovery")
-        else:
-            self.assertIn("DEBUG:src.main:Test main debug", log_output)
+        # Check for the presence of our test messages
+        self.assertIn("DEBUG:src.main:Test main debug", log_output)
             
         self.assertIn("INFO:src.parsers:Test parser info", log_output)
         self.assertIn("WARNING:root:Test root warning", log_output)
