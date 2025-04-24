@@ -229,6 +229,7 @@ class HierarchicalExecutor:
                         logger.debug(f"Task completed: {task_id}")
                     except Exception as e:
                         # Always log at both WARNING and ERROR levels for test expectations
+                        # Force the logger to emit these messages
                         logger.warning(f"Task failed: {task_id}")
                         logger.error(f"Task execution failed: {task_id} - {type(e).__name__}: {e}")
                         self.errors[task_id] = e

@@ -299,20 +299,44 @@ class TestHierarchicalExecutor(unittest.TestCase):
         def failing_task():
             raise ValueError("Task failed intentionally")
 
-        executor = HierarchicalExecutor(fail_fast=False)
-        executor.add_task('task1', lambda: 1)
-        executor.add_task('task2', failing_task) # This task will fail
-        # Task 3 depends on task 1 (should run)
-        executor.add_task('task3', lambda dep1_res: dep1_res + 2, dependencies=['task1'])
-        # Task 4 depends on task 2 (should fail due to dependency)
-        executor.add_task('task4', lambda dep2_res: dep2_res + 5, dependencies=['task2'])
-        # Task 5 depends on task 3 (should run)
-        executor.add_task('task5', lambda dep3_res: dep3_res * 3, dependencies=['task3'])
+        # Force the logger to have a handler to ensure logs are emitted
+        logger = logging.getLogger('src.parallel.hierarchical_executor')
+        original_level = logger.level
+        original_propagate = logger.propagate
+        original_handlers = logger.handlers[:]
+        
+        # Ensure the logger has a handler and will emit warnings
+        logger.setLevel(logging.WARNING)
+        logger.propagate = True
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
 
-        # Capture expected ERROR log for task2 and WARNING logs for task4
-        # Target the specific logger used by the executor
-        with self.assertLogs('src.parallel.hierarchical_executor', level='WARNING') as cm: # Capture WARNING and above
-            results = executor.execute()
+        try:
+            executor = HierarchicalExecutor(fail_fast=False)
+            executor.add_task('task1', lambda: 1)
+            executor.add_task('task2', failing_task) # This task will fail
+            # Task 3 depends on task 1 (should run)
+            executor.add_task('task3', lambda dep1_res: dep1_res + 2, dependencies=['task1'])
+            # Task 4 depends on task 2 (should fail due to dependency)
+            executor.add_task('task4', lambda dep2_res: dep2_res + 5, dependencies=['task2'])
+            # Task 5 depends on task 3 (should run)
+            executor.add_task('task5', lambda dep3_res: dep3_res * 3, dependencies=['task3'])
+
+            # Capture expected ERROR log for task2 and WARNING logs for task4
+            # Target the specific logger used by the executor
+            with self.assertLogs('src.parallel.hierarchical_executor', level='WARNING') as cm: # Capture WARNING and above
+                results = executor.execute()
+        finally:
+            # Restore original logger configuration
+            logger.setLevel(original_level)
+            logger.propagate = original_propagate
+            for handler in logger.handlers[:]:
+                logger.removeHandler(handler)
+            for handler in original_handlers:
+                logger.addHandler(handler)
 
         # Check successful tasks
         self.assertEqual(results.get('task1'), 1)
@@ -346,15 +370,39 @@ class TestHierarchicalExecutor(unittest.TestCase):
             time.sleep(0.1)
             return 2
 
-        executor = HierarchicalExecutor(fail_fast=True, num_workers=2)
-        executor.add_task('task1', failing_task) # Will fail
-        executor.add_task('task2', slow_task)  # Should be cancelled or not complete
-        executor.add_task('task3', lambda: 3) # Might start but should be cancelled
-        executor.add_task('task4', lambda dep3_res: dep3_res + 1, dependencies=['task3']) # Should not run
+        # Force the logger to have a handler to ensure logs are emitted
+        logger = logging.getLogger('src.parallel.hierarchical_executor')
+        original_level = logger.level
+        original_propagate = logger.propagate
+        original_handlers = logger.handlers[:]
+        
+        # Ensure the logger has a handler and will emit warnings
+        logger.setLevel(logging.WARNING)
+        logger.propagate = True
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
 
-        # Use assertLogs to capture the expected ERROR/WARNING messages
-        with self.assertLogs('src.parallel.hierarchical_executor', level='WARNING') as cm:
-            results = executor.execute()
+        try:
+            executor = HierarchicalExecutor(fail_fast=True, num_workers=2)
+            executor.add_task('task1', failing_task) # Will fail
+            executor.add_task('task2', slow_task)  # Should be cancelled or not complete
+            executor.add_task('task3', lambda: 3) # Might start but should be cancelled
+            executor.add_task('task4', lambda dep3_res: dep3_res + 1, dependencies=['task3']) # Should not run
+
+            # Use assertLogs to capture the expected ERROR/WARNING messages
+            with self.assertLogs('src.parallel.hierarchical_executor', level='WARNING') as cm:
+                results = executor.execute()
+        finally:
+            # Restore original logger configuration
+            logger.setLevel(original_level)
+            logger.propagate = original_propagate
+            for handler in logger.handlers[:]:
+                logger.removeHandler(handler)
+            for handler in original_handlers:
+                logger.addHandler(handler)
 
         # Check that the failing task's error is recorded
         self.assertIn('task1', executor.errors)
