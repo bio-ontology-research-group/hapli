@@ -540,6 +540,7 @@ class VCFtoGFAConverter:
             
             if not has_segments and not has_paths:
                 logger.warning("No segments or paths were created during conversion. Creating fallback reference path.")
+                logger.info("This may happen if no variants were processed or if all segments were empty.")
                 
                 # Create a fallback reference path for each chromosome
                 for chrom in self._ref_handler.list_chromosomes():
@@ -561,6 +562,21 @@ class VCFtoGFAConverter:
                                     )
                                     self._gfa.add_line(path)
                                     logger.info(f"Added fallback reference path {ref_path_name}")
+                                    
+                                    # Verify the segment was actually added
+                                    if not hasattr(self._gfa, 'segments') or len(self._gfa.segments) == 0:
+                                        logger.warning("Segment wasn't properly added to GFA. Adding directly.")
+                                        # Try to add the segment directly to the segments collection
+                                        segment = gfapy.line.Segment(
+                                            ref_seg_id,
+                                            ref_seq,
+                                            {"LN": len(ref_seq)}
+                                        )
+                                        if hasattr(self._gfa, 'segments'):
+                                            self._gfa.segments.append(segment)
+                                        else:
+                                            # Last resort - create segments collection
+                                            self._gfa.segments = [segment]
                                     
                                     # Also create sample paths using the reference sequence
                                     # This ensures we have paths for all samples even if no variants were processed

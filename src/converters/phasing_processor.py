@@ -298,17 +298,19 @@ class PhasingProcessor:
                                     f"hap1_seq={hap1_seq}, hap2_seq={hap2_seq}")
                         
                         # If either allele is missing or None, use the first ALT as fallback
-                        if hap1_seq is None or hap2_seq is None:
+                        if hap1_seq is None or hap2_seq is None or (hap1_seq == ref_allele and hap2_seq == ref_allele):
                             # Try to get the first ALT allele
                             if record.alts and len(record.alts) > 0:
                                 alt1_seq = str(record.alts[0]).upper()
                                 logger.debug(f"Using first ALT fallback: {alt1_seq}")
                                 
-                                # Only replace if the sequence is None
-                                if hap1_seq is None:
+                                # For alt strategy, ensure we're using at least one ALT allele
+                                if hap1_seq is None or hap1_seq == ref_allele:
                                     hap1_seq = alt1_seq
+                                    logger.debug(f"Set hap1 to ALT: {alt1_seq}")
                                 if hap2_seq is None:
                                     hap2_seq = alt1_seq
+                                    logger.debug(f"Set hap2 to ALT: {alt1_seq}")
                             else:
                                 logger.debug("No ALT alleles available for fallback")
                         
@@ -319,13 +321,6 @@ class PhasingProcessor:
                         if hap2_seq is None:
                             logger.debug(f"Using REF fallback for hap2: {ref_allele}")
                             hap2_seq = ref_allele
-                            
-                        # For alt strategy, ensure we're not using REF for both haplotypes
-                        # If both ended up as REF and there are ALT alleles, use ALT for at least one
-                        if hap1_seq == ref_allele and hap2_seq == ref_allele and record.alts and len(record.alts) > 0:
-                            alt1_seq = str(record.alts[0]).upper()
-                            logger.debug(f"Both haplotypes defaulted to REF, using ALT for hap1: {alt1_seq}")
-                            hap1_seq = alt1_seq
                     elif unphased_strategy == 'skip':
                          hap1_seq = None
                          hap2_seq = None
