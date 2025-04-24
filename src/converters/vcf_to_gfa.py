@@ -476,6 +476,7 @@ class VCFtoGFAConverter:
 
                     # Build haplotype sequences by iterating through the fetched records
                     try:
+                        logger.info(f"Building haplotype sequences for sample {sample_name} with unphased_strategy={self.unphased_strategy}")
                         # Pass the list of records back as an iterator
                         hap1_segments, hap2_segments = self._phasing_processor.build_haplotype_sequences_incrementally(
                             iter(vcf_records), # Pass iterator
@@ -485,6 +486,12 @@ class VCFtoGFAConverter:
                             chrom_len, # Pass full length for trailing ref calculation
                             self.unphased_strategy
                         )
+                        
+                        # Verify we got segments back
+                        logger.info(f"Generated {len(hap1_segments)} segments for haplotype 1 and {len(hap2_segments)} segments for haplotype 2")
+                        if not hap1_segments and not hap2_segments:
+                            logger.error(f"No segments generated for sample {sample_name}. Check phasing processor implementation.")
+                            raise VCFtoGFAConversionError(f"No segments generated for sample {sample_name}")
                     except PhasingError as e:
                          logger.error(f"Error building haplotype sequences for sample {sample_name}, contig {chrom}: {e}")
                          continue # Skip this sample for this contig
