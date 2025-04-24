@@ -4,7 +4,7 @@ import itertools
 import os  # Added import
 import sys # Added import
 import argparse # Added import
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Set
 import pysam
 import gfapy
 from .reference_handler import ReferenceHandler, ReferenceHandlerError
