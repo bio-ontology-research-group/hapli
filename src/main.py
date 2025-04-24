@@ -34,7 +34,7 @@ from src.alignment.alignment_processor import AlignmentProcessor
 
 # Analysis
 from src.analysis.impact_classifier import ImpactClassifier, FeatureImpact, ImpactCategory
-from src.analysis.impact_schema import DEFAULT_SCHEMA
+from src.analysis.impact_schema import DEFAULT_SCHEMA, ImpactClassificationSchema
 from src.analysis.variant_detector import VariantDetector, Variant, VariantType
 from src.analysis.reconciliation import FeatureReconciler, ReconciliationResult
 from src.analysis.summary_generator import SummaryGenerator, AnalysisSummary, FeatureSummary
@@ -142,6 +142,14 @@ class PlaceholderReportGenerator:
         except Exception as e:
             logger.error(f"PlaceholderReportGenerator failed: {e}", exc_info=True)
             raise
+
+class PlaceholderComparativeReportGenerator:
+    def __init__(self, formatter):
+        self.formatter = formatter
+        logger.info(f"PlaceholderComparativeReportGenerator initialized with {type(formatter).__name__}")
+
+    def generate(self, comparative_data: Dict[str, Any], output_file: Optional[str]):
+        logger.info("Placeholder comparative report generated")
 
 class HaplotypeAnnotationTool:
     def __init__(self):
