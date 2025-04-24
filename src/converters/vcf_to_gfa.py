@@ -26,11 +26,7 @@ class VCFtoGFAConverter:
 
     def __init__(self, vcf_filepath: str, fasta_filepath: str, output_gfa_filepath: str,
                  path_template: str = "{sample}_hap{hap}", unphased_strategy: str = 'ref'):
-        # Increase recursion limit to handle GFApy's recursive validation
-        # Default is typically 1000, increasing to 3000 should be sufficient
-        current_limit = sys.getrecursionlimit()
-        if current_limit < 3000:
-            sys.setrecursionlimit(3000)
+        # Don't increase recursion limit - we'll avoid GFApy's recursive validation entirely
         """
         Initializes the VCFtoGFAConverter.
 
@@ -73,14 +69,16 @@ class VCFtoGFAConverter:
         self._vcf_reader: Optional[pysam.VariantFile] = None
         self._ref_handler: Optional[ReferenceHandler] = None
         self._phasing_processor: Optional[PhasingProcessor] = None
-        self._gfa: Optional[gfapy.Gfa] = None
+        # Don't use gfapy.Gfa object - use direct GFA line management instead
+        self._gfa_lines: List[str] = []
         self._segment_id_counter = 0
         # Cache: sequence -> segment_id
         self._segment_cache: Dict[str, str] = {}
         # Cache: (from_seg, from_orient, to_seg, to_orient) -> True
         self._link_cache: Dict[Tuple[str, str, str, str], bool] = {}
-        # Raw lines for direct GFA output
-        self._raw_lines: List[str] = []
+        # Track segments, links and paths for validation
+        self._segments: Set[str] = set()
+        self._paths: Set[str] = set()
 
         logger.info("VCFtoGFAConverter initialized.")
         logger.info(f"  VCF: {vcf_filepath}")
@@ -99,19 +97,16 @@ class VCFtoGFAConverter:
             # Use require_index=True if region fetching is essential and index MUST exist
             self._vcf_reader = pysam.VariantFile(self.vcf_filepath, "r")
             self._phasing_processor = PhasingProcessor(self._vcf_reader)
-            # Initialize GFA with minimal validation level to avoid recursion issues
-            try:
-                # Try with vlevel parameter if supported
-                self._gfa = gfapy.Gfa(vlevel=0)
-            except TypeError:
-                # Fall back to default constructor if vlevel not supported
-                self._gfa = gfapy.Gfa()
-            
             # Initialize our collections
+            self._gfa_lines = []
             self._segment_id_counter = 0
             self._segment_cache = {}
             self._link_cache = {}
-            self._gfa._lines = []  # Add raw lines collection
+            self._segments = set()
+            self._paths = set()
+            
+            # Add GFA header
+            self._gfa_lines.append("H\tVN:Z:1.0")
             logger.info("Resources initialized successfully.")
         except FileNotFoundError as e:
             logger.error(f"Input file not found: {e}")
@@ -139,7 +134,9 @@ class VCFtoGFAConverter:
         self._vcf_reader = None
         self._ref_handler = None
         self._phasing_processor = None
-        self._gfa = None
+        self._gfa_lines = []
+        self._segments = set()
+        self._paths = set()
         self._segment_cache = {}
         self._link_cache = {}
         logger.info("Resources cleaned up.")
@@ -169,52 +166,15 @@ class VCFtoGFAConverter:
                      sequence = "".join([c if c in valid_chars else 'N' for c in sequence])
                      logger.warning(f"Segment {segment_id} sequence contained non-ACGTN characters (preview: '{original_seq_preview}...'). Replaced with 'N'.")
 
-                # Create segment manually to avoid GFApy's validation recursion
-                # Instead of using gfapy.line.Segment, we'll create a minimal dict representation
-                # and add it directly to the GFA structure
+                # Create segment line directly
+                segment_line = f"S\t{segment_id}\t{sequence}\tLN:i:{len(sequence)}"
+                self._gfa_lines.append(segment_line)
+                self._segments.add(segment_id)
                 
-                # Store in segment cache first
+                # Store in segment cache
                 self._segment_cache[sequence] = segment_id
                 
-                # Create a minimal segment representation
-                if not hasattr(self._gfa, 'segments'):
-                    self._gfa.segments = []
-                
-                # Create a simple segment object without using gfapy's constructor
-                segment_dict = {
-                    'name': segment_id,
-                    'sequence': sequence,
-                    'LN': len(sequence)
-                }
-                
-                # Add to GFA structure directly
-                try:
-                    # Create a minimal segment line
-                    segment_line = f"S\t{segment_id}\t{sequence}\tLN:i:{len(sequence)}"
-                    # Add to the GFA's raw lines
-                    if not hasattr(self._gfa, '_lines'):
-                        self._gfa._lines = []
-                    self._gfa._lines.append(segment_line)
-                    
-                    # Also try to add as a proper segment if possible
-                    try:
-                        # Try with minimal validation
-                        segment = gfapy.line.segment.GFA1.from_string(segment_line)
-                        self._gfa.segments.append(segment)
-                    except:
-                        # If that fails, create a very basic object
-                        class MinimalSegment:
-                            def __init__(self, name, sequence, length):
-                                self.name = name
-                                self.sequence = sequence
-                                self.virtual = False  # Avoid recursion in virtual property
-                                self.tags = {'LN': gfapy.tag.Tag('LN', length, 'i')}
-                        
-                        self._gfa.segments.append(MinimalSegment(segment_id, sequence, len(sequence)))
-                except Exception as inner_e:
-                    logger.warning(f"Could not add segment to GFA structure: {inner_e}")
-                    # Continue anyway since we have the segment ID in cache
-                
+                logger.debug(f"Created segment {segment_id} with length {len(sequence)}")
                 return segment_id
             except Exception as e:
                 logger.error(f"Failed to create GFA segment for sequence '{sequence[:20]}...': {e}")
@@ -238,44 +198,13 @@ class VCFtoGFAConverter:
              return
 
         try:
-            # Create a link line directly to avoid GFApy's validation recursion
+            # Create a link line directly
             link_line = f"L\t{from_segment_id}\t{from_orient}\t{to_segment_id}\t{to_orient}\t{cigar}"
-            
-            # Add to GFA structure directly
-            if not hasattr(self._gfa, '_lines'):
-                self._gfa._lines = []
-            self._gfa._lines.append(link_line)
-            
-            # Also try to add as a proper link if possible
-            try:
-                # Initialize links collection if needed
-                if not hasattr(self._gfa, 'links'):
-                    self._gfa.links = []
-                
-                # Try with minimal validation
-                try:
-                    link = gfapy.line.edge.link.GFA1.from_string(link_line)
-                    self._gfa.links.append(link)
-                except:
-                    # If that fails, create a very basic object
-                    class MinimalLink:
-                        def __init__(self, from_segment, from_orient, to_segment, to_orient):
-                            self.from_segment = from_segment
-                            self.from_orient = from_orient
-                            self.to_segment = to_segment
-                            self.to_orient = to_orient
-                            self.virtual = False  # Avoid recursion in virtual property
-                    
-                    self._gfa.links.append(MinimalLink(from_segment_id, from_orient, to_segment_id, to_orient))
-            except Exception as inner_e:
-                logger.warning(f"Could not add link to GFA structure: {inner_e}")
-                # Continue anyway since we have the link in the raw lines
-            
+            self._gfa_lines.append(link_line)
             self._link_cache[link_key] = True # Add to cache
-            # logger.debug(f"Added link: {from_segment_id}{from_orient} -> {to_segment_id}{to_orient}")
+            logger.debug(f"Added link: {from_segment_id}{from_orient} -> {to_segment_id}{to_orient}")
         except Exception as e:
             logger.error(f"Failed to add GFA link {from_segment_id}{from_orient} -> {to_segment_id}{to_orient}: {e}")
-            # Don't raise, just log the error and continue
             logger.error(f"Error details: {e}")
 
     def _build_gfa_path_and_links(self, path_name: str, segment_tuples: List[Tuple[int, str]]):
@@ -321,7 +250,7 @@ class VCFtoGFAConverter:
             # Overlaps are typically '*' unless precisely calculated. Use '*' for simplicity.
             overlaps = ["*"] * (len(path_segment_ids) - 1) if len(path_segment_ids) > 1 else []
 
-            # Create path line directly to avoid GFApy's validation recursion
+            # Create path line directly
             # Format: P<tab>name<tab>segment_names<tab>orientations<tab>overlaps
             segment_names_str = ",".join(path_segment_ids)
             orientations_str = ",".join(orientations)
@@ -352,39 +281,8 @@ class VCFtoGFAConverter:
                 path_line += "\t" + "\t".join(tags)
             
             # Add to GFA structure directly
-            if not hasattr(self._gfa, '_lines'):
-                self._gfa._lines = []
-            self._gfa._lines.append(path_line)
-            
-            # Also try to add as a proper path if possible
-            try:
-                # Initialize paths collection if needed
-                if not hasattr(self._gfa, 'paths'):
-                    self._gfa.paths = []
-                
-                # Try with minimal validation
-                try:
-                    path = gfapy.line.group.path.Path.from_string(path_line)
-                    self._gfa.paths.append(path)
-                except:
-                    # If that fails, create a very basic object
-                    class MinimalPath:
-                        def __init__(self, name, segment_names, orientations, tags=None):
-                            self.name = name
-                            self.segment_names = segment_names
-                            self.orientations = orientations
-                            self.virtual = False  # Avoid recursion in virtual property
-                            self.tags = {}
-                            if tags:
-                                for tag in tags:
-                                    key, value = tag.split(':', 1)[0], tag.split(':', 2)[2]
-                                    self.tags[key] = value
-                    
-                    path_tags = tags if tags else []
-                    self._gfa.paths.append(MinimalPath(path_name, path_segment_ids, orientations, path_tags))
-            except Exception as inner_e:
-                logger.warning(f"Could not add path to GFA structure: {inner_e}")
-                # Continue anyway since we have the path in the raw lines
+            self._gfa_lines.append(path_line)
+            self._paths.add(path_name)
             
             logger.info(f"Added path {path_name} with {len(path_segment_ids)} segments.")
         except Exception as e:
@@ -405,20 +303,7 @@ class VCFtoGFAConverter:
              raise VCFtoGFAConversionError("Initialization failed. Cannot proceed.")
 
         try:
-            # Add GFA header (optional but recommended)
-            # Using GFA1 for broader compatibility unless GFA2 features are needed
-            # Create a simple header with "H" tag which is the minimal valid header
-            header_line = gfapy.line.Header("H")
-            try:
-                self._gfa.add_line(header_line)
-            except RecursionError:
-                # If recursion error occurs, try a more direct approach
-                # Add to the headers collection directly
-                if hasattr(self._gfa, 'headers') and hasattr(self._gfa.headers, 'append'):
-                    self._gfa.headers.append(header_line)
-                else:
-                    # Last resort - just add to the lines collection
-                    self._gfa.lines["H"] = header_line
+            # Header is already added during initialization
 
             # Determine contigs to process
             contigs_to_process = []
@@ -592,17 +477,15 @@ class VCFtoGFAConverter:
                  logger.info(f"Created output directory: {output_dir}")
 
             # Check if we have any content to write
-            has_segments = len(self._gfa.segments) > 0 if hasattr(self._gfa, 'segments') else False
-            has_paths = len(self._gfa.paths) > 0 if hasattr(self._gfa, 'paths') else False
-            has_raw_lines = hasattr(self._gfa, '_lines') and len(self._gfa._lines) > 0
+            has_segments = len(self._segments) > 0
+            has_paths = len(self._paths) > 0
             
             # Debug the GFA content before writing
-            logger.debug(f"GFA content before writing: segments={len(self._gfa.segments) if hasattr(self._gfa, 'segments') else 0}, "
-                        f"links={len(self._gfa.links) if hasattr(self._gfa, 'links') else 0}, "
-                        f"paths={len(self._gfa.paths) if hasattr(self._gfa, 'paths') else 0}, "
-                        f"raw_lines={len(self._gfa._lines) if has_raw_lines else 0}")
+            logger.debug(f"GFA content before writing: segments={len(self._segments)}, "
+                        f"paths={len(self._paths)}, "
+                        f"total_lines={len(self._gfa_lines)}")
             
-            if not has_segments and not has_paths and not has_raw_lines:
+            if not has_segments and not has_paths:
                 logger.warning("No segments or paths were created during conversion. Creating fallback reference path.")
                 logger.info("This may happen if no variants were processed or if all segments were empty.")
                 
@@ -618,17 +501,10 @@ class VCFtoGFAConverter:
                                 # Create a path for the reference directly
                                 ref_path_name = f"{chrom}_ref"
                                 
-                                # Create segment and path lines directly
-                                if not hasattr(self._gfa, '_lines'):
-                                    self._gfa._lines = []
-                                
-                                # Add segment line if not already added
-                                segment_line = f"S\t{ref_seg_id}\t{ref_seq}\tLN:i:{len(ref_seq)}"
-                                self._gfa._lines.append(segment_line)
-                                
                                 # Add reference path
                                 path_line = f"P\t{ref_path_name}\t{ref_seg_id}\t+\t*"
-                                self._gfa._lines.append(path_line)
+                                self._gfa_lines.append(path_line)
+                                self._paths.add(ref_path_name)
                                 logger.info(f"Added fallback reference path {ref_path_name}")
                                 
                                 # Also create sample paths using the reference sequence
@@ -639,37 +515,22 @@ class VCFtoGFAConverter:
                                     for path_name in [path1_name, path2_name]:
                                         hap_num = 1 if path_name.endswith("_hap1") else 2
                                         path_line = f"P\t{path_name}\t{ref_seg_id}\t+\t*\tSM:Z:{sample_name}\tHP:i:{hap_num}"
-                                        self._gfa._lines.append(path_line)
+                                        self._gfa_lines.append(path_line)
+                                        self._paths.add(path_name)
                                         logger.info(f"Added fallback sample path {path_name}")
             
             # Write the GFA file
             with open(self.output_gfa_filepath, 'w') as outfile:
-                # First write the header
-                outfile.write("H\tVN:Z:1.0\n")
-                
-                # If we have raw lines, write them directly
-                if has_raw_lines:
-                    # Filter out any header lines we might have added earlier
-                    non_header_lines = [line for line in self._gfa._lines if not line.startswith("H\t")]
-                    for line in non_header_lines:
+                # Write all lines
+                if self._gfa_lines:
+                    for line in self._gfa_lines:
                         outfile.write(line + "\n")
-                    logger.info(f"Wrote {len(non_header_lines)} raw lines to GFA file")
-                # If we have no content at all, add a comment
-                elif not has_segments and not has_paths:
+                    logger.info(f"Wrote {len(self._gfa_lines)} lines to GFA file")
+                else:
+                    # If we have no content at all, add a comment
+                    outfile.write("H\tVN:Z:1.0\n")
                     outfile.write("# No segments or paths were created during conversion\n")
                     logger.info("Wrote minimal GFA with header only")
-                # Otherwise try to use gfapy's string representation
-                else:
-                    try:
-                        gfa_content = str(self._gfa)
-                        # Remove any header lines from gfapy's output since we already wrote our own
-                        gfa_lines = gfa_content.split('\n')
-                        non_header_lines = [line for line in gfa_lines if not line.startswith("H\t")]
-                        outfile.write('\n'.join(non_header_lines))
-                        logger.info(f"Wrote {len(non_header_lines)} lines from gfapy to GFA file")
-                    except Exception as e:
-                        logger.error(f"Failed to get string representation from gfapy: {e}")
-                        outfile.write("# Error converting GFA structure to string\n")
             
             logger.info("GFA file written successfully.")
 
