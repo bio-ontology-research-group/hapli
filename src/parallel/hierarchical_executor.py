@@ -226,6 +226,7 @@ class HierarchicalExecutor:
                         self.errors[task_id] = e
                         
                         if self.fail_fast:
+                            logger.warning(f"Fail fast enabled. Stopping execution due to task failure: {task_id}")
                             logger.error(f"Fail fast enabled. Stopping execution due to task failure: {task_id}")
                             
                             # Mark remaining tasks in this level as failed
@@ -233,16 +234,19 @@ class HierarchicalExecutor:
                                 if remaining_id != task_id and not remaining_future.done():
                                     remaining_future.cancel()
                                     self.errors[remaining_id] = RuntimeError(f"Cancelled due to fail_fast from {task_id}")
+                                    logger.warning(f"Cancelling task {remaining_id} due to fail_fast")
                             
                             # Mark all tasks in future levels as failed
                             for future_level in range(level + 1, len(execution_plan)):
                                 for future_task_id in execution_plan[future_level]:
                                     self.errors[future_task_id] = RuntimeError(f"Execution stopped due to fail_fast on task {task_id}")
+                                    logger.warning(f"Skipping task {future_task_id} due to fail_fast")
                             
                             # Also mark all tasks in current level that haven't completed as failed
                             for current_task_id in execution_plan[level]:
                                 if current_task_id != task_id and current_task_id not in self.results and current_task_id not in self.errors:
                                     self.errors[current_task_id] = RuntimeError(f"Execution stopped due to fail_fast on task {task_id}")
+                                    logger.warning(f"Marking task {current_task_id} as failed due to fail_fast")
                             
                             return self.results  # Early return
                 
