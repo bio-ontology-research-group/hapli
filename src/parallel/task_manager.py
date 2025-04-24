@@ -401,6 +401,7 @@ class ThreadWorkerPool(BaseWorkerPool):
                     logger.error(f"Task failed with exception: {e}", exc_info=True)
                     # Log to root logger as well to ensure it's captured in tests
                     logging.getLogger().error(f"Task failed with exception (root logger): {e}", exc_info=True)
+                    # Ensure the error is propagated
                     raise  # Re-raise the exception
 
         except Exception as e:
