@@ -305,9 +305,9 @@ class PhasingProcessor:
                                 logger.debug(f"Using first ALT fallback: {alt1_seq}")
                                 
                                 # For alt strategy, ensure we're using at least one ALT allele
-                                if hap1_seq is None or hap1_seq == ref_allele:
-                                    hap1_seq = alt1_seq
-                                    logger.debug(f"Set hap1 to ALT: {alt1_seq}")
+                                # Always set hap1 to ALT to ensure we generate different segments
+                                hap1_seq = alt1_seq
+                                logger.debug(f"Set hap1 to ALT: {alt1_seq}")
                                 if hap2_seq is None:
                                     hap2_seq = alt1_seq
                                     logger.debug(f"Set hap2 to ALT: {alt1_seq}")
