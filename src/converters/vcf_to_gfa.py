@@ -299,7 +299,7 @@ class VCFtoGFAConverter:
                     or "chrom" to process only a specific contig. Requires VCF index.
         """
         self._initialize_resources()
-        if not self._vcf_reader or not self._ref_handler or not self._phasing_processor or not self._gfa:
+        if not self._vcf_reader or not self._ref_handler or not self._phasing_processor:
              raise VCFtoGFAConversionError("Initialization failed. Cannot proceed.")
 
         try:
@@ -393,24 +393,10 @@ class VCFtoGFAConverter:
                              # Create a simple path representing the reference for this contig/region
                              ref_path_name = f"{chrom}_ref" + (f"_{region_start_0based+1}_{region_end_0based}" if region else "")
                              try:
-                                 path = gfapy.line.Path(
-                                     path_name=ref_path_name,
-                                     segment_names=[ref_seg_id],
-                                     orientations=["+"],
-                                     overlaps=[]
-                                 )
-                                 # Add reference path with validation disabled
-                                 try:
-                                     # First try direct add_line
-                                     self._gfa.add_line(path)
-                                 except RecursionError:
-                                     # If recursion error occurs, try a more direct approach
-                                     # Add to the paths collection directly
-                                     if hasattr(self._gfa, 'paths') and hasattr(self._gfa.paths, 'append'):
-                                         self._gfa.paths.append(path)
-                                     else:
-                                         # Last resort - just add to the lines collection
-                                         self._gfa.lines[path.name] = path
+                                 # Create path line directly
+                                 path_line = f"P\t{ref_path_name}\t{ref_seg_id}\t+\t*"
+                                 self._gfa_lines.append(path_line)
+                                 self._paths.add(ref_path_name)
                                  logger.info(f"Added reference path {ref_path_name} for contig {chrom}.")
                              except Exception as e:
                                  logger.error(f"Failed to add reference path for {chrom}: {e}")
