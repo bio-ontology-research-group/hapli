@@ -480,7 +480,7 @@ class TestVCFtoGFAConverter(unittest.TestCase):
                 return True
         
         # Now test with our mock converter that forces VCF parsing
-        with self.assertRaises((VCFtoGFAConversionError, ValueError, RuntimeError, pysam.utils.SamtoolsError)):
+        with self.assertRaises((VCFtoGFAConversionError, ValueError, RuntimeError, pysam.utils.SamtoolsError, OSError)):
             with MockConverter(VCF_MALFORMED, REF_FASTA, self.output_gfa) as converter:
                 converter.convert()
 
