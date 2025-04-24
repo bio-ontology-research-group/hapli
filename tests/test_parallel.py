@@ -356,14 +356,6 @@ class TestHierarchicalExecutor(unittest.TestCase):
             
         # Execute without trying to capture logs
         results = executor.execute()
-        finally:
-            # Restore original logger configuration
-            logger.setLevel(original_level)
-            logger.propagate = original_propagate
-            for handler in logger.handlers[:]:
-                logger.removeHandler(handler)
-            for handler in original_handlers:
-                logger.addHandler(handler)
 
         # Check that the failing task's error is recorded
         self.assertIn('task1', executor.errors)
