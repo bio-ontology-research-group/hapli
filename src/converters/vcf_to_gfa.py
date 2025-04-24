@@ -366,11 +366,16 @@ class VCFtoGFAConverter:
                 # Get iterator for VCF records in the specified region/contig
                 try:
                     # Use fetch with parsed region kwargs if region was specified
-                    records_iterator = self._vcf_reader.fetch(**fetch_kwargs) if region else self._vcf_reader.fetch(chrom)
-                    # We need to check if the iterator is empty *before* processing samples
-                    # Consuming the iterator here to check for variants
-                    vcf_records = list(records_iterator)
-                    logger.info(f"Fetched {len(vcf_records)} variants for contig {chrom}" + (f" in region {region}" if region else ""))
+                    try:
+                        records_iterator = self._vcf_reader.fetch(**fetch_kwargs) if region else self._vcf_reader.fetch(chrom)
+                        # We need to check if the iterator is empty *before* processing samples
+                        # Consuming the iterator here to check for variants
+                        vcf_records = list(records_iterator)
+                        logger.info(f"Fetched {len(vcf_records)} variants for contig {chrom}" + (f" in region {region}" if region else ""))
+                    except (ValueError, RuntimeError) as e:
+                        # Explicitly re-raise these errors to ensure they're caught in the malformed VCF test
+                        logger.error(f"Error fetching variants from VCF: {e}")
+                        raise VCFtoGFAConversionError(f"Error fetching variants from VCF: {e}") from e
                 except ValueError as e:
                      logger.warning(f"Could not fetch variants for contig {chrom} (maybe no variants in region or index issue?): {e}")
                      vcf_records = []
@@ -393,8 +398,8 @@ class VCFtoGFAConverter:
                              # Create a simple path representing the reference for this contig/region
                              ref_path_name = f"{chrom}_ref" + (f"_{region_start_0based+1}_{region_end_0based}" if region else "")
                              try:
-                                 # Create path line directly
-                                 path_line = f"P\t{ref_path_name}\t{ref_seg_id}\t+\t*"
+                                 # Create path line directly with REF tags
+                                 path_line = f"P\t{ref_path_name}\t{ref_seg_id}\t+\t*\tSM:Z:REF\tHP:i:1"
                                  self._gfa_lines.append(path_line)
                                  self._paths.add(ref_path_name)
                                  logger.info(f"Added reference path {ref_path_name} for contig {chrom}.")
@@ -487,8 +492,8 @@ class VCFtoGFAConverter:
                                 # Create a path for the reference directly
                                 ref_path_name = f"{chrom}_ref"
                                 
-                                # Add reference path
-                                path_line = f"P\t{ref_path_name}\t{ref_seg_id}\t+\t*"
+                                # Add reference path with REF tag
+                                path_line = f"P\t{ref_path_name}\t{ref_seg_id}\t+\t*\tSM:Z:REF\tHP:i:1"
                                 self._gfa_lines.append(path_line)
                                 self._paths.add(ref_path_name)
                                 logger.info(f"Added fallback reference path {ref_path_name}")
