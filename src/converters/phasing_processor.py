@@ -210,7 +210,7 @@ class PhasingProcessor:
         hap2_segments: List[Tuple[int, str]] = []
         last_pos_processed = 0 # 0-based coordinate tracking the end of the last processed segment/variant
 
-        logger.info(f"Building haplotype sequences incrementally for sample '{sample_name}', chrom '{chrom}'")
+        logger.info(f"Building haplotype sequences incrementally for sample '{sample_name}', chrom '{chrom}', unphased_strategy='{unphased_strategy}'")
 
         for record in records_iterator:
             # VCF position is 1-based, convert to 0-based start
@@ -244,6 +244,11 @@ class PhasingProcessor:
             hap1_seq, hap2_seq = None, None
             sample_data = record.samples[sample_name]
             is_phased = sample_data.phased
+            
+            # Log variant details for debugging
+            logger.debug(f"Processing variant at {chrom}:{record.pos} for {sample_name}: "
+                         f"REF={record.ref}, ALT={record.alts}, "
+                         f"GT={sample_data.get('GT')}, Phased={is_phased}")
 
             if hap_alleles_idx is None or hap_alleles_idx == (None, None):
                 # Handle missing/invalid genotype based on strategy
@@ -268,10 +273,20 @@ class PhasingProcessor:
                         hap1_seq = self.get_allele_sequence(record, 0) # REF
                         hap2_seq = self.get_allele_sequence(record, 0) # REF
                     elif unphased_strategy == 'alt':
-                        # Use first ALT for both if available, otherwise REF
-                        alt1_seq = self.get_allele_sequence(record, 1)
-                        hap1_seq = alt1_seq if alt1_seq is not None else ref_allele
-                        hap2_seq = alt1_seq if alt1_seq is not None else ref_allele
+                        # Use the actual alleles from the unphased genotype
+                        # This is the key fix - we should use the actual GT values, not just ALT1
+                        hap1_seq = self.get_allele_sequence(record, hap1_idx)
+                        hap2_seq = self.get_allele_sequence(record, hap2_idx)
+                        
+                        # If either allele is missing, use the first ALT as fallback
+                        if hap1_seq is None or hap2_seq is None:
+                            alt1_seq = self.get_allele_sequence(record, 1)
+                            hap1_seq = alt1_seq if hap1_seq is None else hap1_seq
+                            hap2_seq = alt1_seq if hap2_seq is None else hap2_seq
+                            
+                            # If ALT is also None, fall back to REF
+                            hap1_seq = ref_allele if hap1_seq is None else hap1_seq
+                            hap2_seq = ref_allele if hap2_seq is None else hap2_seq
                     elif unphased_strategy == 'skip':
                          hap1_seq = None
                          hap2_seq = None
