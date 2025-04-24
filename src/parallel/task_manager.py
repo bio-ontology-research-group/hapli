@@ -306,7 +306,12 @@ class ProcessWorkerPool(BaseWorkerPool):
                 self.progress_tracker.increment(len(tasks))
 
         except RecursionError as e:
+             # Log with both the module logger and root logger
              logger.error(f"RecursionError during ProcessPool execution: {e}", exc_info=True)
+             # Ensure the root logger also gets the message for test capture
+             root_logger = logging.getLogger()
+             root_logger.error(f"RecursionError during ProcessPool execution: {e}", exc_info=True)
+             
              self._close_pool() # Ensure pool is closed on error
              # For tests that intentionally trigger RecursionError, don't stop other tests
              if "simulated" in str(e):
