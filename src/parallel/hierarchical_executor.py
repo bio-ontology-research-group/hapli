@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, Future
 from src.parallel.task_manager import create_worker_pool
 
 # Use the logger for this specific module
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('src.parallel.hierarchical_executor')
 
 @dataclass
 class Task:
