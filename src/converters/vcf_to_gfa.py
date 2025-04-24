@@ -533,12 +533,47 @@ class VCFtoGFAConverter:
             has_segments = len(self._gfa.segments) > 0 if hasattr(self._gfa, 'segments') else False
             has_paths = len(self._gfa.paths) > 0 if hasattr(self._gfa, 'paths') else False
             
+            # Debug the GFA content before writing
+            logger.debug(f"GFA content before writing: segments={len(self._gfa.segments) if hasattr(self._gfa, 'segments') else 0}, "
+                        f"links={len(self._gfa.links) if hasattr(self._gfa, 'links') else 0}, "
+                        f"paths={len(self._gfa.paths) if hasattr(self._gfa, 'paths') else 0}")
+            
             if not has_segments and not has_paths:
-                logger.warning("No segments or paths were created during conversion. GFA will be empty.")
-                # Create a minimal valid GFA with a header comment to avoid empty file
+                logger.warning("No segments or paths were created during conversion. Creating fallback reference path.")
+                
+                # Create a fallback reference path for each chromosome
+                for chrom in self._ref_handler.list_chromosomes():
+                    chrom_len = self._ref_handler.get_chrom_length(chrom)
+                    if chrom_len:
+                        ref_seq = self._ref_handler.get_sequence(chrom, 0, chrom_len)
+                        if ref_seq:
+                            # Create a segment for the reference
+                            ref_seg_id = self._get_or_create_segment(ref_seq)
+                            if ref_seg_id:
+                                # Create a path for the reference
+                                ref_path_name = f"{chrom}_ref"
+                                try:
+                                    path = gfapy.line.Path(
+                                        path_name=ref_path_name,
+                                        segment_names=[ref_seg_id],
+                                        orientations=["+"],
+                                        overlaps=[]
+                                    )
+                                    self._gfa.add_line(path)
+                                    logger.info(f"Added fallback reference path {ref_path_name}")
+                                except Exception as e:
+                                    logger.error(f"Failed to add fallback reference path: {e}")
+                
+                # Write the GFA file with at least a header
                 with open(self.output_gfa_filepath, 'w') as outfile:
-                    outfile.write("H\tVN:Z:1.0\n")
-                    outfile.write("# No segments or paths were created during conversion\n")
+                    gfa_content = str(self._gfa)
+                    if not gfa_content.strip():
+                        # If still empty, create a minimal valid GFA
+                        outfile.write("H\tVN:Z:1.0\n")
+                        outfile.write("# No segments or paths were created during conversion\n")
+                    else:
+                        outfile.write(gfa_content)
+                    logger.info(f"Wrote fallback GFA content to file")
             else:
                 with open(self.output_gfa_filepath, 'w') as outfile:
                     # Use gfapy's __str__ method for output

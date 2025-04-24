@@ -282,24 +282,28 @@ class PhasingProcessor:
                         logger.debug(f"Unphased GT {hap1_idx}/{hap2_idx} for {sample_name} at {chrom}:{record.pos}. "
                                     f"hap1_seq={hap1_seq}, hap2_seq={hap2_seq}")
                         
-                        # If either allele is missing, use the first ALT as fallback
+                        # If either allele is missing or None, use the first ALT as fallback
                         if hap1_seq is None or hap2_seq is None:
-                            alt1_seq = self.get_allele_sequence(record, 1)
-                            logger.debug(f"Using ALT1 fallback: {alt1_seq}")
-                            
-                            # Only replace if the sequence is None
-                            if hap1_seq is None:
-                                hap1_seq = alt1_seq
-                            if hap2_seq is None:
-                                hap2_seq = alt1_seq
-                            
-                            # If ALT is also None, fall back to REF
-                            if hap1_seq is None:
-                                logger.debug(f"Using REF fallback for hap1: {ref_allele}")
-                                hap1_seq = ref_allele
-                            if hap2_seq is None:
-                                logger.debug(f"Using REF fallback for hap2: {ref_allele}")
-                                hap2_seq = ref_allele
+                            # Try to get the first ALT allele
+                            if record.alts and len(record.alts) > 0:
+                                alt1_seq = record.alts[0]
+                                logger.debug(f"Using first ALT fallback: {alt1_seq}")
+                                
+                                # Only replace if the sequence is None
+                                if hap1_seq is None:
+                                    hap1_seq = alt1_seq
+                                if hap2_seq is None:
+                                    hap2_seq = alt1_seq
+                            else:
+                                logger.debug("No ALT alleles available for fallback")
+                        
+                        # Final fallback to REF if still None
+                        if hap1_seq is None:
+                            logger.debug(f"Using REF fallback for hap1: {ref_allele}")
+                            hap1_seq = ref_allele
+                        if hap2_seq is None:
+                            logger.debug(f"Using REF fallback for hap2: {ref_allele}")
+                            hap2_seq = ref_allele
                     elif unphased_strategy == 'skip':
                          hap1_seq = None
                          hap2_seq = None
