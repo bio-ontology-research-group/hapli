@@ -391,7 +391,11 @@ class ThreadWorkerPool(BaseWorkerPool):
             # Wait for all futures to complete and place results in the correct positions
             for future in as_completed(list(future_to_index.keys())):
                 index = future_to_index[future]
-                results[index] = future.result()  # future.result() re-raises exceptions
+                try:
+                    results[index] = future.result()  # future.result() re-raises exceptions
+                except Exception as e:
+                    logger.error(f"Task failed with exception: {e}", exc_info=True)
+                    raise  # Re-raise the exception
 
         except Exception as e:
              logger.error(f"Error during ThreadPoolExecutor execution: {e}", exc_info=True)

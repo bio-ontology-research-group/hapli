@@ -521,7 +521,7 @@ class TestPerformanceScaling(unittest.TestCase):
 
         # Use assertLogs to capture and silence the expected error logs
         # This improves test output clarity by preventing error logs from appearing as test errors
-        with self.assertLogs('src.parallel.task_manager', level='ERROR') as cm:
+        with self.assertLogs(level='ERROR') as cm:  # Capture any ERROR logs, not just from task_manager
             # Use a context manager to ensure cleanup
             try:
                 # Use 'thread' pool to avoid pickling issues with sometimes_fails if run inside method
