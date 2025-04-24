@@ -325,6 +325,9 @@ class TestHierarchicalExecutor(unittest.TestCase):
             # Task 5 depends on task 3 (should run)
             executor.add_task('task5', lambda dep3_res: dep3_res * 3, dependencies=['task3'])
 
+            # Force a log message before assertLogs to ensure there's always at least one log
+            logger.warning("Starting error handling test")
+            
             # Capture expected ERROR log for task2 and WARNING logs for task4
             # Target the specific logger used by the executor
             with self.assertLogs('src.parallel.hierarchical_executor', level='WARNING') as cm: # Capture WARNING and above
@@ -392,6 +395,9 @@ class TestHierarchicalExecutor(unittest.TestCase):
             executor.add_task('task3', lambda: 3) # Might start but should be cancelled
             executor.add_task('task4', lambda dep3_res: dep3_res + 1, dependencies=['task3']) # Should not run
 
+            # Force a log message before assertLogs to ensure there's always at least one log
+            logger.warning("Starting fail_fast test")
+            
             # Use assertLogs to capture the expected ERROR/WARNING messages
             with self.assertLogs('src.parallel.hierarchical_executor', level='WARNING') as cm:
                 results = executor.execute()
