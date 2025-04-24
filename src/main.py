@@ -853,12 +853,13 @@ class HaplotypeAnnotationTool:
                                   feature_summaries_dict[feat_id] = {
                                       "feature_id": feat_summary.feature_id,
                                       "feature_type": feat_summary.feature_type,
-                                      "impact_type": feat_summary.impact_type.name if feat_summary.impact_type else "UNKNOWN",
+                                      # FIX: Use .value for JSON serialization
+                                      "impact_type": feat_summary.impact_type.value if feat_summary.impact_type else "unknown",
                                       "sequence_identity": feat_summary.sequence_identity,
                                       "coverage": feat_summary.coverage,
                                       "path_id": feat_summary.path_id
                                   }
-                          
+
                           summaries_dict[path_id] = {
                                "path_id": summary.path_id,
                                "feature_count": summary.feature_count,
@@ -937,14 +938,14 @@ class HaplotypeAnnotationTool:
         except ConfigurationError as e:
             # Create a clear error message that includes the exact exception text
             error_msg = f"Configuration error: {str(e)}"
-            
+
             # Log to module logger
             logger.error(error_msg)
-            
+
             # Log directly to the root logger to ensure it's captured in tests
             logging.error(error_msg)
             logging.error(f"Application will exit due to configuration error")
-            
+
             exit_code = 1
         except Exception as e:
             logger.critical(f"A critical unexpected error occurred: {e}", exc_info=True)
