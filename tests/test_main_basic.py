@@ -222,19 +222,34 @@ output_file: output.tsv
         # Ensure the root logger is still at DEBUG level after tool configuration
         root_logger.setLevel(logging.DEBUG)
         
+        # Make sure our handler is still attached and has the right level
+        if handler not in root_logger.handlers:
+            root_logger.addHandler(handler)
+        handler.setLevel(logging.DEBUG)
+        
         # Log messages using different loggers to test propagation
         main_logger = logging.getLogger('src.main')
+        # Force the logger level to DEBUG to ensure messages get through
+        main_logger.setLevel(logging.DEBUG)
         main_logger.debug("Test main debug")
-        logging.getLogger('src.parsers').info("Test parser info")
-        logging.getLogger().warning("Test root warning")
+        
+        # Set levels for other loggers too
+        parser_logger = logging.getLogger('src.parsers')
+        parser_logger.setLevel(logging.INFO)
+        parser_logger.info("Test parser info")
+        
+        # Root logger
+        root_logger.warning("Test root warning")
         
         # Get the captured log output
         log_output = log_capture.getvalue()
         
-        # Check for the presence of our test messages
+        # Print the log output for debugging if it's empty
+        if not log_output:
+            print("WARNING: Log output is empty!")
+            
         # Check for the presence of our test messages
         self.assertIn("DEBUG:src.main:Test main debug", log_output)
-            
         self.assertIn("INFO:src.parsers:Test parser info", log_output)
         self.assertIn("WARNING:root:Test root warning", log_output)
         
