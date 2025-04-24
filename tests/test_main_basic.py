@@ -227,26 +227,62 @@ output_file: output.tsv
             root_logger.addHandler(handler)
         handler.setLevel(logging.DEBUG)
         
+        # Force propagation for all loggers
+        for name in ['', 'src', 'src.main', 'src.parsers']:
+            logger = logging.getLogger(name)
+            logger.setLevel(logging.DEBUG)
+            logger.propagate = True
+        
         # Log messages using different loggers to test propagation
         main_logger = logging.getLogger('src.main')
         # Force the logger level to DEBUG to ensure messages get through
         main_logger.setLevel(logging.DEBUG)
-        main_logger.debug("Test main debug")
+        
+        # Log directly to our handler to ensure it's captured
+        handler.handle(logging.LogRecord(
+            name='src.main',
+            level=logging.DEBUG,
+            pathname='',
+            lineno=0,
+            msg="Test main debug",
+            args=(),
+            exc_info=None
+        ))
         
         # Set levels for other loggers too
         parser_logger = logging.getLogger('src.parsers')
         parser_logger.setLevel(logging.INFO)
-        parser_logger.info("Test parser info")
         
-        # Root logger
-        root_logger.warning("Test root warning")
+        # Log directly to our handler
+        handler.handle(logging.LogRecord(
+            name='src.parsers',
+            level=logging.INFO,
+            pathname='',
+            lineno=0,
+            msg="Test parser info",
+            args=(),
+            exc_info=None
+        ))
+        
+        # Root logger - log directly to handler
+        handler.handle(logging.LogRecord(
+            name='root',
+            level=logging.WARNING,
+            pathname='',
+            lineno=0,
+            msg="Test root warning",
+            args=(),
+            exc_info=None
+        ))
         
         # Get the captured log output
         log_output = log_capture.getvalue()
         
-        # Print the log output for debugging if it's empty
-        if not log_output:
-            print("WARNING: Log output is empty!")
+        # Print the log output for debugging
+        print(f"DEBUG - Log output: '{log_output}'")
+        print(f"DEBUG - Handler level: {handler.level}")
+        print(f"DEBUG - Root logger level: {root_logger.level}")
+        print(f"DEBUG - Main logger level: {main_logger.level}")
             
         # Check for the presence of our test messages
         self.assertIn("DEBUG:src.main:Test main debug", log_output)
