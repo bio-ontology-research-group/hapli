@@ -85,16 +85,31 @@ class TestMain(unittest.TestCase):
         for handler in current_handlers:
              # Keep NullHandler if it was the only one initially, otherwise remove all
              if not (len(self.original_handlers) == 1 and isinstance(self.original_handlers[0], logging.NullHandler) and isinstance(handler, logging.NullHandler)):
-                 root_logger.removeHandler(handler)
+                 # Also attempt removal from specific loggers in case they weren't cleaned up properly in the test
+                 # Use try-except as the handler might not be on all loggers
+                 try: logging.getLogger('src.main').removeHandler(handler)
+                 except ValueError: pass
+                 try: logging.getLogger('src.parsers').removeHandler(handler)
+                 except ValueError: pass
+                 try: root_logger.removeHandler(handler)
+                 except ValueError: pass
+
 
         # Restore original handlers (if any)
+        # Clear handlers first to avoid duplicates if restoration logic is complex
+        for handler in root_logger.handlers[:]:
+             if not isinstance(handler, logging.NullHandler): # Keep NullHandler if it was original
+                  root_logger.removeHandler(handler)
         for handler in self.original_handlers:
-             # Avoid adding NullHandler back if it wasn't there originally
-             if not isinstance(handler, logging.NullHandler):
+             # Avoid adding NullHandler back if it wasn't there originally or if it's already present
+             if not isinstance(handler, logging.NullHandler) or not any(isinstance(h, logging.NullHandler) for h in root_logger.handlers):
                  root_logger.addHandler(handler)
 
         # Restore original level
         root_logger.setLevel(self.original_level)
+        # Reset levels on specific loggers too if they were changed
+        logging.getLogger('src.main').setLevel(logging.NOTSET)
+        logging.getLogger('src.parsers').setLevel(logging.NOTSET)
 
 
     def test_command_line_args_parsing(self):
@@ -203,6 +218,9 @@ output_file: output.tsv
         main_logger = logging.getLogger('src.main')
         parser_logger = logging.getLogger('src.parsers')
 
+        # Define the loggers we will add the handler to
+        loggers_to_modify = [root_logger, main_logger, parser_logger]
+
         # --- Test DEBUG level ---
         log_capture.truncate(0)
         log_capture.seek(0)
@@ -210,13 +228,13 @@ output_file: output.tsv
         # Configure tool logging first
         self.tool.configure_logging('DEBUG')
 
-        # Add our handler AFTER configuration
-        root_logger.addHandler(handler)
-        # Ensure root logger level is appropriate AFTER configuration
-        root_logger.setLevel(logging.DEBUG)
-        # Ensure specific loggers are also at DEBUG if needed (or rely on propagation)
-        main_logger.setLevel(logging.DEBUG)
-        parser_logger.setLevel(logging.DEBUG) # Set explicitly for testing
+        # Add our handler AFTER configuration to all relevant loggers
+        # Also ensure logger levels are set correctly AFTER configuration
+        for logger_instance in loggers_to_modify:
+            logger_instance.addHandler(handler)
+            logger_instance.setLevel(logging.DEBUG)
+            # Ensure propagation is enabled (should be default, but explicit)
+            logger_instance.propagate = True
 
         # Log messages using standard logging calls
         main_logger.debug("Test main debug")
@@ -226,22 +244,14 @@ output_file: output.tsv
         # Get captured output
         log_output_debug = log_capture.getvalue()
 
-        # Debug prints (optional)
-        # print(f"\n--- DEBUG Test ---")
-        # print(f"Log output: '{log_output_debug}'")
-        # print(f"Handler level: {handler.level}")
-        # print(f"Root logger level: {root_logger.level}")
-        # print(f"Main logger level: {main_logger.level}")
-        # print(f"Parser logger level: {parser_logger.level}")
-        # print(f"Root handlers: {root_logger.handlers}")
-
         # Check for expected messages
         self.assertIn("DEBUG:src.main:Test main debug", log_output_debug)
         self.assertIn("INFO:src.parsers:Test parser info", log_output_debug)
         self.assertIn("WARNING:root:Test root warning", log_output_debug)
 
-        # Remove handler before next test section
-        root_logger.removeHandler(handler)
+        # Remove handler from all loggers before next test section
+        for logger_instance in loggers_to_modify:
+            logger_instance.removeHandler(handler)
 
         # --- Test INFO level ---
         log_capture.truncate(0)
@@ -250,13 +260,13 @@ output_file: output.tsv
         # Configure tool logging first
         self.tool.configure_logging('INFO')
 
-        # Add our handler AFTER configuration
-        root_logger.addHandler(handler)
-        # Ensure root logger level is appropriate AFTER configuration
-        root_logger.setLevel(logging.INFO)
-        # Ensure specific loggers are also at INFO (or rely on propagation)
-        main_logger.setLevel(logging.INFO)
-        parser_logger.setLevel(logging.INFO) # Set explicitly for testing
+        # Add our handler AFTER configuration to all relevant loggers
+        # Also ensure logger levels are set correctly AFTER configuration
+        for logger_instance in loggers_to_modify:
+            logger_instance.addHandler(handler)
+            logger_instance.setLevel(logging.INFO)
+            # Ensure propagation is enabled (should be default, but explicit)
+            logger_instance.propagate = True
 
         # Log messages using standard logging calls
         main_logger.debug("Test main debug")   # Should NOT be captured
@@ -267,23 +277,15 @@ output_file: output.tsv
         # Get captured output
         log_output_info = log_capture.getvalue()
 
-        # Debug prints (optional)
-        # print(f"\n--- INFO Test ---")
-        # print(f"Log output: '{log_output_info}'")
-        # print(f"Handler level: {handler.level}")
-        # print(f"Root logger level: {root_logger.level}")
-        # print(f"Main logger level: {main_logger.level}")
-        # print(f"Parser logger level: {parser_logger.level}")
-        # print(f"Root handlers: {root_logger.handlers}")
-
         # Check for expected messages
         self.assertNotIn("DEBUG:src.main:Test main debug", log_output_info)
         self.assertIn("INFO:src.main:Test main info", log_output_info)
         self.assertIn("WARNING:src.parsers:Test parser warning", log_output_info)
         self.assertIn("ERROR:root:Test root error", log_output_info)
 
-        # Clean up handler added for this test
-        root_logger.removeHandler(handler)
+        # Clean up handler added for this test section
+        for logger_instance in loggers_to_modify:
+            logger_instance.removeHandler(handler)
 
 
     def test_error_handling_config(self):
@@ -461,8 +463,8 @@ output_file: output.tsv
              self.assertEqual(summaries_data['path1']['path_id'], 'path1')
              self.assertIn('feature_summaries', summaries_data['path1'])
              self.assertIn('gene1', summaries_data['path1']['feature_summaries'])
-             # Use .name for Enum comparison after loading from JSON
-             self.assertEqual(summaries_data['path1']['feature_summaries']['gene1']['impact_type'], ImpactType.PRESENT.value) # Compare with enum value
+             # Use .value for Enum comparison after loading from JSON (as fixed in src/main.py)
+             self.assertEqual(summaries_data['path1']['feature_summaries']['gene1']['impact_type'], ImpactType.PRESENT.value)
 
 
 if __name__ == '__main__':
