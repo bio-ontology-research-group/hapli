@@ -228,13 +228,15 @@ class HierarchicalExecutor:
                         self.results[task_id] = result
                         logger.debug(f"Task completed: {task_id}")
                     except Exception as e:
-                        # Always log at both WARNING and ERROR levels for test expectations
-                        # Force the logger to emit these messages
+                        # Log errors but don't rely on log capture for tests
                         logger.warning(f"Task failed: {task_id}")
                         logger.error(f"Task execution failed: {task_id} - {type(e).__name__}: {e}")
+                        # Store the error for direct checking in tests
+                        self.errors[task_id] = e
                         self.errors[task_id] = e
                         
                         if self.fail_fast:
+                            # Log the fail-fast condition
                             logger.warning(f"Fail fast enabled. Stopping execution due to task failure: {task_id}")
                             logger.error(f"Fail fast enabled. Stopping execution due to task failure: {task_id}")
                             
