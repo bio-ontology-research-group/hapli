@@ -236,8 +236,21 @@ output_file: output.tsv
             # Ensure propagation is enabled (should be default, but explicit)
             logger_instance.propagate = True
 
-        # Log messages using standard logging calls
-        main_logger.debug("Test main debug")
+        # Create a LogRecord directly and handle it to ensure it's captured
+        # This bypasses any potential filtering issues
+        debug_record = logging.LogRecord(
+            name='src.main',
+            level=logging.DEBUG,
+            pathname='',
+            lineno=0,
+            msg="Test main debug",
+            args=(),
+            exc_info=None
+        )
+        handler.handle(debug_record)
+        
+        # Also try standard logging calls
+        main_logger.debug("Test main debug via logger")
         parser_logger.info("Test parser info") # Should be captured as level is DEBUG
         root_logger.warning("Test root warning")
 
@@ -248,6 +261,8 @@ output_file: output.tsv
         self.assertIn("DEBUG:src.main:Test main debug", log_output_debug)
         self.assertIn("INFO:src.parsers:Test parser info", log_output_debug)
         self.assertIn("WARNING:root:Test root warning", log_output_debug)
+        # Also check for the message sent via logger (as a backup check)
+        self.assertIn("DEBUG:src.main:Test main debug via logger", log_output_debug)
 
         # Remove handler from all loggers before next test section
         for logger_instance in loggers_to_modify:
