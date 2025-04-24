@@ -118,6 +118,14 @@ class ImpactClassifier:
                     "aligned_length": aligned_length,
                     "length_ratio": aligned_length / ref_length
                 }
+
+        # Check if the feature is fragmented (multiple partial alignments)
+        if hasattr(aligned_feature, "sub_features") and aligned_feature.sub_features:
+            return ImpactType.FRAGMENTED, {
+                "coverage": coverage,
+                "identity": identity,
+                "fragments": len(aligned_feature.sub_features)
+            }
                 
         # Then check if the feature appears intact
         if (coverage >= self.coverage_threshold and 
@@ -125,14 +133,6 @@ class ImpactClassifier:
             return ImpactType.PRESENT, {
                 "coverage": coverage,
                 "identity": identity
-            }
-        
-        # Check if the feature is fragmented (multiple partial alignments)
-        if hasattr(aligned_feature, "sub_features") and aligned_feature.sub_features:
-            return ImpactType.FRAGMENTED, {
-                "coverage": coverage,
-                "identity": identity,
-                "fragments": len(aligned_feature.sub_features)
             }
         
         # If we reach here, the feature has sequence modifications but is roughly the same length
