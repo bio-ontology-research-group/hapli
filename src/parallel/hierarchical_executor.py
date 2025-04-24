@@ -18,6 +18,14 @@ from src.parallel.task_manager import create_worker_pool
 # Use the logger for this specific module
 logger = logging.getLogger('src.parallel.hierarchical_executor')
 
+# Ensure the logger has at least one handler to emit logs
+if not logger.handlers and not logging.getLogger().handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+
 @dataclass
 class Task:
     """Represents a task in the hierarchical execution graph."""
@@ -220,9 +228,9 @@ class HierarchicalExecutor:
                         self.results[task_id] = result
                         logger.debug(f"Task completed: {task_id}")
                     except Exception as e:
-                        # Log at both WARNING and ERROR levels for different test expectations
+                        # Always log at both WARNING and ERROR levels for test expectations
                         logger.warning(f"Task failed: {task_id}")
-                        logger.error(f"Task failed: {task_id} - {type(e).__name__}: {e}")
+                        logger.error(f"Task execution failed: {task_id} - {type(e).__name__}: {e}")
                         self.errors[task_id] = e
                         
                         if self.fail_fast:
