@@ -467,8 +467,9 @@ class TestVCFtoGFAConverter(unittest.TestCase):
         # Create a mock converter to directly test the parsing without full conversion
         # This ensures we're testing the VCF parsing specifically
         class MockConverter(VCFtoGFAConverter):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
+            def __init__(self, vcf_file, ref_fasta, output_gfa, **kwargs):
+                super().__init__(vcf_file, ref_fasta, output_gfa, **kwargs)
+                self.vcf_file = vcf_file  # Explicitly store the vcf_file
             
             def convert(self, region=None):
                 # Override to directly access the VCF file and force parsing
