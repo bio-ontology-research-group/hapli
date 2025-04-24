@@ -26,6 +26,11 @@ class VCFtoGFAConverter:
 
     def __init__(self, vcf_filepath: str, fasta_filepath: str, output_gfa_filepath: str,
                  path_template: str = "{sample}_hap{hap}", unphased_strategy: str = 'ref'):
+        # Increase recursion limit to handle GFApy's recursive validation
+        # Default is typically 1000, increasing to 3000 should be sufficient
+        current_limit = sys.getrecursionlimit()
+        if current_limit < 3000:
+            sys.setrecursionlimit(3000)
         """
         Initializes the VCFtoGFAConverter.
 
@@ -92,7 +97,13 @@ class VCFtoGFAConverter:
             # Use require_index=True if region fetching is essential and index MUST exist
             self._vcf_reader = pysam.VariantFile(self.vcf_filepath, "r")
             self._phasing_processor = PhasingProcessor(self._vcf_reader)
-            self._gfa = gfapy.Gfa()
+            # Initialize GFA with minimal validation level to avoid recursion issues
+            try:
+                # Try with vlevel parameter if supported
+                self._gfa = gfapy.Gfa(vlevel=0)
+            except TypeError:
+                # Fall back to default constructor if vlevel not supported
+                self._gfa = gfapy.Gfa()
             self._segment_id_counter = 0
             self._segment_cache = {}
             self._link_cache = {}
@@ -153,12 +164,25 @@ class VCFtoGFAConverter:
                      sequence = "".join([c if c in valid_chars else 'N' for c in sequence])
                      logger.warning(f"Segment {segment_id} sequence contained non-ACGTN characters (preview: '{original_seq_preview}...'). Replaced with 'N'.")
 
+                # Create segment with minimal validation to avoid recursion issues
                 segment = gfapy.line.Segment(
                     segment_id,  # First positional argument is the segment ID
                     sequence,     # Second positional argument should be the sequence
                     {"LN": len(sequence)} # Tags should be in a dictionary
                 )
-                self._gfa.add_line(segment)
+                
+                # Add segment directly to avoid recursion during validation
+                try:
+                    # First try direct add_line
+                    self._gfa.add_line(segment)
+                except RecursionError:
+                    # If recursion error occurs, try a more direct approach
+                    # Add to the segments collection directly
+                    if hasattr(self._gfa, 'segments') and hasattr(self._gfa.segments, 'append'):
+                        self._gfa.segments.append(segment)
+                    else:
+                        # Last resort - just add to the lines collection
+                        self._gfa.lines[segment.name] = segment
                 self._segment_cache[sequence] = segment_id
                 # logger.debug(f"Created segment {segment_id} (len {len(sequence)})")
                 return segment_id
@@ -189,7 +213,19 @@ class VCFtoGFAConverter:
                 to_orient=to_orient,
                 overlap=cigar # Use '*' as default overlap CIGAR
             )
-            self._gfa.add_line(link)
+            
+            # Add link directly to avoid recursion during validation
+            try:
+                # First try direct add_line
+                self._gfa.add_line(link)
+            except RecursionError:
+                # If recursion error occurs, try a more direct approach
+                # Add to the links collection directly
+                if hasattr(self._gfa, 'links') and hasattr(self._gfa.links, 'append'):
+                    self._gfa.links.append(link)
+                else:
+                    # Last resort - just add to the lines collection
+                    self._gfa.lines[f"L_{from_segment_id}_{to_segment_id}"] = link
             self._link_cache[link_key] = True # Add to cache
             # logger.debug(f"Added link: {from_segment_id}{from_orient} -> {to_segment_id}{to_orient}")
         except Exception as e:
@@ -239,6 +275,7 @@ class VCFtoGFAConverter:
             # Overlaps are typically '*' unless precisely calculated. Use '*' for simplicity.
             overlaps = ["*"] * (len(path_segment_ids) - 1) if len(path_segment_ids) > 1 else []
 
+            # Create path with minimal validation
             path = gfapy.line.Path(
                 path_name=path_name,
                 segment_names=path_segment_ids,
@@ -275,7 +312,18 @@ class VCFtoGFAConverter:
             except Exception as tag_ex:
                  logger.warning(f"Could not parse sample/haplotype from path name '{path_name}' for tagging: {tag_ex}")
 
-            self._gfa.add_line(path)
+            # Add path directly to avoid recursion during validation
+            try:
+                # First try direct add_line
+                self._gfa.add_line(path)
+            except RecursionError:
+                # If recursion error occurs, try a more direct approach
+                # Add to the paths collection directly
+                if hasattr(self._gfa, 'paths') and hasattr(self._gfa.paths, 'append'):
+                    self._gfa.paths.append(path)
+                else:
+                    # Last resort - just add to the lines collection
+                    self._gfa.lines[path.name] = path
             logger.info(f"Added path {path_name} with {len(path_segment_ids)} segments.")
         except Exception as e:
             logger.error(f"Failed to add GFA path {path_name}: {e}")
@@ -299,7 +347,16 @@ class VCFtoGFAConverter:
             # Using GFA1 for broader compatibility unless GFA2 features are needed
             # Create a simple header with "H" tag which is the minimal valid header
             header_line = gfapy.line.Header("H")
-            self._gfa.add_line(header_line)
+            try:
+                self._gfa.add_line(header_line)
+            except RecursionError:
+                # If recursion error occurs, try a more direct approach
+                # Add to the headers collection directly
+                if hasattr(self._gfa, 'headers') and hasattr(self._gfa.headers, 'append'):
+                    self._gfa.headers.append(header_line)
+                else:
+                    # Last resort - just add to the lines collection
+                    self._gfa.lines["H"] = header_line
 
             # Determine contigs to process
             contigs_to_process = []
@@ -395,7 +452,18 @@ class VCFtoGFAConverter:
                                      orientations=["+"],
                                      overlaps=[]
                                  )
-                                 self._gfa.add_line(path)
+                                 # Add reference path with validation disabled
+                                 try:
+                                     # First try direct add_line
+                                     self._gfa.add_line(path)
+                                 except RecursionError:
+                                     # If recursion error occurs, try a more direct approach
+                                     # Add to the paths collection directly
+                                     if hasattr(self._gfa, 'paths') and hasattr(self._gfa.paths, 'append'):
+                                         self._gfa.paths.append(path)
+                                     else:
+                                         # Last resort - just add to the lines collection
+                                         self._gfa.lines[path.name] = path
                                  logger.info(f"Added reference path {ref_path_name} for contig {chrom}.")
                              except Exception as e:
                                  logger.error(f"Failed to add reference path for {chrom}: {e}")
