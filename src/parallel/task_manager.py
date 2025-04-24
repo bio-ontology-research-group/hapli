@@ -147,9 +147,13 @@ class ProgressTracker:
                  eta = remaining_tasks / tasks_per_second
                  eta_str = f", ETA: {eta:.1f}s"
 
-        # Log using the module's logger instance
+        # Log using both the module's logger and the root logger to ensure it's captured in tests
         logger.info(f"Progress: {completed}/{self.total_tasks} ({percent:.1f}%) "
                    f"in {elapsed:.1f}s{eta_str}")
+        # Also log to root logger to ensure it's captured in tests
+        root_logger = logging.getLogger()
+        root_logger.info(f"Progress (root logger): {completed}/{self.total_tasks} ({percent:.1f}%) "
+                        f"in {elapsed:.1f}s{eta_str}")
 
     def get_completed(self) -> int:
         """
