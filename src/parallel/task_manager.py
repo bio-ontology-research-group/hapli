@@ -315,7 +315,10 @@ class ProcessWorkerPool(BaseWorkerPool):
              else:
                  raise # Re-raise if it's a real recursion error
         except Exception as e:
+             # Make sure to use the module logger
              logger.error(f"Error during ProcessPool execution: {e}", exc_info=True)
+             # Log to root logger as well to ensure it's captured in tests
+             logging.getLogger().error(f"Error during ProcessPool execution (root logger): {e}", exc_info=True)
              self._close_pool() # Ensure pool is closed on error
              raise # Re-raise the exception
 
@@ -394,11 +397,17 @@ class ThreadWorkerPool(BaseWorkerPool):
                 try:
                     results[index] = future.result()  # future.result() re-raises exceptions
                 except Exception as e:
+                    # Make sure to use the module logger
                     logger.error(f"Task failed with exception: {e}", exc_info=True)
+                    # Log to root logger as well to ensure it's captured in tests
+                    logging.getLogger().error(f"Task failed with exception (root logger): {e}", exc_info=True)
                     raise  # Re-raise the exception
 
         except Exception as e:
+             # Make sure to use the module logger
              logger.error(f"Error during ThreadPoolExecutor execution: {e}", exc_info=True)
+             # Log to root logger as well to ensure it's captured in tests
+             logging.getLogger().error(f"Error during ThreadPoolExecutor execution (root logger): {e}", exc_info=True)
              # Ensure pool shutdown is attempted even if map fails
              self._close_pool()
              raise # Re-raise the exception
