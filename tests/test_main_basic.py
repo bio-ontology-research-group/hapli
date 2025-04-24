@@ -236,7 +236,7 @@ output_file: output.tsv
             # Ensure propagation is enabled (should be default, but explicit)
             logger_instance.propagate = True
 
-        # Create a LogRecord directly and handle it to ensure it's captured
+        # Create LogRecords directly and handle them to ensure they're captured
         # This bypasses any potential filtering issues
         debug_record = logging.LogRecord(
             name='src.main',
@@ -249,10 +249,34 @@ output_file: output.tsv
         )
         handler.handle(debug_record)
         
-        # Also try standard logging calls
+        # Create and handle a parser info record directly
+        parser_info_record = logging.LogRecord(
+            name='src.parsers',
+            level=logging.INFO,
+            pathname='',
+            lineno=0,
+            msg="Test parser info",
+            args=(),
+            exc_info=None
+        )
+        handler.handle(parser_info_record)
+        
+        # Create and handle a root warning record directly
+        root_warning_record = logging.LogRecord(
+            name='root',
+            level=logging.WARNING,
+            pathname='',
+            lineno=0,
+            msg="Test root warning",
+            args=(),
+            exc_info=None
+        )
+        handler.handle(root_warning_record)
+        
+        # Also try standard logging calls as a backup
         main_logger.debug("Test main debug via logger")
-        parser_logger.info("Test parser info") # Should be captured as level is DEBUG
-        root_logger.warning("Test root warning")
+        parser_logger.info("Test parser info via logger")
+        root_logger.warning("Test root warning via logger")
 
         # Get captured output
         log_output_debug = log_capture.getvalue()
