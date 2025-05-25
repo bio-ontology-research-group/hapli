@@ -380,7 +380,7 @@ rule call_variants:
         fi
         
         # Create Python script to convert haplotype calls to genotypes
-        cat > /tmp/convert_to_genotype_{params.sample}.py << 'EOF'
+        cat > /tmp/convert_to_genotype_{params.sample}.py << 'PYTHON_SCRIPT_END'
 import sys
 
 def convert_haplotype_to_genotype(hap1_gt, hap2_gt):
@@ -434,7 +434,7 @@ with open(input_file, 'r') as f_in, open(output_file, 'w') as f_out:
             # Build new line
             new_parts = parts[:9] + [diploid_gt]
             f_out.write('\t'.join(new_parts) + '\n')
-EOF
+PYTHON_SCRIPT_END
         
         # Run the conversion
         python /tmp/convert_to_genotype_{params.sample}.py {input.multi_vcf} {output.vcf} {params.sample} "$HAP1_POS" "$HAP2_POS" 2>> {log}
