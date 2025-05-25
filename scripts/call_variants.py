@@ -220,15 +220,15 @@ Examples:
     parser.add_argument(
         "--cores",
         type=int,
-        default=4,
-        help="Number of CPU cores for Snakemake (default: 4)"
+        default=8, # Changed default from 4 to 8
+        help="Number of CPU cores for Snakemake (default: 8)"
     )
     
     parser.add_argument(
         "--threads",
         type=int,
-        default=4,
-        help="Number of threads for individual tools (default: 4)"
+        default=8, # Changed default from 4 to 8
+        help="Number of threads for individual tools (default: 8)"
     )
     
     parser.add_argument(

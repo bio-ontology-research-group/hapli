@@ -11,7 +11,7 @@ REFERENCE = config["reference"]
 OUTPUT_DIR = config["output_dir"]
 SAMPLE_NAMES = config["sample_names"]
 VG_DOCKER = config.get("vg_docker", "quay.io/vgteam/vg:v1.65.0")
-THREADS = config.get("threads", 4)
+THREADS = config.get("threads", 4) # This will be overridden by config["threads"] from call_variants.py
 MOUNT_DIR = config["mount_dir"]
 
 # Get current user ID and group ID for Docker
@@ -80,13 +80,13 @@ rule index_pangenome:
         echo "Creating XG index..." >> {log}
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
-            --memory=4g \
-            --memory-swap=8g \
+            --memory=32g \
+            --memory-swap=64g \
             -v {params.mount_dir}:/data \
             -w /data \
             --tmpfs /tmp:rw,size=2g \
             {params.docker_image} \
-            vg index -x "$REL_XG" "$REL_VG" 2>> {log}
+            vg index -x "$REL_XG" "$REL_VG" -t {threads} 2>> {log}
         
         if [ ! -f {output.xg} ]; then
             echo "ERROR: XG index creation failed" >> {log}
@@ -103,14 +103,14 @@ rule index_pangenome:
         # Use very conservative GCSA parameters to reduce memory usage
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
-            --memory=6g \
-            --memory-swap=12g \
+            --memory=32g \
+            --memory-swap=64g \
             -v {params.mount_dir}:/data \
             -w /data \
             --tmpfs /tmp:rw,size=4g \
             -e TMPDIR="/data/$REL_TEMP" \
             {params.docker_image} \
-            bash -c "mkdir -p /data/$REL_TEMP && vg index -g '$REL_GCSA' -k 8 -X 1 -Z 256 '$REL_VG'" 2>> {log}
+            bash -c "mkdir -p /data/$REL_TEMP && vg index -g '$REL_GCSA' -k 8 -X 1 -Z 256 '$REL_VG' -t {threads}" 2>> {log}
         
         # Check if GCSA files were created
         if [ ! -f {output.gcsa} ]; then
@@ -120,14 +120,14 @@ rule index_pangenome:
             # Try with minimal parameters
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
-                --memory=6g \
-                --memory-swap=12g \
+                --memory=32g \
+                --memory-swap=64g \
                 -v {params.mount_dir}:/data \
                 -w /data \
                 --tmpfs /tmp:rw,size=4g \
                 -e TMPDIR="/data/$REL_TEMP" \
                 {params.docker_image} \
-                bash -c "mkdir -p /data/$REL_TEMP && vg index -g '$REL_GCSA' -k 6 -X 1 -Z 128 '$REL_VG'" 2>> {log}
+                bash -c "mkdir -p /data/$REL_TEMP && vg index -g '$REL_GCSA' -k 6 -X 1 -Z 128 '$REL_VG' -t {threads}" 2>> {log}
         fi
         
         # Final check
@@ -261,8 +261,8 @@ rule call_variants:
             # Include all paths but use reference as the baseline
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
-                --memory=4g \
-                --memory-swap=8g \
+                --memory=32g \
+                --memory-swap=64g \
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
@@ -272,8 +272,8 @@ rule call_variants:
             # Fallback to general calling
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
-                --memory=6g \
-                --memory-swap=12g \
+                --memory=32g \
+                --memory-swap=64g \
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
@@ -424,8 +424,8 @@ rule phase_variants:
             # This should generate a VCF with all samples/paths included
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
-                --memory=4g \
-                --memory-swap=8g \
+                --memory=32g \
+                --memory-swap=64g \
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
@@ -450,8 +450,8 @@ rule phase_variants:
             
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
-                --memory=4g \
-                --memory-swap=8g \
+                --memory=32g \
+                --memory-swap=64g \
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
