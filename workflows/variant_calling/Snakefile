@@ -338,7 +338,11 @@ rule phase_variants:
         sample="{sample}",
         user_id=USER_ID,
         group_id=GROUP_ID,
-        script_path=os.path.join(Path(__file__).parent.parent.parent, "scripts", "vcf_phasing_fix.py")
+        # Calculate relative path to script here in Python
+        script_rel_path=os.path.relpath(
+            os.path.join(Path(__file__).parent.parent.parent, "scripts", "vcf_phasing_fix.py"),
+            MOUNT_DIR
+        )
     shell:
         """
         mkdir -p $(dirname {log})
@@ -350,12 +354,8 @@ rule phase_variants:
         REL_VG=$(realpath --relative-to={params.mount_dir} {input.vg})
         REL_XG=$(realpath --relative-to={params.mount_dir} {input.xg})
         REL_REF=$(realpath --relative-to={params.mount_dir} {input.reference})
-        REL_SCRIPT=$(realpath --relative-to={params.mount_dir} {params.script_path})
-        
-        # Extract haplotype paths for this sample
-        HAP1_PATH="{params.sample}_hap1"
-        HAP2_PATH="{params.sample}_hap2"
-        REF_PATH="reference"
+        # Use the pre-calculated relative script path directly
+        REL_SCRIPT="{params.script_rel_path}"
         
         echo "Extracting haplotype information..." >> {log}
         echo "Reference path: $REF_PATH" >> {log}
@@ -427,10 +427,15 @@ rule phase_variants:
                 vg deconstruct -p "$REF_PATH" -a -t {threads} "$REL_VG" > {output.phased_vcf}.tmp 2>> {log}
             
             # Post-process the VCF to create proper phased genotypes for this specific sample
-            echo "Post-processing VCF for proper phasing using {params.script_path}..." >> {log}
+            echo "Post-processing VCF for proper phasing using /data/$REL_SCRIPT..." >> {log}
             
-            # Call the external Python script
-            python {params.script_path} {output.phased_vcf}.tmp {output.phased_vcf} {params.sample} "$HAP1_PATH" "$HAP2_PATH" 2>> {log}
+            # Call the external Python script, ensuring it's run from /data
+            docker run --rm \
+                --user {params.user_id}:{params.group_id} \
+                --memory=1g \
+                -v {params.mount_dir}:/data \
+                -w /data \
+                python "$REL_SCRIPT" $(realpath --relative-to=/data {output.phased_vcf}.tmp) $(realpath --relative-to=/data {output.phased_vcf}) {params.sample} "$HAP1_PATH" "$HAP2_PATH" 2>> {log}
             
             # Clean up temporary files
             rm -f {output.phased_vcf}.tmp
