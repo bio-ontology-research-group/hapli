@@ -134,3 +134,4 @@ data/test/*.fasta
 
 # Log files
 *.log
+.aider*

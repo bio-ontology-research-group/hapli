@@ -1,1 +1,0 @@
-python generate_variants.py --reference genome.fa --num-genomes 5 --variants-per-genome 10
