@@ -12,7 +12,8 @@ PROJECT_ROOT = WORKFLOW_DIR.parent.parent
 
 # Resolve paths
 REFERENCE = Path(config["reference"]).resolve()
-VARIANTS_DIR = Path(config["variants_dir"]).resolve()
+# Updated: Use haplotype_data_dir from config
+HAPLOTYPE_DATA_DIR = Path(config["haplotype_data_dir"]).resolve()
 OUTPUT_DIR = Path(config["output_dir"]).resolve()
 
 # Create output directory
@@ -25,17 +26,26 @@ VG_DOCKER = "quay.io/vgteam/vg:v1.65.0"
 USER_ID = os.getuid()
 GROUP_ID = os.getgid()
 
-# Find all variant FASTA files
-VARIANT_FASTAS = sorted(glob.glob(str(VARIANTS_DIR / "set_*_genome.fa")))
-SAMPLE_NAMES = [Path(f).stem.replace("_genome", "") for f in VARIANT_FASTAS]
+# Find all haplotype FASTA files
+# Updated: Look for sample_XXX_hap1.fasta and sample_XXX_hap2.fasta
+HAPLOTYPE_FASTAS = sorted(glob.glob(str(HAPLOTYPE_DATA_DIR / "sample_*" / "sample_*.fasta")))
 
-print(f"Found {len(VARIANT_FASTAS)} variant FASTA files")
-print(f"Samples: {SAMPLE_NAMES}")
+# Create a list of unique sample names (e.g., "sample_000")
+UNIQUE_SAMPLE_NAMES = sorted(list(set([Path(f).parent.name for f in HAPLOTYPE_FASTAS])))
 
-if not VARIANT_FASTAS:
-    print("ERROR: No variant FASTA files found!")
-    print(f"Looking in: {VARIANTS_DIR}")
-    print(f"Pattern: set_*_genome.fa")
+# Create a list of paths for the graph (e.g., "sample_000_hap1", "sample_000_hap2")
+GRAPH_PATH_NAMES = []
+for sample_name in UNIQUE_SAMPLE_NAMES:
+    GRAPH_PATH_NAMES.append(f"{sample_name}_hap1")
+    GRAPH_PATH_NAMES.append(f"{sample_name}_hap2")
+
+print(f"Found {len(HAPLOTYPE_FASTAS)} haplotype FASTA files for {len(UNIQUE_SAMPLE_NAMES)} samples")
+print(f"Graph paths will be: {GRAPH_PATH_NAMES}")
+
+if not HAPLOTYPE_FASTAS:
+    print("ERROR: No haplotype FASTA files found!")
+    print(f"Looking in: {HAPLOTYPE_DATA_DIR}")
+    print(f"Pattern: sample_*/sample_*.fasta")
     sys.exit(1)
 
 # Final outputs
@@ -49,7 +59,7 @@ rule all:
 rule combine_sequences:
     input:
         ref=REFERENCE,
-        variants=VARIANT_FASTAS
+        haplotypes=HAPLOTYPE_FASTAS
     output:
         combined=OUTPUT_DIR / "all_sequences.fa"
     log:
@@ -61,18 +71,21 @@ rule combine_sequences:
             with open(str(input.ref)) as f:
                 for line in f:
                     if line.startswith('>'):
-                        out.write('>reference\n')
+                        out.write('>reference\n') # Ensure reference sequence is named 'reference'
                     else:
                         out.write(line)
             
-            # Add each variant
-            for i, var_path in enumerate(input.variants):
-                sample = SAMPLE_NAMES[i]
-                print(f"Adding sample {sample}: {var_path}", file=open(str(log), 'a'))
+            # Add each haplotype
+            # Sort haplotypes to ensure consistent ordering (hap1 before hap2)
+            sorted_haplotypes = sorted(input.haplotypes)
+            for var_path in sorted_haplotypes:
+                # Extract sample_XXX_hapX from path
+                haplotype_name = Path(var_path).stem 
+                print(f"Adding haplotype {haplotype_name}: {var_path}", file=open(str(log), 'a'))
                 with open(var_path) as f:
                     for line in f:
                         if line.startswith('>'):
-                            out.write(f'>{sample}\n')
+                            out.write(f'>{haplotype_name}\n') # Name sequence by its haplotype name
                         else:
                             out.write(line)
 
@@ -120,7 +133,7 @@ rule build_pangenome:
             -v {params.mount_dir}:/data \
             -w /data \
             {VG_DOCKER} \
-            vg msga -f $REL_SEQS -k 32 -B 128 -t {threads} > {output.vg} 2>> {log}
+            vg msga -f $REL_SEQS -k 32 -B 128 -t {threads} > $REL_VG 2>> {log}
         
         # Convert to GFA
         echo "Converting to GFA..." >> {log}
@@ -128,10 +141,11 @@ rule build_pangenome:
             -v {params.mount_dir}:/data \
             -w /data \
             {VG_DOCKER} \
-            vg view -g $REL_VG > {output.gfa} 2>> {log}
+            vg view -g $REL_VG > $REL_GFA 2>> {log}
         """
 
 # Alternative: Build using reference + single-sample VCFs
+# This rule is likely not needed for the pangenome graph, but kept for now.
 rule build_ref_graph:
     input:
         ref=REFERENCE
@@ -150,20 +164,21 @@ rule build_ref_graph:
             -v {params.mount_dir}:/data \
             -w /data \
             {VG_DOCKER} \
-            vg construct -r $REL_REF -m 32 > {output.vg} 2> {log}
+            vg construct -r $REL_REF -m 32 > $REL_VG 2> {log}
         """
 
 # Call variants for each sample individually
+# This rule is likely not needed for the pangenome graph, but kept for now.
 rule align_and_call_sample:
     input:
         ref=REFERENCE,
-        sample=VARIANTS_DIR / "{sample}_genome.fa"
+        sample=HAPLOTYPE_DATA_DIR / "{sample_id}" / "{sample_id}_hap1.fasta" # Assuming hap1 for alignment
     output:
-        bam=OUTPUT_DIR / "alignments" / "{sample}.bam",
-        vcf=OUTPUT_DIR / "vcf_singles" / "{sample}.vcf"
+        bam=OUTPUT_DIR / "alignments" / "{sample_id}.bam",
+        vcf=OUTPUT_DIR / "vcf_singles" / "{sample_id}.vcf"
     threads: 2
     log:
-        OUTPUT_DIR / "logs" / "call_{sample}.log"
+        OUTPUT_DIR / "logs" / "call_{sample_id}.log"
     shell:
         """
         mkdir -p $(dirname {output.bam}) $(dirname {output.vcf})
@@ -179,6 +194,7 @@ rule align_and_call_sample:
         """
 
 # Build graph with each single-sample VCF
+# This rule is likely not needed for the pangenome graph, but kept for now.
 rule build_sample_graph:
     input:
         ref_graph=OUTPUT_DIR / "ref_graph.vg",
@@ -203,9 +219,9 @@ rule build_sample_graph:
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {VG_DOCKER} \
-                vg mod -v $REL_VCF $REL_GRAPH > {output.vg} 2> {log}
+                vg mod -v $REL_VCF $REL_GRAPH > $REL_OUT 2> {log}
         else
-            cp {input.ref_graph} {output.vg}
+            cp {input.ref_graph} $REL_OUT
             echo "No variants for {wildcards.sample}" >> {log}
         fi
         """
