@@ -471,7 +471,7 @@ rule phase_variants:
             # Get reference chromosome name
             REF_CHR=$(docker run --rm \
                 --user {params.user_id}:{params.group_id} \
-                --memory=1g \
+                --memory=4g \
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
