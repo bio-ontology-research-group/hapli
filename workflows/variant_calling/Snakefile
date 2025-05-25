@@ -66,7 +66,7 @@ rule index_pangenome:
         echo "Indexing completed successfully" >> {log}
         """
 
-# Call variants for each sample
+# Call variants for each sample (unphased)
 rule call_variants:
     input:
         vg=PANGENOME_VG,
@@ -75,6 +75,8 @@ rule call_variants:
         gcsa_lcp=os.path.join(OUTPUT_DIR, "pangenome.gcsa.lcp")
     output:
         vcf=os.path.join(OUTPUT_DIR, "{sample}.vcf")
+    wildcard_constraints:
+        sample="[^_]+(?:_[0-9]+)*"  # Match sample names but not those ending with "_phased"
     threads: THREADS
     log:
         os.path.join(OUTPUT_DIR, "logs", "call_{sample}.log")
@@ -118,6 +120,8 @@ rule phase_variants:
         xg=os.path.join(OUTPUT_DIR, "pangenome.xg")
     output:
         phased_vcf=os.path.join(OUTPUT_DIR, "{sample}_phased.vcf")
+    wildcard_constraints:
+        sample="[^_]+(?:_[0-9]+)*"  # Match sample names but not those ending with "_phased"
     threads: THREADS
     log:
         os.path.join(OUTPUT_DIR, "logs", "phase_{sample}.log")
