@@ -22,6 +22,19 @@ def convert_haplotype_to_genotype(hap1_gt, hap2_gt):
     except ValueError:
         return './.'
 
+def get_reference_chromosome_name(reference_file):
+    """Extract the first chromosome name from reference FASTA"""
+    try:
+        with open(reference_file, 'r') as f:
+            for line in f:
+                if line.startswith('>'):
+                    # Extract chromosome name (first word after >)
+                    chrom_name = line[1:].split()[0]
+                    return chrom_name
+    except:
+        pass
+    return None
+
 def main():
     if len(sys.argv) != 6:
         print("Usage: convert_haplotypes.py input_vcf output_vcf sample_name hap1_pos hap2_pos")
@@ -33,10 +46,27 @@ def main():
     hap1_pos = int(sys.argv[4]) if sys.argv[4] else None
     hap2_pos = int(sys.argv[5]) if sys.argv[5] else None
 
+    # Try to get reference file path from VCF header to get correct chromosome name
+    reference_chrom = None
+    
+    with open(input_file, 'r') as f_in:
+        for line in f_in:
+            if line.startswith('##reference=file://'):
+                # Extract reference file path
+                ref_path = line.strip().split('file://', 1)[1]
+                reference_chrom = get_reference_chromosome_name(ref_path)
+                print(f"Found reference chromosome: {reference_chrom}", file=sys.stderr)
+                break
+            elif line.startswith('#CHROM'):
+                break
+
     with open(input_file, 'r') as f_in, open(output_file, 'w') as f_out:
         for line in f_in:
             if line.startswith('##'):
-                # Copy header lines, but modify sample-specific ones
+                # Copy header lines, but update contig if we have reference chromosome
+                if line.startswith('##contig=<ID=reference') and reference_chrom:
+                    # Replace reference with actual chromosome name
+                    line = line.replace('ID=reference', f'ID={reference_chrom}')
                 f_out.write(line)
             elif line.startswith('#CHROM'):
                 # Modify column header
@@ -48,6 +78,10 @@ def main():
                 parts = line.strip().split('\t')
                 if len(parts) < 10:
                     continue
+                
+                # Update chromosome name if we have reference chromosome
+                if reference_chrom and parts[0] == 'reference':
+                    parts[0] = reference_chrom
                     
                 # Get haplotype genotypes
                 hap1_gt = parts[hap1_pos - 1] if hap1_pos and hap1_pos <= len(parts) else '.'

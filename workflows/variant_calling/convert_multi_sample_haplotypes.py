@@ -7,6 +7,7 @@ it to a multi-sample VCF with proper diploid genotypes for each sample.
 """
 
 import sys
+import re
 
 def convert_haplotype_to_genotype(hap1_gt, hap2_gt):
     """Convert haplotype genotypes to diploid genotype"""
@@ -22,6 +23,19 @@ def convert_haplotype_to_genotype(hap1_gt, hap2_gt):
     except ValueError:
         return './.'
 
+def get_reference_chromosome_name(reference_file):
+    """Extract the first chromosome name from reference FASTA"""
+    try:
+        with open(reference_file, 'r') as f:
+            for line in f:
+                if line.startswith('>'):
+                    # Extract chromosome name (first word after >)
+                    chrom_name = line[1:].split()[0]
+                    return chrom_name
+    except:
+        pass
+    return None
+
 def main():
     if len(sys.argv) < 4:
         print("Usage: convert_multi_sample_haplotypes.py input_vcf output_vcf sample1 [sample2 ...]")
@@ -31,11 +45,20 @@ def main():
     output_file = sys.argv[2]
     sample_names = sys.argv[3:]
 
+    # Try to get reference file path from VCF header to get correct chromosome name
+    reference_file = None
+    reference_chrom = None
+    
     # Read the input VCF and find haplotype columns
     with open(input_file, 'r') as f_in:
         header_line = None
         for line in f_in:
-            if line.startswith('#CHROM'):
+            if line.startswith('##reference=file://'):
+                # Extract reference file path
+                ref_path = line.strip().split('file://', 1)[1]
+                reference_chrom = get_reference_chromosome_name(ref_path)
+                print(f"Found reference chromosome: {reference_chrom}", file=sys.stderr)
+            elif line.startswith('#CHROM'):
                 header_line = line.strip()
                 break
     
@@ -67,7 +90,10 @@ def main():
     with open(input_file, 'r') as f_in, open(output_file, 'w') as f_out:
         for line in f_in:
             if line.startswith('##'):
-                # Copy header lines
+                # Copy header lines, but update contig if we have reference chromosome
+                if line.startswith('##contig=<ID=reference') and reference_chrom:
+                    # Replace reference with actual chromosome name
+                    line = line.replace('ID=reference', f'ID={reference_chrom}')
                 f_out.write(line)
             elif line.startswith('#CHROM'):
                 # Create new header with sample names
@@ -79,6 +105,10 @@ def main():
                 parts = line.strip().split('\t')
                 if len(parts) < 10:
                     continue
+                
+                # Update chromosome name if we have reference chromosome
+                if reference_chrom and parts[0] == 'reference':
+                    parts[0] = reference_chrom
                 
                 # Build new line with diploid genotypes
                 new_parts = parts[:9]  # Keep first 9 columns (CHROM through FORMAT)
