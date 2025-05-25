@@ -299,7 +299,8 @@ rule call_variants:
         docker_image=VG_DOCKER,
         sample="{sample}",
         user_id=USER_ID,
-        group_id=GROUP_ID
+        group_id=GROUP_ID,
+        script_path=os.path.join(Path(__file__).parent, "convert_haplotypes.py")
     shell:
         """
         mkdir -p $(dirname {log})
@@ -379,68 +380,8 @@ rule call_variants:
             exit 0
         fi
         
-        # Create Python script to convert haplotype calls to genotypes
-        cat > /tmp/convert_to_genotype_{params.sample}.py << 'PYTHON_SCRIPT_END'
-import sys
-
-def convert_haplotype_to_genotype(hap1_gt, hap2_gt):
-    """Convert haplotype genotypes to diploid genotype"""
-    # Handle missing data
-    if hap1_gt == '.' or hap2_gt == '.':
-        return './.'
-    
-    # Convert to integers
-    try:
-        h1 = int(hap1_gt)
-        h2 = int(hap2_gt)
-        return str(h1) + "|" + str(h2)  # Phased genotype
-    except ValueError:
-        return './.'
-
-# Read input
-input_file = sys.argv[1]
-output_file = sys.argv[2]
-sample_name = sys.argv[3]
-hap1_pos = int(sys.argv[4]) if sys.argv[4] else None
-hap2_pos = int(sys.argv[5]) if sys.argv[5] else None
-
-with open(input_file, 'r') as f_in, open(output_file, 'w') as f_out:
-    for line in f_in:
-        if line.startswith('##'):
-            # Copy header lines, but modify sample-specific ones
-            f_out.write(line)
-        elif line.startswith('#CHROM'):
-            # Modify column header
-            parts = line.strip().split('\t')
-            new_header = parts[:9] + [sample_name]  # Keep first 9 columns, replace samples
-            f_out.write('\t'.join(new_header) + '\n')
-        else:
-            # Process variant lines
-            parts = line.strip().split('\t')
-            if len(parts) < 10:
-                continue
-                
-            # Get haplotype genotypes
-            hap1_gt = parts[hap1_pos - 1] if hap1_pos and hap1_pos <= len(parts) else '.'
-            hap2_gt = parts[hap2_pos - 1] if hap2_pos and hap2_pos <= len(parts) else '.'
-            
-            # Convert to diploid genotype
-            diploid_gt = convert_haplotype_to_genotype(hap1_gt, hap2_gt)
-            
-            # Skip variants where both haplotypes are reference (0|0)
-            if diploid_gt == '0|0':
-                continue
-                
-            # Build new line
-            new_parts = parts[:9] + [diploid_gt]
-            f_out.write('\t'.join(new_parts) + '\n')
-PYTHON_SCRIPT_END
-        
-        # Run the conversion
-        python /tmp/convert_to_genotype_{params.sample}.py {input.multi_vcf} {output.vcf} {params.sample} "$HAP1_POS" "$HAP2_POS" 2>> {log}
-        
-        # Clean up
-        rm -f /tmp/convert_to_genotype_{params.sample}.py
+        # Run the conversion using the separate Python script
+        python {params.script_path} {input.multi_vcf} {output.vcf} {params.sample} "$HAP1_POS" "$HAP2_POS" 2>> {log}
         
         # Validate output
         if [ ! -f {output.vcf} ]; then
