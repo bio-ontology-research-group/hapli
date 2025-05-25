@@ -40,12 +40,15 @@ rule combine_sequences:
         Path(str(log)).parent.mkdir(parents=True, exist_ok=True)
         
         with open(str(output.combined), 'w') as out:
-            # Add reference with clear naming
+            # Add reference sequences, preserving original chromosome names
             print(f"Adding reference: {input.ref}", file=open(str(log), 'w'))
             with open(str(input.ref)) as f:
                 for line in f:
                     if line.startswith('>'):
-                        out.write('>reference\n')
+                        # Extract chromosome name from header (everything after > until first space)
+                        chrom_name = line[1:].split()[0]
+                        out.write(f'>{chrom_name}\n')
+                        print(f"  Added chromosome: {chrom_name}", file=open(str(log), 'a'))
                     else:
                         out.write(line)
             
@@ -57,7 +60,10 @@ rule combine_sequences:
                 with open(var_path) as f:
                     for line in f:
                         if line.startswith('>'):
-                            out.write(f'>{haplotype_name}\n')
+                            # Extract chromosome name and append haplotype suffix
+                            chrom_name = line[1:].split()[0]
+                            out.write(f'>{chrom_name}#{haplotype_name}\n')
+                            print(f"  Added haplotype sequence: {chrom_name}#{haplotype_name}", file=open(str(log), 'a'))
                         else:
                             out.write(line)
 
