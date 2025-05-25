@@ -215,6 +215,30 @@ def apply_variant_to_sequence(sequence: str, variant: Variant) -> str:
     return ''.join(seq_list)
 
 
+def create_modified_genome(genome: Dict[str, SeqRecord], variant: Variant) -> Dict[str, SeqRecord]:
+    """Create a complete modified genome with the variant applied."""
+    modified_genome = {}
+    
+    for chrom_id, record in genome.items():
+        if chrom_id == variant.chromosome:
+            # Apply variant to this chromosome
+            original_seq = str(record.seq)
+            modified_seq = apply_variant_to_sequence(original_seq, variant)
+            
+            # Create modified record
+            modified_record = SeqRecord(
+                Seq(modified_seq),
+                id=record.id,
+                description=f"{record.description} [Modified with {variant.variant_type} at position {variant.position}]"
+            )
+            modified_genome[chrom_id] = modified_record
+        else:
+            # Keep original chromosome unchanged
+            modified_genome[chrom_id] = record
+    
+    return modified_genome
+
+
 def generate_variants(genome: Dict[str, SeqRecord], num_variants: int, 
                      variant_types: List[str]) -> List[Variant]:
     """Generate the specified number of variants."""
@@ -266,21 +290,17 @@ def write_variant_outputs(variant: Variant, genome: Dict[str, SeqRecord], output
         f.write(f"HGVS: {variant.to_hgvs_notation()}\n")
         f.write(f"Affected Region: {variant.get_affected_region()}\n")
     
-    # Write modified sequence
-    fa_file = output_dir / f"{variant_id}_variant.fa"
-    chromosome = variant.chromosome
-    original_seq = str(genome[chromosome].seq)
-    modified_seq = apply_variant_to_sequence(original_seq, variant)
+    # Create complete modified genome
+    modified_genome = create_modified_genome(genome, variant)
     
-    # Create new SeqRecord
-    modified_record = SeqRecord(
-        Seq(modified_seq),
-        id=f"{chromosome}_variant_{variant_id}",
-        description=f"Modified with {variant.variant_type} at position {variant.position}"
-    )
-    
+    # Write complete modified genome to FASTA
+    fa_file = output_dir / f"{variant_id}_genome.fa"
     with open(fa_file, 'w') as f:
-        SeqIO.write(modified_record, f, 'fasta')
+        # Write all chromosomes in the same order as original
+        for chrom_id in genome.keys():
+            SeqIO.write(modified_genome[chrom_id], f, 'fasta')
+    
+    logging.info(f"Written complete modified genome to {fa_file}")
 
 
 def write_summary(variants: List[Variant], output_dir: Path) -> None:
