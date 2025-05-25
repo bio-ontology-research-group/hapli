@@ -228,34 +228,51 @@ rule merge_vcfs:
             fi
         done
         
-        # Compress and index each VCF
-        for vcf in {input.vcfs}; do
-            if [ -f "$vcf" ] && [ -s "$vcf" ]; then
-                bgzip -c "$vcf" > "$vcf.gz" 2>> {log}
-                tabix -p vcf "$vcf.gz" 2>> {log}
-            fi
-        done
+        # Check sample names in first VCF to understand the structure
+        echo "Sample names in first VCF:" >> {log}
+        if [ -f "{input.vcfs[0]}" ]; then
+            grep '^#CHROM' "{input.vcfs[0]}" | cut -f10- >> {log} 2>/dev/null || echo "No sample columns found" >> {log}
+        fi
         
-        # Count valid VCF files
-        VALID_VCFS=$(ls {input.vcfs} 2>/dev/null | while read vcf; do [ -s "$vcf.gz" ] && echo "$vcf.gz"; done | wc -l)
+        # Since vg deconstruct outputs variants for each sample separately,
+        # we need to concatenate them rather than merge them
+        echo "Concatenating VCF files..." >> {log}
         
-        if [ "$VALID_VCFS" -gt 1 ]; then
-            # Multiple VCFs, merge them
-            bcftools merge $(ls {input.vcfs} | sed 's/$/.gz/g' | tr '\n' ' ') \
-                -o {output.merged} 2>> {log}
-        elif [ "$VALID_VCFS" -eq 1 ]; then
-            # Only one VCF
-            zcat $(ls {input.vcfs} | head -1).gz > {output.merged}
+        # Start with header from first VCF
+        if [ -f "{input.vcfs[0]}" ] && [ -s "{input.vcfs[0]}" ]; then
+            grep '^#' "{input.vcfs[0]}" > {output.merged}
+            
+            # Add variants from all VCFs
+            for vcf in {input.vcfs}; do
+                if [ -f "$vcf" ] && [ -s "$vcf" ]; then
+                    sample_name=$(basename "$vcf" .vcf)
+                    echo "Adding variants from $sample_name..." >> {log}
+                    
+                    # Add variants with sample info in ID field for tracking
+                    grep -v '^#' "$vcf" | awk -v sample="$sample_name" '{{
+                        if ($3 == ".") {{
+                            $3 = sample "_" NR
+                        }} else {{
+                            $3 = sample "_" $3
+                        }}
+                        print
+                    }}' >> {output.merged}
+                fi
+            done
         else
             # No valid VCFs, create empty VCF
             echo "##fileformat=VCFv4.3" > {output.merged}
+            echo "##source=vg_deconstruct" >> {output.merged}
+            echo "##INFO=<ID=AT,Number=R,Type=String,Description=\"Allele Traversal\">" >> {output.merged}
             echo "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO" >> {output.merged}
         fi
         
-        # Clean up compressed files
-        for vcf in {input.vcfs}; do
-            rm -f "$vcf.gz" "$vcf.gz.tbi" 2>/dev/null || true
-        done
+        # Sort the VCF by position
+        if [ -s {output.merged} ]; then
+            echo "Sorting merged VCF..." >> {log}
+            (grep '^#' {output.merged}; grep -v '^#' {output.merged} | sort -k1,1 -k2,2n) > {output.merged}.tmp
+            mv {output.merged}.tmp {output.merged}
+        fi
         """
 
 # Generate statistics
