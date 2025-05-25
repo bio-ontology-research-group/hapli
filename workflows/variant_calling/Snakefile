@@ -337,7 +337,8 @@ rule phase_variants:
         docker_image=VG_DOCKER,
         sample="{sample}",
         user_id=USER_ID,
-        group_id=GROUP_ID
+        group_id=GROUP_ID,
+        script_path=os.path.join(Path(__file__).parent.parent.parent, "scripts", "vcf_phasing_fix.py")
     shell:
         """
         mkdir -p $(dirname {log})
@@ -349,6 +350,7 @@ rule phase_variants:
         REL_VG=$(realpath --relative-to={params.mount_dir} {input.vg})
         REL_XG=$(realpath --relative-to={params.mount_dir} {input.xg})
         REL_REF=$(realpath --relative-to={params.mount_dir} {input.reference})
+        REL_SCRIPT=$(realpath --relative-to={params.mount_dir} {params.script_path})
         
         # Extract haplotype paths for this sample
         HAP1_PATH="{params.sample}_hap1"
@@ -425,67 +427,13 @@ rule phase_variants:
                 vg deconstruct -p "$REF_PATH" -a -t {threads} "$REL_VG" > {output.phased_vcf}.tmp 2>> {log}
             
             # Post-process the VCF to create proper phased genotypes for this specific sample
-            echo "Post-processing VCF for proper phasing..." >> {log}
+            echo "Post-processing VCF for proper phasing using {params.script_path}..." >> {log}
             
-            # Create a Python script to extract and phase genotypes for this sample
-            cat > {output.phased_vcf}.fix.py << 'EOF'
-import sys
-
-def create_phased_vcf(input_file, output_file, sample_name, hap1_name, hap2_name):
-    with open(input_file, 'r') as infile, open(output_file, 'w') as outfile:
-        hap1_col = -1
-        hap2_col = -1
-        ref_col = -1
-        
-        for line in infile:
-            if line.startswith('#'):
-                if line.startswith('#CHROM'):
-                    # Parse header to find column indices
-                    parts = line.strip().split('\t')
-                    for i, part in enumerate(parts[9:], 9):  # Sample columns start at index 9
-                        if part == 'reference':
-                            ref_col = i
-                        elif part == hap1_name:
-                            hap1_col = i
-                        elif part == hap2_name:
-                            hap2_col = i
-                    
-                    # Create new header with just our sample
-                    new_header = parts[:9] + [sample_name]
-                    outfile.write('\t'.join(new_header) + '\n')
-                else:
-                    outfile.write(line)
-            else:
-                # Process variant lines
-                parts = line.strip().split('\t')
-                if len(parts) >= 10:
-                    # Extract genotypes for reference and haplotypes
-                    ref_gt = parts[ref_col] if ref_col >= 0 and ref_col < len(parts) else "0"
-                    hap1_gt = parts[hap1_col] if hap1_col >= 0 and hap1_col < len(parts) else "0"
-                    hap2_gt = parts[hap2_col] if hap2_col >= 0 and hap2_col < len(parts) else "0"
-                    
-                    # Create phased genotype
-                    # Convert single allele numbers to phased format
-                    if hap1_gt == "." or hap1_gt == "":
-                        hap1_gt = "0"
-                    if hap2_gt == "." or hap2_gt == "":
-                        hap2_gt = "0"
-                    
-                    phased_gt = hap1_gt + "|" + hap2_gt
-                    
-                    # Create output line with phased genotype
-                    new_parts = parts[:9] + [phased_gt]
-                    outfile.write('\t'.join(new_parts) + '\n')
-
-if __name__ == "__main__":
-    create_phased_vcf(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
-EOF
-            
-            # Run the phasing fix
-            python {output.phased_vcf}.fix.py {output.phased_vcf}.tmp {output.phased_vcf} {params.sample} "$HAP1_PATH" "$HAP2_PATH" 2>> {log}
+            # Call the external Python script
+            python {params.script_path} {output.phased_vcf}.tmp {output.phased_vcf} {params.sample} "$HAP1_PATH" "$HAP2_PATH" 2>> {log}
             
             # Clean up temporary files
-            rm -f {output.phased_vcf}.tmp {output.phased_vcf}.fix.py
+            rm -f {output.phased_vcf}.tmp
             
         elif [ "$REF_EXISTS" = true ] && ([ "$HAP1_EXISTS" = true ] || [ "$HAP2_EXISTS" = true ]); then
             echo "Using vg deconstruct with available haplotype path..." >> {log}
