@@ -209,7 +209,7 @@ rule call_variants:
         
         echo "Looking for paths:" >> {log}
         echo "  Reference path: $REF_PATH" >> {log}
-        echo "  Expected hap1 path: $HAP1_PATH" >> {log}
+        echo "  Expected hap1 path: $HAP1_1_PATH" >> {log}
         echo "  Expected hap2 path: $HAP2_PATH" >> {log}
         echo "" >> {log}
         
@@ -396,7 +396,7 @@ rule phase_variants:
             {params.docker_image} \
             vg paths -v "$REL_VG" -L | grep -q "^$HAP1_PATH$"; then
             HAP1_EXISTS=true
-            echo "Found haplotype 1 path: $HAP1_PATH" >> {log}
+            echo "Found haplotype path: $HAP1_PATH" >> {log}
         fi
         
         if docker run --rm \
@@ -407,7 +407,7 @@ rule phase_variants:
             {params.docker_image} \
             vg paths -v "$REL_VG" -L | grep -q "^$HAP2_PATH$"; then
             HAP2_EXISTS=true
-            echo "Found haplotype 2 path: $HAP2_PATH" >> {log}
+            echo "Found haplotype path: $HAP2_PATH" >> {log}
         fi
         
         if [ "$REF_EXISTS" = true ] && [ "$HAP1_EXISTS" = true ] && [ "$HAP2_EXISTS" = true ]; then
