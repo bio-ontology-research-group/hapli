@@ -23,8 +23,9 @@ def convert_haplotype_to_genotype(hap1_gt, hap2_gt):
     except ValueError:
         return './.'
 
-def get_reference_chromosome_name(reference_file):
-    """Extract the first chromosome name from reference FASTA"""
+def get_all_reference_chromosome_names(reference_file):
+    """Extract all chromosome names from reference FASTA"""
+    chromosomes = []
     try:
         # Handle both absolute and relative paths
         if not os.path.exists(reference_file):
@@ -34,18 +35,18 @@ def get_reference_chromosome_name(reference_file):
                 reference_file = alt_path
             else:
                 print(f"Warning: Reference file not found: {reference_file}", file=sys.stderr)
-                return None
+                return []
                 
         with open(reference_file, 'r') as f:
             for line in f:
                 if line.startswith('>'):
                     # Extract chromosome name (first word after >)
                     chrom_name = line[1:].split()[0]
-                    print(f"Extracted chromosome name: {chrom_name}", file=sys.stderr)
-                    return chrom_name
+                    chromosomes.append(chrom_name)
+                    print(f"Found chromosome: {chrom_name}", file=sys.stderr)
     except Exception as e:
         print(f"Error reading reference file {reference_file}: {e}", file=sys.stderr)
-    return None
+    return chromosomes
 
 def main():
     if len(sys.argv) != 6:
@@ -61,8 +62,8 @@ def main():
     print(f"Converting haplotypes for sample: {sample_name}", file=sys.stderr)
     print(f"Hap1 position: {hap1_pos}, Hap2 position: {hap2_pos}", file=sys.stderr)
 
-    # Try to get reference file path from VCF header to get correct chromosome name
-    reference_chrom = None
+    # Try to get reference file path from VCF header to get correct chromosome names
+    reference_chroms = []
     
     with open(input_file, 'r') as f_in:
         for line in f_in:
@@ -72,25 +73,28 @@ def main():
                 # Remove any /data prefix that might be from Docker mount
                 if ref_path.startswith('/data/'):
                     ref_path = ref_path[6:]
-                reference_chrom = get_reference_chromosome_name(ref_path)
+                reference_chroms = get_all_reference_chromosome_names(ref_path)
                 print(f"Found reference file: {ref_path}", file=sys.stderr)
-                print(f"Found reference chromosome: {reference_chrom}", file=sys.stderr)
+                print(f"Found reference chromosomes: {reference_chroms}", file=sys.stderr)
                 break
             elif line.startswith('#CHROM'):
                 break
 
-    # If we couldn't get chromosome from reference, use a default
-    if not reference_chrom:
-        reference_chrom = "chr1"
-        print(f"Using default chromosome name: {reference_chrom}", file=sys.stderr)
+    # If we couldn't get chromosomes from reference, use defaults
+    if not reference_chroms:
+        reference_chroms = ["chr1", "chr2", "chr3"]  # Add more as needed
+        print(f"Using default chromosome names: {reference_chroms}", file=sys.stderr)
 
     with open(input_file, 'r') as f_in, open(output_file, 'w') as f_out:
         for line in f_in:
             if line.startswith('##'):
-                # Copy header lines, but update contig if we have reference chromosome
-                if line.startswith('##contig=<ID=reference') and reference_chrom:
-                    # Replace reference with actual chromosome name
-                    line = line.replace('ID=reference', f'ID={reference_chrom}')
+                # Copy header lines, but update contig if we have reference chromosomes
+                if line.startswith('##contig=<ID=reference') and reference_chroms:
+                    # Replace reference with actual chromosome names - add all chromosomes
+                    for chrom in reference_chroms:
+                        new_line = line.replace('ID=reference', f'ID={chrom}')
+                        f_out.write(new_line)
+                    continue  # Skip the original line
                 f_out.write(line)
             elif line.startswith('#CHROM'):
                 # Modify column header
@@ -103,9 +107,11 @@ def main():
                 if len(parts) < 10:
                     continue
                 
-                # Update chromosome name if we have reference chromosome
-                if reference_chrom and parts[0] == 'reference':
-                    parts[0] = reference_chrom
+                # Update chromosome name if we have reference chromosomes
+                # Map "reference" to the appropriate chromosome based on position or other logic
+                if reference_chroms and parts[0] == 'reference':
+                    # For now, just use the first chromosome - this might need more sophisticated logic
+                    parts[0] = reference_chroms[0]  # This is a simplification
                     
                 # Get haplotype genotypes
                 hap1_gt = parts[hap1_pos - 1] if hap1_pos and hap1_pos <= len(parts) else '.'
