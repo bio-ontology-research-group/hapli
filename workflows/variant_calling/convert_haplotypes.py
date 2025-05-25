@@ -48,6 +48,60 @@ def get_all_reference_chromosome_names(reference_file):
         print(f"Error reading reference file {reference_file}: {e}", file=sys.stderr)
     return chromosomes
 
+def get_chromosome_lengths(reference_file):
+    """Get chromosome lengths from reference FASTA"""
+    chrom_lengths = {}
+    current_chrom = None
+    current_length = 0
+    
+    try:
+        if not os.path.exists(reference_file):
+            alt_path = reference_file.replace('/data/', '')
+            if os.path.exists(alt_path):
+                reference_file = alt_path
+            else:
+                return {}
+                
+        with open(reference_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('>'):
+                    # Save previous chromosome
+                    if current_chrom:
+                        chrom_lengths[current_chrom] = current_length
+                    # Start new chromosome
+                    current_chrom = line[1:].split()[0]
+                    current_length = 0
+                else:
+                    current_length += len(line)
+            
+            # Save last chromosome
+            if current_chrom:
+                chrom_lengths[current_chrom] = current_length
+                
+    except Exception as e:
+        print(f"Error reading reference file {reference_file}: {e}", file=sys.stderr)
+    
+    return chrom_lengths
+
+def map_position_to_chromosome(position, chrom_lengths):
+    """Map a position on concatenated reference to actual chromosome"""
+    cumulative_pos = 0
+    for chrom, length in chrom_lengths.items():
+        if position <= cumulative_pos + length:
+            # Position is in this chromosome
+            chrom_pos = position - cumulative_pos
+            return chrom, chrom_pos
+        cumulative_pos += length
+    
+    # If we get here, position is beyond all chromosomes
+    # Return the last chromosome
+    if chrom_lengths:
+        last_chrom = list(chrom_lengths.keys())[-1]
+        return last_chrom, position - (cumulative_pos - chrom_lengths[last_chrom])
+    
+    return "chr1", position
+
 def main():
     if len(sys.argv) != 6:
         print("Usage: convert_haplotypes.py input_vcf output_vcf sample_name hap1_pos hap2_pos")
@@ -64,6 +118,7 @@ def main():
 
     # Try to get reference file path from VCF header to get correct chromosome names
     reference_chroms = []
+    reference_file = None
     
     with open(input_file, 'r') as f_in:
         for line in f_in:
@@ -73,12 +128,19 @@ def main():
                 # Remove any /data prefix that might be from Docker mount
                 if ref_path.startswith('/data/'):
                     ref_path = ref_path[6:]
+                reference_file = ref_path
                 reference_chroms = get_all_reference_chromosome_names(ref_path)
                 print(f"Found reference file: {ref_path}", file=sys.stderr)
                 print(f"Found reference chromosomes: {reference_chroms}", file=sys.stderr)
                 break
             elif line.startswith('#CHROM'):
                 break
+
+    # Get chromosome lengths for position mapping
+    chrom_lengths = {}
+    if reference_file:
+        chrom_lengths = get_chromosome_lengths(reference_file)
+        print(f"Chromosome lengths: {chrom_lengths}", file=sys.stderr)
 
     # If we couldn't get chromosomes from reference, use defaults
     if not reference_chroms:
@@ -92,7 +154,10 @@ def main():
                 if line.startswith('##contig=<ID=reference') and reference_chroms:
                     # Replace reference with actual chromosome names - add all chromosomes
                     for chrom in reference_chroms:
-                        new_line = line.replace('ID=reference', f'ID={chrom}')
+                        if chrom in chrom_lengths:
+                            new_line = f"##contig=<ID={chrom},length={chrom_lengths[chrom]}>\n"
+                        else:
+                            new_line = f"##contig=<ID={chrom}>\n"
                         f_out.write(new_line)
                     continue  # Skip the original line
                 f_out.write(line)
@@ -107,11 +172,19 @@ def main():
                 if len(parts) < 10:
                     continue
                 
-                # Update chromosome name if we have reference chromosomes
-                # Map "reference" to the appropriate chromosome based on position or other logic
-                if reference_chroms and parts[0] == 'reference':
-                    # For now, just use the first chromosome - this might need more sophisticated logic
-                    parts[0] = reference_chroms[0]  # This is a simplification
+                # Map position to actual chromosome if we have chromosome lengths
+                original_chrom = parts[0]
+                original_pos = int(parts[1])
+                
+                if original_chrom == 'reference' and chrom_lengths:
+                    # Map position to actual chromosome
+                    actual_chrom, actual_pos = map_position_to_chromosome(original_pos, chrom_lengths)
+                    parts[0] = actual_chrom
+                    parts[1] = str(actual_pos)
+                    print(f"Mapped reference:{original_pos} -> {actual_chrom}:{actual_pos}", file=sys.stderr)
+                elif reference_chroms and parts[0] == 'reference':
+                    # Fallback: just use the first chromosome
+                    parts[0] = reference_chroms[0]
                     
                 # Get haplotype genotypes
                 hap1_gt = parts[hap1_pos - 1] if hap1_pos and hap1_pos <= len(parts) else '.'

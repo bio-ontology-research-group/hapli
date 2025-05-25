@@ -215,26 +215,44 @@ rule call_all_variants:
             vg stats -lz "$REL_VG" >> {log} 2>&1
         echo "" >> {log}
         
-        # Check if reference path exists
-        REF_PATH="reference"
-        REF_EXISTS=false
-        
-        if docker run --rm \
+        # Get all available paths to find reference paths
+        echo "Finding reference paths..." >> {log}
+        AVAILABLE_PATHS=$(docker run --rm \
             --user {params.user_id}:{params.group_id} \
             --memory=2g \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
-            vg paths -v "$REL_VG" -L | grep -q "^$REF_PATH$"; then
-            echo "Found reference path: $REF_PATH" >> {log}
-            REF_EXISTS=true
+            vg paths -v "$REL_VG" -L 2>/dev/null || echo "")
+        
+        echo "Available paths:" >> {log}
+        echo "$AVAILABLE_PATHS" >> {log}
+        echo "" >> {log}
+        
+        # Look for reference paths - try different naming patterns
+        REF_PATH=""
+        for path_name in "reference" "ref" "chr1" "1"; do
+            if echo "$AVAILABLE_PATHS" | grep -q "^$path_name$"; then
+                REF_PATH="$path_name"
+                echo "Found reference path: $REF_PATH" >> {log}
+                break
+            fi
+        done
+        
+        # If no single reference path, try to find chromosome paths
+        if [ -z "$REF_PATH" ]; then
+            echo "No single reference path found, looking for chromosome paths..." >> {log}
+            CHR_PATHS=$(echo "$AVAILABLE_PATHS" | grep -E "^(chr[0-9]+|[0-9]+)$" | head -1)
+            if [ -n "$CHR_PATHS" ]; then
+                REF_PATH=$(echo "$CHR_PATHS" | head -1)
+                echo "Using first chromosome path as reference: $REF_PATH" >> {log}
+            fi
         fi
         
-        if [ "$REF_EXISTS" = true ]; then
-            echo "Using vg deconstruct with reference as baseline..." >> {log}
+        if [ -n "$REF_PATH" ]; then
+            echo "Using vg deconstruct with reference path: $REF_PATH" >> {log}
             
             # Use vg deconstruct to call variants against reference path
-            # Remove deprecated flags -e and -H, use -a for all snarls
             echo "Running: vg deconstruct -p $REF_PATH -a -t {threads} $REL_VG" >> {log}
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
@@ -245,7 +263,7 @@ rule call_all_variants:
                 {params.docker_image} \
                 vg deconstruct -p "$REF_PATH" -a -t {threads} "$REL_VG" > {output.multi_vcf} 2>> {log}
         else
-            echo "Reference path not found, using vg call with XG index..." >> {log}
+            echo "No reference path found, using vg call with XG index..." >> {log}
             # Fallback to vg call using XG index and reference
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
@@ -285,7 +303,15 @@ rule call_all_variants:
             
             # Add contig lines for all chromosomes
             while read -r chr; do
-                echo "##contig=<ID=$chr>" >> {output.multi_vcf}
+                # Get chromosome length
+                chr_len=$(docker run --rm \
+                    --user {params.user_id}:{params.group_id} \
+                    --memory=1g \
+                    -v {params.mount_dir}:/data \
+                    -w /data \
+                    {params.docker_image} \
+                    sh -c "grep -A 999999 '^>$chr' '$REL_REF' | grep -v '^>' | tr -d '\n' | wc -c" 2>/dev/null || echo "0")
+                echo "##contig=<ID=$chr,length=$chr_len>" >> {output.multi_vcf}
             done < /tmp/ref_chroms.txt
             rm -f /tmp/ref_chroms.txt
             
@@ -361,7 +387,15 @@ rule call_variants:
                 -w /data \
                 {params.docker_image} \
                 sh -c "grep '^>' '$REL_REF' | sed 's/^>//' | cut -d' ' -f1" | while read -r chr; do
-                echo "##contig=<ID=$chr>" >> {output.vcf}
+                # Get chromosome length
+                chr_len=$(docker run --rm \
+                    --user {params.user_id}:{params.group_id} \
+                    --memory=1g \
+                    -v {params.mount_dir}:/data \
+                    -w /data \
+                    {params.docker_image} \
+                    sh -c "grep -A 999999 '^>$chr' '$REL_REF' | grep -v '^>' | tr -d '\n' | wc -c" 2>/dev/null || echo "0")
+                echo "##contig=<ID=$chr,length=$chr_len>" >> {output.vcf}
             done
             
             echo "#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	{params.sample}" >> {output.vcf}
@@ -400,7 +434,15 @@ rule call_variants:
                 -w /data \
                 {params.docker_image} \
                 sh -c "grep '^>' '$REL_REF' | sed 's/^>//' | cut -d' ' -f1" | while read -r chr; do
-                echo "##contig=<ID=$chr>" >> {output.vcf}
+                # Get chromosome length
+                chr_len=$(docker run --rm \
+                    --user {params.user_id}:{params.group_id} \
+                    --memory=1g \
+                    -v {params.mount_dir}:/data \
+                    -w /data \
+                    {params.docker_image} \
+                    sh -c "grep -A 999999 '^>$chr' '$REL_REF' | grep -v '^>' | tr -d '\n' | wc -c" 2>/dev/null || echo "0")
+                echo "##contig=<ID=$chr,length=$chr_len>" >> {output.vcf}
             done
             
             echo "#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	{params.sample}" >> {output.vcf}
@@ -511,7 +553,15 @@ rule create_all_samples_phased:
                 -w /data \
                 {params.docker_image} \
                 sh -c "grep '^>' '$REL_REF' | sed 's/^>//' | cut -d' ' -f1" | while read -r chr; do
-                echo "##contig=<ID=$chr>" >> {output.all_phased_vcf}
+                # Get chromosome length
+                chr_len=$(docker run --rm \
+                    --user {params.user_id}:{params.group_id} \
+                    --memory=1g \
+                    -v {params.mount_dir}:/data \
+                    -w /data \
+                    {params.docker_image} \
+                    sh -c "grep -A 999999 '^>$chr' '$REL_REF' | grep -v '^>' | tr -d '\n' | wc -c" 2>/dev/null || echo "0")
+                echo "##contig=<ID=$chr,length=$chr_len>" >> {output.all_phased_vcf}
             done
             
             # Create header with all sample names
