@@ -26,26 +26,113 @@ VG_DOCKER = "quay.io/vgteam/vg:v1.65.0"
 USER_ID = os.getuid()
 GROUP_ID = os.getgid()
 
-# Find all haplotype FASTA files
-# Updated: Look for sample_XXX_hap1.fasta and sample_XXX_hap2.fasta
-HAPLOTYPE_FASTAS = sorted(glob.glob(str(HAPLOTYPE_DATA_DIR / "sample_*" / "sample_*.fasta")))
+# Debug: Print directory contents
+print(f"Looking for haplotype files in: {HAPLOTYPE_DATA_DIR}")
+print(f"Directory exists: {HAPLOTYPE_DATA_DIR.exists()}")
 
-# Create a list of unique sample names (e.g., "sample_000")
-UNIQUE_SAMPLE_NAMES = sorted(list(set([Path(f).parent.name for f in HAPLOTYPE_FASTAS])))
+if HAPLOTYPE_DATA_DIR.exists():
+    print("Contents of haplotype data directory:")
+    for item in HAPLOTYPE_DATA_DIR.iterdir():
+        print(f"  {item}")
+        if item.is_dir():
+            print(f"    Contents of {item.name}:")
+            for subitem in item.iterdir():
+                print(f"      {subitem}")
 
-# Create a list of paths for the graph (e.g., "sample_000_hap1", "sample_000_hap2")
+# Find all haplotype FASTA files with multiple patterns
+HAPLOTYPE_FASTAS = []
+
+# Try different patterns to find the files
+patterns_to_try = [
+    str(HAPLOTYPE_DATA_DIR / "sample_*" / "sample_*.fasta"),
+    str(HAPLOTYPE_DATA_DIR / "sample_*" / "*.fasta"),
+    str(HAPLOTYPE_DATA_DIR / "*" / "sample_*.fasta"),
+    str(HAPLOTYPE_DATA_DIR / "*" / "*_hap*.fasta"),
+    str(HAPLOTYPE_DATA_DIR / "sample_*.fasta"),
+    str(HAPLOTYPE_DATA_DIR / "*_hap*.fasta"),
+]
+
+for pattern in patterns_to_try:
+    found_files = sorted(glob.glob(pattern))
+    if found_files:
+        print(f"Pattern '{pattern}' found {len(found_files)} files:")
+        for f in found_files:
+            print(f"  {f}")
+        HAPLOTYPE_FASTAS = found_files
+        break
+    else:
+        print(f"Pattern '{pattern}' found no files")
+
+# If still no files found, check if we can find any FASTA files at all
+if not HAPLOTYPE_FASTAS:
+    print("No files found with standard patterns. Searching for any .fasta files...")
+    all_fasta_pattern = str(HAPLOTYPE_DATA_DIR / "**" / "*.fasta")
+    all_fastas = sorted(glob.glob(all_fasta_pattern, recursive=True))
+    if all_fastas:
+        print(f"Found {len(all_fastas)} .fasta files total:")
+        for f in all_fastas:
+            print(f"  {f}")
+        # Filter for haplotype files (containing 'hap' in the name)
+        hap_fastas = [f for f in all_fastas if 'hap' in Path(f).name.lower()]
+        if hap_fastas:
+            print(f"Using {len(hap_fastas)} files that contain 'hap' in the name")
+            HAPLOTYPE_FASTAS = hap_fastas
+        else:
+            print("No files contain 'hap' in the name")
+
+# Create a list of unique sample names
+UNIQUE_SAMPLE_NAMES = []
 GRAPH_PATH_NAMES = []
-for sample_name in UNIQUE_SAMPLE_NAMES:
-    GRAPH_PATH_NAMES.append(f"{sample_name}_hap1")
-    GRAPH_PATH_NAMES.append(f"{sample_name}_hap2")
+
+if HAPLOTYPE_FASTAS:
+    # Extract sample names from file paths
+    sample_names = set()
+    for fasta_path in HAPLOTYPE_FASTAS:
+        path_obj = Path(fasta_path)
+        # Try to extract sample name from filename
+        filename = path_obj.stem
+        
+        # Common patterns: sample_XXX_hap1, sample_XXX_hap2
+        if '_hap' in filename:
+            sample_base = filename.split('_hap')[0]
+            sample_names.add(sample_base)
+        else:
+            # If no clear haplotype pattern, use parent directory or filename
+            if path_obj.parent.name.startswith('sample_'):
+                sample_names.add(path_obj.parent.name)
+            else:
+                # Use filename without extension as sample name
+                sample_names.add(filename)
+    
+    UNIQUE_SAMPLE_NAMES = sorted(list(sample_names))
+    
+    # Create graph path names
+    for sample_name in UNIQUE_SAMPLE_NAMES:
+        # Check if we have both haplotypes for this sample
+        hap1_files = [f for f in HAPLOTYPE_FASTAS if sample_name in f and 'hap1' in f]
+        hap2_files = [f for f in HAPLOTYPE_FASTAS if sample_name in f and 'hap2' in f]
+        
+        if hap1_files:
+            GRAPH_PATH_NAMES.append(f"{sample_name}_hap1")
+        if hap2_files:
+            GRAPH_PATH_NAMES.append(f"{sample_name}_hap2")
 
 print(f"Found {len(HAPLOTYPE_FASTAS)} haplotype FASTA files for {len(UNIQUE_SAMPLE_NAMES)} samples")
+print(f"Unique sample names: {UNIQUE_SAMPLE_NAMES}")
 print(f"Graph paths will be: {GRAPH_PATH_NAMES}")
 
 if not HAPLOTYPE_FASTAS:
     print("ERROR: No haplotype FASTA files found!")
     print(f"Looking in: {HAPLOTYPE_DATA_DIR}")
-    print(f"Pattern: sample_*/sample_*.fasta")
+    print("Please check that:")
+    print("1. The haplotype_data_dir path in config.yaml is correct")
+    print("2. The variant generation workflow has been run successfully")
+    print("3. The FASTA files exist in the expected location")
+    sys.exit(1)
+
+# Check that reference file exists
+if not REFERENCE.exists():
+    print(f"ERROR: Reference file not found: {REFERENCE}")
     sys.exit(1)
 
 # Final outputs
@@ -65,6 +152,9 @@ rule combine_sequences:
     log:
         OUTPUT_DIR / "logs" / "combine_sequences.log"
     run:
+        # Create logs directory
+        Path(str(log)).parent.mkdir(parents=True, exist_ok=True)
+        
         with open(str(output.combined), 'w') as out:
             # Add reference with clear naming
             print(f"Adding reference: {input.ref}", file=open(str(log), 'w'))
@@ -100,6 +190,7 @@ rule align_all:
         OUTPUT_DIR / "logs" / "align_all.log"
     shell:
         """
+        mkdir -p $(dirname {log})
         minimap2 -x asm20 -X -c -t {threads} {input.seqs} {input.seqs} > {output.paf} 2> {log}
         echo "Alignment complete. Lines in PAF:" >> {log}
         wc -l {output.paf} >> {log}
@@ -120,6 +211,8 @@ rule build_pangenome:
         mount_dir=str(OUTPUT_DIR.parent.parent.absolute())
     shell:
         """
+        mkdir -p $(dirname {log})
+        
         # Build graph using msga with Docker
         echo "Building pangenome graph with Docker..." > {log}
         
@@ -157,6 +250,8 @@ rule build_ref_graph:
         mount_dir=str(OUTPUT_DIR.parent.parent.absolute())
     shell:
         """
+        mkdir -p $(dirname {log})
+        
         REL_REF=$(realpath --relative-to={params.mount_dir} {input.ref})
         REL_VG=$(realpath --relative-to={params.mount_dir} {output.vg})
         
@@ -181,7 +276,7 @@ rule align_and_call_sample:
         OUTPUT_DIR / "logs" / "call_{sample_id}.log"
     shell:
         """
-        mkdir -p $(dirname {output.bam}) $(dirname {output.vcf})
+        mkdir -p $(dirname {output.bam}) $(dirname {output.vcf}) $(dirname {log})
         
         # Align with minimap2
         minimap2 -a -x asm20 --cs {input.ref} {input.sample} 2> {log} | \
@@ -207,7 +302,7 @@ rule build_sample_graph:
         mount_dir=str(OUTPUT_DIR.parent.parent.absolute())
     shell:
         """
-        mkdir -p $(dirname {output.vg})
+        mkdir -p $(dirname {output.vg}) $(dirname {log})
         
         REL_GRAPH=$(realpath --relative-to={params.mount_dir} {input.ref_graph})
         REL_VCF=$(realpath --relative-to={params.mount_dir} {input.vcf})
