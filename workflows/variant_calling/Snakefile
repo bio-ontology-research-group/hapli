@@ -172,22 +172,21 @@ rule call_variants:
         # Create relative paths for Docker
         REL_VG=$(realpath --relative-to={params.mount_dir} {input.vg})
         REL_XG=$(realpath --relative-to={params.mount_dir} {input.xg})
-        REL_VCF=$(realpath --relative-to={params.mount_dir} {output.vcf})
         
         echo "Input files:" >> {log}
         echo "  VG: {input.vg} -> $REL_VG" >> {log}
         echo "  XG: {input.xg} -> $REL_XG" >> {log}
-        echo "  Output VCF: {output.vcf} -> $REL_VCF" >> {log}
+        echo "  Output VCF: {output.vcf}" >> {log}
         echo "" >> {log}
         
-        # Call variants using vg call
+        # Call variants using vg call - redirect output on host side
         echo "Running vg call..." >> {log}
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
-            vg call "$REL_XG" -k "$REL_VG" -s {params.sample} -t {threads} > "$REL_VCF" 2>> {log}
+            vg call "$REL_XG" -k "$REL_VG" -s {params.sample} -t {threads} > {output.vcf} 2>> {log}
         
         # Check if VCF was created
         if [ ! -f {output.vcf} ]; then
@@ -231,10 +230,8 @@ rule phase_variants:
         echo "Running as user {params.user_id}:{params.group_id}" >> {log}
         
         # Create relative paths for Docker
-        REL_VCF=$(realpath --relative-to={params.mount_dir} {input.vcf})
         REL_VG=$(realpath --relative-to={params.mount_dir} {input.vg})
         REL_XG=$(realpath --relative-to={params.mount_dir} {input.xg})
-        REL_PHASED=$(realpath --relative-to={params.mount_dir} {output.phased_vcf})
         
         # Extract haplotype paths for this sample
         HAP1_PATH="{params.sample}_hap1"
@@ -255,14 +252,14 @@ rule phase_variants:
             vg paths -v "$REL_VG" -L >> {log} 2>&1
         echo "" >> {log}
         
-        # Use vg call with specific paths to get phased calls
+        # Use vg call with specific paths to get phased calls - redirect output on host side
         echo "Running vg call with phasing..." >> {log}
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
-            vg call "$REL_XG" -k "$REL_VG" -s {params.sample} -p "$HAP1_PATH,$HAP2_PATH" -t {threads} > "$REL_PHASED" 2>> {log}
+            vg call "$REL_XG" -k "$REL_VG" -s {params.sample} -p "$HAP1_PATH,$HAP2_PATH" -t {threads} > {output.phased_vcf} 2>> {log}
         
         # Check if phased VCF was created
         if [ ! -f {output.phased_vcf} ]; then
