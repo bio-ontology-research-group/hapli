@@ -1,0 +1,199 @@
+import os
+import glob
+from pathlib import Path
+
+# Load config
+configfile: "config.yaml"
+
+# Set working directory relative to Snakefile
+WORKFLOW_DIR = Path(workflow.basedir)
+PROJECT_ROOT = WORKFLOW_DIR.parent.parent
+
+# Resolve paths
+REFERENCE = Path(config["reference"]).resolve()
+VARIANTS_DIR = Path(config["variants_dir"]).resolve()
+OUTPUT_DIR = Path(config["output_dir"]).resolve()
+
+# Create output directory
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Final outputs
+rule all:
+    input:
+        OUTPUT_DIR / "graph.gfa",
+        OUTPUT_DIR / "graph.vg",
+        OUTPUT_DIR / "variants.vcf",
+        OUTPUT_DIR / "graph_stats.txt",
+        OUTPUT_DIR / "graph_stats.json"
+
+# Index reference genome
+rule index_reference:
+    input:
+        ref=REFERENCE
+    output:
+        fai=str(REFERENCE) + ".fai"
+    conda:
+        "envs/pangenome.yaml"
+    log:
+        OUTPUT_DIR / "logs" / "index_reference.log"
+    shell:
+        "samtools faidx {input.ref} 2> {log}"
+
+# Convert variant descriptions to VCF
+rule variants_to_vcf:
+    input:
+        ref=REFERENCE,
+        ref_idx=str(REFERENCE) + ".fai",
+        variants_dir=VARIANTS_DIR
+    output:
+        vcf=OUTPUT_DIR / "variants.vcf"
+    params:
+        script=PROJECT_ROOT / "scripts" / "test_data" / "variants_to_vcf.py"
+    conda:
+        "envs/pangenome.yaml"
+    log:
+        OUTPUT_DIR / "logs" / "variants_to_vcf.log"
+    shell:
+        """
+        python {params.script} \
+            --variants-dir {input.variants_dir} \
+            --reference {input.ref} \
+            --output {output.vcf} 2> {log}
+        """
+
+# Sort and index VCF
+rule sort_vcf:
+    input:
+        vcf=OUTPUT_DIR / "variants.vcf"
+    output:
+        sorted_vcf=OUTPUT_DIR / "variants.sorted.vcf",
+        index=OUTPUT_DIR / "variants.sorted.vcf.gz.tbi"
+    conda:
+        "envs/pangenome.yaml"
+    log:
+        OUTPUT_DIR / "logs" / "sort_vcf.log"
+    shell:
+        """
+        bcftools sort {input.vcf} -o {output.sorted_vcf} 2> {log}
+        bgzip -c {output.sorted_vcf} > {output.sorted_vcf}.gz
+        tabix -p vcf {output.sorted_vcf}.gz
+        """
+
+# Construct VG graph
+rule construct_vg:
+    input:
+        ref=REFERENCE,
+        vcf=OUTPUT_DIR / "variants.sorted.vcf"
+    output:
+        vg=OUTPUT_DIR / "graph.vg"
+    params:
+        node_length=config.get("min_node_length", 32),
+        opts=config.get("vg_construct_opts", "")
+    conda:
+        "envs/pangenome.yaml"
+    threads: config.get("threads", 4)
+    log:
+        OUTPUT_DIR / "logs" / "construct_vg.log"
+    benchmark:
+        OUTPUT_DIR / "benchmarks" / "construct_vg.txt"
+    shell:
+        """
+        vg construct \
+            -r {input.ref} \
+            -v {input.vcf} \
+            -m {params.node_length} \
+            -t {threads} \
+            -p \
+            {params.opts} \
+            > {output.vg} 2> {log}
+        """
+
+# Export to GFA format
+rule export_gfa:
+    input:
+        vg=OUTPUT_DIR / "graph.vg"
+    output:
+        gfa=OUTPUT_DIR / "graph.gfa"
+    conda:
+        "envs/pangenome.yaml"
+    log:
+        OUTPUT_DIR / "logs" / "export_gfa.log"
+    shell:
+        "vg view -g {input.vg} > {output.gfa} 2> {log}"
+
+# Generate graph statistics
+rule graph_stats:
+    input:
+        vg=OUTPUT_DIR / "graph.vg"
+    output:
+        stats=OUTPUT_DIR / "graph_stats.txt",
+        json=OUTPUT_DIR / "graph_stats.json"
+    conda:
+        "envs/pangenome.yaml"
+    log:
+        OUTPUT_DIR / "logs" / "graph_stats.log"
+    shell:
+        """
+        vg stats -z {input.vg} > {output.stats} 2> {log}
+        vg stats -lz {input.vg} > {output.json}
+        """
+
+# Optional: Create XG index
+rule index_xg:
+    input:
+        vg=OUTPUT_DIR / "graph.vg"
+    output:
+        xg=OUTPUT_DIR / "graph.xg"
+    conda:
+        "envs/pangenome.yaml"
+    threads: config.get("threads", 4)
+    log:
+        OUTPUT_DIR / "logs" / "index_xg.log"
+    shell:
+        "vg index -x {output.xg} -t {threads} {input.vg} 2> {log}"
+
+# Optional: Visualize small graphs
+rule visualize_graph:
+    input:
+        vg=OUTPUT_DIR / "graph.vg"
+    output:
+        dot=OUTPUT_DIR / "graph.dot",
+        svg=OUTPUT_DIR / "graph.svg"
+    conda:
+        "envs/pangenome.yaml"
+    log:
+        OUTPUT_DIR / "logs" / "visualize.log"
+    shell:
+        """
+        vg view -d {input.vg} > {output.dot} 2> {log}
+        dot -Tsvg {output.dot} > {output.svg} 2>> {log} || echo "Graph too large for visualization" >> {log}
+        """
+
+# Generate summary report
+rule summary_report:
+    input:
+        stats=OUTPUT_DIR / "graph_stats.txt",
+        json=OUTPUT_DIR / "graph_stats.json",
+        vcf=OUTPUT_DIR / "variants.sorted.vcf",
+        gfa=OUTPUT_DIR / "graph.gfa"
+    output:
+        report=OUTPUT_DIR / "summary_report.txt"
+    run:
+        with open(output.report, 'w') as f:
+            f.write("Pangenome Graph Construction Summary\n")
+            f.write("=" * 50 + "\n\n")
+            
+            # Count variants
+            vcf_lines = sum(1 for line in open(input.vcf) if not line.startswith('#'))
+            f.write(f"Total variants in VCF: {vcf_lines}\n")
+            
+            # Graph size
+            gfa_nodes = sum(1 for line in open(input.gfa) if line.startswith('S\t'))
+            gfa_edges = sum(1 for line in open(input.gfa) if line.startswith('L\t'))
+            f.write(f"Graph nodes: {gfa_nodes}\n")
+            f.write(f"Graph edges: {gfa_edges}\n\n")
+            
+            # Include stats
+            f.write("VG Statistics:\n")
+            with open(input.stats) as stats:
+                f.write(stats.read())

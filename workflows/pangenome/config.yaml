@@ -1,0 +1,17 @@
+# Input paths (relative to workflow directory or absolute)
+reference: "../../data/test/reference.fa"
+variants_dir: "../../data/test/variants"
+
+# Output directory
+output_dir: "../../data/test/pangenome"
+
+# VG parameters
+min_node_length: 32
+vg_construct_opts: ""  # Additional options for vg construct
+
+# Resources
+threads: 4
+
+# Optional features
+create_indexes: true
+create_visualization: true  # Only for small graphs
