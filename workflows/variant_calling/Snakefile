@@ -25,11 +25,12 @@ Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 # Get the workflow directory (where this Snakefile is located)
 WORKFLOW_DIR = Path(workflow.snakefile).parent
 
-# Final outputs - one VCF per sample
+# Final outputs - one VCF per sample plus multi-sample phased VCF
 rule all:
     input:
         expand(os.path.join(OUTPUT_DIR, "{sample}.vcf"), sample=SAMPLE_NAMES),
         expand(os.path.join(OUTPUT_DIR, "{sample}_phased.vcf"), sample=SAMPLE_NAMES),
+        os.path.join(OUTPUT_DIR, "all_samples_phased.vcf"),
         os.path.join(OUTPUT_DIR, "calling_stats.txt")
 
 # Index the pangenome graph with more conservative parameters
@@ -435,11 +436,94 @@ rule phase_variants:
         grep -v '^#' {output.phased_vcf} | head -5 >> {log}
         """
 
+# Generate multi-sample phased VCF with all samples
+rule create_all_samples_phased:
+    input:
+        multi_vcf=os.path.join(OUTPUT_DIR, "all_samples.vcf"),
+        vg=PANGENOME_VG,
+        reference=REFERENCE
+    output:
+        all_phased_vcf=os.path.join(OUTPUT_DIR, "all_samples_phased.vcf")
+    threads: 1
+    log:
+        os.path.join(OUTPUT_DIR, "logs", "all_samples_phased.log")
+    params:
+        mount_dir=MOUNT_DIR,
+        docker_image=VG_DOCKER,
+        user_id=USER_ID,
+        group_id=GROUP_ID,
+        sample_names=SAMPLE_NAMES,
+        script_path=os.path.join(WORKFLOW_DIR, "convert_multi_sample_haplotypes.py")
+    shell:
+        """
+        mkdir -p $(dirname {log})
+        
+        echo "Creating multi-sample phased VCF..." > {log}
+        echo "Running as user {params.user_id}:{params.group_id}" >> {log}
+        echo "Sample names: {params.sample_names}" >> {log}
+        
+        # Create relative paths for Docker
+        REL_REF=$(realpath --relative-to={params.mount_dir} {input.reference})
+        
+        # Check if the multi-sample VCF has content
+        if [ ! -s {input.multi_vcf} ]; then
+            echo "WARNING: Multi-sample VCF is empty, creating empty multi-sample phased VCF" >> {log}
+            # Create minimal VCF header
+            echo "##fileformat=VCFv4.2" > {output.all_phased_vcf}
+            echo "##source=vg" >> {output.all_phased_vcf}
+            echo "##reference=file://$REL_REF" >> {output.all_phased_vcf}
+            echo "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">" >> {output.all_phased_vcf}
+            
+            # Get reference chromosome name
+            REF_CHR=$(docker run --rm \
+                --user {params.user_id}:{params.group_id} \
+                --memory=1g \
+                -v {params.mount_dir}:/data \
+                -w /data \
+                {params.docker_image} \
+                sh -c "head -1 '$REL_REF' | sed 's/^>//' | cut -d' ' -f1")
+            
+            echo "##contig=<ID=$REF_CHR>" >> {output.all_phased_vcf}
+            
+            # Create header with all sample names
+            HEADER="#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT"
+            for sample in {params.sample_names}; do
+                HEADER="$HEADER	$sample"
+            done
+            echo "$HEADER" >> {output.all_phased_vcf}
+            exit 0
+        fi
+        
+        # Get header line to analyze columns
+        HEADER_LINE=$(grep '^#CHROM' {input.multi_vcf})
+        echo "Header line: $HEADER_LINE" >> {log}
+        
+        # Run the conversion using the separate Python script
+        python {params.script_path} {input.multi_vcf} {output.all_phased_vcf} {params.sample_names} 2>> {log}
+        
+        # Validate output
+        if [ ! -f {output.all_phased_vcf} ]; then
+            echo "ERROR: Multi-sample phased VCF file was not created" >> {log}
+            exit 1
+        fi
+        
+        echo "Multi-sample phased VCF creation completed" >> {log}
+        echo "Output VCF info:" >> {log}
+        ls -lh {output.all_phased_vcf} >> {log}
+        echo "Number of variants:" >> {log}
+        grep -v '^#' {output.all_phased_vcf} | wc -l >> {log}
+        echo "First few variants:" >> {log}
+        grep -v '^#' {output.all_phased_vcf} | head -5 >> {log}
+        echo "VCF header:" >> {log}
+        grep '^#' {output.all_phased_vcf} | head -10 >> {log}
+        """
+
 # Generate calling statistics
 rule calling_stats:
     input:
         vcfs=expand(os.path.join(OUTPUT_DIR, "{sample}.vcf"), sample=SAMPLE_NAMES),
-        phased_vcfs=expand(os.path.join(OUTPUT_DIR, "{sample}_phased.vcf"), sample=SAMPLE_NAMES)
+        phased_vcfs=expand(os.path.join(OUTPUT_DIR, "{sample}_phased.vcf"), sample=SAMPLE_NAMES),
+        all_phased_vcf=os.path.join(OUTPUT_DIR, "all_samples_phased.vcf")
     output:
         stats=os.path.join(OUTPUT_DIR, "calling_stats.txt")
     log:
@@ -470,6 +554,13 @@ rule calling_stats:
             echo "$sample: $count variants ($phased_count phased)" >> {output.stats}
             echo "  $sample: $count variants ($phased_count phased)" >> {log}
         done
+        
+        echo "" >> {output.stats}
+        echo "Multi-sample phased VCF:" >> {output.stats}
+        all_phased_count=$(grep -v '^#' {input.all_phased_vcf} | wc -l)
+        all_phased_phased=$(grep -v '^#' {input.all_phased_vcf} | grep -c '|' || echo "0")
+        echo "All samples: $all_phased_count variants ($all_phased_phased phased)" >> {output.stats}
+        echo "  All samples: $all_phased_count variants ($all_phased_phased phased)" >> {log}
         
         echo "" >> {output.stats}
         echo "Total variants across all samples:" >> {output.stats}
