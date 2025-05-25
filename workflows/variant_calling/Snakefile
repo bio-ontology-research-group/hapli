@@ -430,11 +430,9 @@ rule phase_variants:
             # Create a Python script to extract and phase genotypes for this sample
             cat > {output.phased_vcf}.fix.py << 'EOF'
 import sys
-import re
 
 def create_phased_vcf(input_file, output_file, sample_name, hap1_name, hap2_name):
     with open(input_file, 'r') as infile, open(output_file, 'w') as outfile:
-        sample_columns = {{}}
         hap1_col = -1
         hap2_col = -1
         ref_col = -1
@@ -473,7 +471,7 @@ def create_phased_vcf(input_file, output_file, sample_name, hap1_name, hap2_name
                     if hap2_gt == "." or hap2_gt == "":
                         hap2_gt = "0"
                     
-                    phased_gt = f"{{hap1_gt}}|{{hap2_gt}}"
+                    phased_gt = hap1_gt + "|" + hap2_gt
                     
                     # Create output line with phased genotype
                     new_parts = parts[:9] + [phased_gt]
@@ -583,7 +581,7 @@ rule calling_stats:
         for vcf in {input.phased_vcfs}; do
             sample=$(basename "$vcf" _phased.vcf)
             echo "=== $sample ===" >> {output.stats}
-            echo "Chromosomes in VCF:" >> {output.stats}
+            echo "Chromosomes in VCF:" >> {log}
             grep -v '^#' "$vcf" | cut -f1 | sort | uniq -c >> {output.stats} || echo "No variants" >> {output.stats}
             echo "" >> {output.stats}
         done
