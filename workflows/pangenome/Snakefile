@@ -12,6 +12,10 @@ VG_DOCKER = config.get("vg_docker", "quay.io/vgteam/vg:v1.65.0")
 THREADS = config.get("threads", 4)
 MOUNT_DIR = config["mount_dir"]
 
+# Get current user ID and group ID for Docker
+USER_ID = os.getuid()
+GROUP_ID = os.getgid()
+
 # Create output directory
 Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 
@@ -86,13 +90,16 @@ rule build_pangenome:
         os.path.join(OUTPUT_DIR, "logs", "build_pangenome.log")
     params:
         mount_dir=MOUNT_DIR,
-        docker_image=VG_DOCKER
+        docker_image=VG_DOCKER,
+        user_id=USER_ID,
+        group_id=GROUP_ID
     shell:
         """
         mkdir -p $(dirname {log})
         
         # Build graph using msga with Docker
         echo "Building pangenome graph with Docker..." > {log}
+        echo "Running as user {params.user_id}:{params.group_id}" >> {log}
         
         # Create relative paths for Docker (relative to mount point)
         REL_SEQS=$(realpath --relative-to={params.mount_dir} {input.seqs})
@@ -110,6 +117,7 @@ rule build_pangenome:
         # Run vg msga in Docker
         echo "Running vg msga..." >> {log}
         docker run --rm \
+            --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
@@ -125,6 +133,7 @@ rule build_pangenome:
         # Convert to GFA
         echo "Converting to GFA..." >> {log}
         docker run --rm \
+            --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
@@ -150,7 +159,9 @@ rule graph_stats:
         stats=os.path.join(OUTPUT_DIR, "pangenome_stats.txt")
     params:
         mount_dir=MOUNT_DIR,
-        docker_image=VG_DOCKER
+        docker_image=VG_DOCKER,
+        user_id=USER_ID,
+        group_id=GROUP_ID
     shell:
         """
         echo "=== Pangenome Statistics ===" > {output.stats}
@@ -159,6 +170,7 @@ rule graph_stats:
         echo "Graph structure:" >> {output.stats}
         REL_VG=$(realpath --relative-to={params.mount_dir} {input.vg})
         docker run --rm \
+            --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
@@ -166,6 +178,7 @@ rule graph_stats:
         
         echo -e "\nPaths in graph:" >> {output.stats}
         docker run --rm \
+            --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \

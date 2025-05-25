@@ -14,6 +14,10 @@ VG_DOCKER = config.get("vg_docker", "quay.io/vgteam/vg:v1.65.0")
 THREADS = config.get("threads", 4)
 MOUNT_DIR = config["mount_dir"]
 
+# Get current user ID and group ID for Docker
+USER_ID = os.getuid()
+GROUP_ID = os.getgid()
+
 # Create output directory
 Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 
@@ -37,12 +41,15 @@ rule index_pangenome:
         os.path.join(OUTPUT_DIR, "logs", "index_pangenome.log")
     params:
         mount_dir=MOUNT_DIR,
-        docker_image=VG_DOCKER
+        docker_image=VG_DOCKER,
+        user_id=USER_ID,
+        group_id=GROUP_ID
     shell:
         """
         mkdir -p $(dirname {log})
         
         echo "Indexing pangenome graph..." > {log}
+        echo "Running as user {params.user_id}:{params.group_id}" >> {log}
         echo "Available disk space:" >> {log}
         df -h >> {log}
         echo "" >> {log}
@@ -70,6 +77,7 @@ rule index_pangenome:
         
         echo "Creating XG index..." >> {log}
         docker run --rm \
+            --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             --tmpfs /tmp:rw,size=2g \
@@ -90,6 +98,7 @@ rule index_pangenome:
         
         # Use more conservative GCSA parameters and custom temp directory
         docker run --rm \
+            --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             --tmpfs /tmp:rw,size=4g \
@@ -104,6 +113,7 @@ rule index_pangenome:
             
             # Try with even more conservative parameters
             docker run --rm \
+                --user {params.user_id}:{params.group_id} \
                 -v {params.mount_dir}:/data \
                 -w /data \
                 --tmpfs /tmp:rw,size=4g \
@@ -149,12 +159,15 @@ rule call_variants:
     params:
         mount_dir=MOUNT_DIR,
         docker_image=VG_DOCKER,
-        sample="{sample}"
+        sample="{sample}",
+        user_id=USER_ID,
+        group_id=GROUP_ID
     shell:
         """
         mkdir -p $(dirname {log})
         
         echo "Calling variants for sample {params.sample}..." > {log}
+        echo "Running as user {params.user_id}:{params.group_id}" >> {log}
         
         # Create relative paths for Docker
         REL_VG=$(realpath --relative-to={params.mount_dir} {input.vg})
@@ -170,6 +183,7 @@ rule call_variants:
         # Call variants using vg call
         echo "Running vg call..." >> {log}
         docker run --rm \
+            --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
@@ -206,12 +220,15 @@ rule phase_variants:
     params:
         mount_dir=MOUNT_DIR,
         docker_image=VG_DOCKER,
-        sample="{sample}"
+        sample="{sample}",
+        user_id=USER_ID,
+        group_id=GROUP_ID
     shell:
         """
         mkdir -p $(dirname {log})
         
         echo "Phasing variants for sample {params.sample}..." > {log}
+        echo "Running as user {params.user_id}:{params.group_id}" >> {log}
         
         # Create relative paths for Docker
         REL_VCF=$(realpath --relative-to={params.mount_dir} {input.vcf})
@@ -231,6 +248,7 @@ rule phase_variants:
         # Check if paths exist in the graph
         echo "Checking available paths in graph..." >> {log}
         docker run --rm \
+            --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
@@ -240,6 +258,7 @@ rule phase_variants:
         # Use vg call with specific paths to get phased calls
         echo "Running vg call with phasing..." >> {log}
         docker run --rm \
+            --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
