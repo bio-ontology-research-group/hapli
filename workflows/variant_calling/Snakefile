@@ -28,7 +28,7 @@ rule all:
         expand(os.path.join(OUTPUT_DIR, "{sample}_phased.vcf"), sample=SAMPLE_NAMES),
         os.path.join(OUTPUT_DIR, "calling_stats.txt")
 
-# Index the pangenome graph
+# Index the pangenome graph with more conservative parameters
 rule index_pangenome:
     input:
         vg=PANGENOME_VG
@@ -50,6 +50,8 @@ rule index_pangenome:
         
         echo "Indexing pangenome graph..." > {log}
         echo "Running as user {params.user_id}:{params.group_id}" >> {log}
+        echo "Available memory:" >> {log}
+        free -h >> {log}
         echo "Available disk space:" >> {log}
         df -h >> {log}
         echo "" >> {log}
@@ -78,6 +80,8 @@ rule index_pangenome:
         echo "Creating XG index..." >> {log}
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
+            --memory=4g \
+            --memory-swap=8g \
             -v {params.mount_dir}:/data \
             -w /data \
             --tmpfs /tmp:rw,size=2g \
@@ -93,33 +97,37 @@ rule index_pangenome:
         ls -lh {output.xg} >> {log}
         echo "" >> {log}
         
-        echo "Creating GCSA index with reduced parameters..." >> {log}
+        echo "Creating GCSA index with very conservative parameters..." >> {log}
         echo "Using temporary directory: $REL_TEMP" >> {log}
         
-        # Use more conservative GCSA parameters and custom temp directory
+        # Use very conservative GCSA parameters to reduce memory usage
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
+            --memory=6g \
+            --memory-swap=12g \
             -v {params.mount_dir}:/data \
             -w /data \
             --tmpfs /tmp:rw,size=4g \
             -e TMPDIR="/data/$REL_TEMP" \
             {params.docker_image} \
-            bash -c "mkdir -p /data/$REL_TEMP && vg index -g '$REL_GCSA' -k 11 -X 2 -Z 1000 '$REL_VG'" 2>> {log}
+            bash -c "mkdir -p /data/$REL_TEMP && vg index -g '$REL_GCSA' -k 8 -X 1 -Z 256 '$REL_VG'" 2>> {log}
         
         # Check if GCSA files were created
         if [ ! -f {output.gcsa} ]; then
             echo "ERROR: GCSA index creation failed" >> {log}
-            echo "Trying alternative indexing approach..." >> {log}
+            echo "Trying with even smaller parameters..." >> {log}
             
-            # Try with even more conservative parameters
+            # Try with minimal parameters
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
+                --memory=6g \
+                --memory-swap=12g \
                 -v {params.mount_dir}:/data \
                 -w /data \
                 --tmpfs /tmp:rw,size=4g \
                 -e TMPDIR="/data/$REL_TEMP" \
                 {params.docker_image} \
-                bash -c "mkdir -p /data/$REL_TEMP && vg index -g '$REL_GCSA' -k 11 -X 1 -Z 500 '$REL_VG'" 2>> {log}
+                bash -c "mkdir -p /data/$REL_TEMP && vg index -g '$REL_GCSA' -k 6 -X 1 -Z 128 '$REL_VG'" 2>> {log}
         fi
         
         # Final check
@@ -142,13 +150,11 @@ rule index_pangenome:
         ls -lh {output.xg} {output.gcsa}* >> {log}
         """
 
-# Call variants for each sample (unphased)
+# Call variants for each sample using augmented graph approach (more memory efficient)
 rule call_variants:
     input:
         vg=PANGENOME_VG,
-        xg=os.path.join(OUTPUT_DIR, "pangenome.xg"),
-        gcsa=os.path.join(OUTPUT_DIR, "pangenome.gcsa"),
-        gcsa_lcp=os.path.join(OUTPUT_DIR, "pangenome.gcsa.lcp")
+        xg=os.path.join(OUTPUT_DIR, "pangenome.xg")
     output:
         vcf=os.path.join(OUTPUT_DIR, "{sample}.vcf")
     wildcard_constraints:
@@ -168,6 +174,9 @@ rule call_variants:
         
         echo "Calling variants for sample {params.sample}..." > {log}
         echo "Running as user {params.user_id}:{params.group_id}" >> {log}
+        echo "Available memory:" >> {log}
+        free -h >> {log}
+        echo "" >> {log}
         
         # Create relative paths for Docker
         REL_VG=$(realpath --relative-to={params.mount_dir} {input.vg})
@@ -179,14 +188,50 @@ rule call_variants:
         echo "  Output VCF: {output.vcf}" >> {log}
         echo "" >> {log}
         
-        # Call variants using vg call - redirect output on host side
-        echo "Running vg call..." >> {log}
+        # Use augmented graph approach which is more memory efficient
+        echo "Running vg augment + vg call (memory efficient approach)..." >> {log}
+        
+        # First, create an augmented graph for this sample
+        TEMP_AUG={output.vcf}.aug.vg
+        REL_AUG=$(realpath --relative-to={params.mount_dir} "$TEMP_AUG")
+        
+        echo "Creating augmented graph..." >> {log}
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
+            --memory=4g \
+            --memory-swap=8g \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
-            vg call "$REL_XG" -k "$REL_VG" -s {params.sample} -t {threads} > {output.vcf} 2>> {log}
+            vg augment "$REL_VG" -A "$REL_AUG" -s {params.sample} 2>> {log}
+        
+        if [ ! -f "$TEMP_AUG" ]; then
+            echo "ERROR: Augmented graph creation failed for {params.sample}" >> {log}
+            echo "Trying direct call approach..." >> {log}
+            
+            # Fallback to direct call with memory limits
+            docker run --rm \
+                --user {params.user_id}:{params.group_id} \
+                --memory=6g \
+                --memory-swap=12g \
+                -v {params.mount_dir}:/data \
+                -w /data \
+                {params.docker_image} \
+                vg call "$REL_XG" -s {params.sample} -t {threads} > {output.vcf} 2>> {log}
+        else
+            echo "Calling variants from augmented graph..." >> {log}
+            docker run --rm \
+                --user {params.user_id}:{params.group_id} \
+                --memory=4g \
+                --memory-swap=8g \
+                -v {params.mount_dir}:/data \
+                -w /data \
+                {params.docker_image} \
+                vg call "$REL_AUG" -s {params.sample} -t {threads} > {output.vcf} 2>> {log}
+            
+            # Clean up temporary augmented graph
+            rm -f "$TEMP_AUG"
+        fi
         
         # Check if VCF was created
         if [ ! -f {output.vcf} ]; then
@@ -203,7 +248,7 @@ rule call_variants:
         grep -v '^#' {output.vcf} | wc -l >> {log}
         """
 
-# Generate phased VCF for each sample
+# Generate phased VCF for each sample using path-based approach
 rule phase_variants:
     input:
         vcf=os.path.join(OUTPUT_DIR, "{sample}.vcf"),
@@ -246,20 +291,36 @@ rule phase_variants:
         echo "Checking available paths in graph..." >> {log}
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
+            --memory=2g \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
             vg paths -v "$REL_VG" -L >> {log} 2>&1
         echo "" >> {log}
         
-        # Use vg call with specific paths to get phased calls - redirect output on host side
-        echo "Running vg call with phasing..." >> {log}
+        # Try path-based calling first (more memory efficient)
+        echo "Running vg call with path-based phasing..." >> {log}
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
+            --memory=4g \
+            --memory-swap=8g \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
-            vg call "$REL_XG" -k "$REL_VG" -s {params.sample} -p "$HAP1_PATH,$HAP2_PATH" -t {threads} > {output.phased_vcf} 2>> {log}
+            vg call "$REL_XG" -s {params.sample} -p "$HAP1_PATH,$HAP2_PATH" -t {threads} > {output.phased_vcf} 2>> {log}
+        
+        # If that fails, try without explicit paths
+        if [ ! -f {output.phased_vcf} ] || [ ! -s {output.phased_vcf} ]; then
+            echo "Path-based calling failed, trying sample-based calling..." >> {log}
+            docker run --rm \
+                --user {params.user_id}:{params.group_id} \
+                --memory=4g \
+                --memory-swap=8g \
+                -v {params.mount_dir}:/data \
+                -w /data \
+                {params.docker_image} \
+                vg call "$REL_XG" -s {params.sample} -t {threads} > {output.phased_vcf} 2>> {log}
+        fi
         
         # Check if phased VCF was created
         if [ ! -f {output.phased_vcf} ]; then
