@@ -151,30 +151,27 @@ rule index_pangenome:
         ls -lh {output.xg} {output.gcsa}* >> {log}
         """
 
-# Call variants for each sample using reference-based approach
-rule call_variants:
+# Generate multi-sample VCF using vg deconstruct
+rule call_all_variants:
     input:
         vg=PANGENOME_VG,
         xg=os.path.join(OUTPUT_DIR, "pangenome.xg"),
         reference=REFERENCE
     output:
-        vcf=os.path.join(OUTPUT_DIR, "{sample}.vcf")
-    wildcard_constraints:
-        sample="[^_]+(?:_[0-9]+)*"  # Match sample names but not those ending with "_phased"
+        multi_vcf=os.path.join(OUTPUT_DIR, "all_samples.vcf")
     threads: THREADS
     log:
-        os.path.join(OUTPUT_DIR, "logs", "call_{sample}.log")
+        os.path.join(OUTPUT_DIR, "logs", "call_all_variants.log")
     params:
         mount_dir=MOUNT_DIR,
         docker_image=VG_DOCKER,
-        sample="{sample}",
         user_id=USER_ID,
         group_id=GROUP_ID
     shell:
         """
         mkdir -p $(dirname {log})
         
-        echo "Calling variants for sample {params.sample}..." > {log}
+        echo "Calling variants for all samples..." > {log}
         echo "Running as user {params.user_id}:{params.group_id}" >> {log}
         echo "Available memory:" >> {log}
         free -h >> {log}
@@ -189,7 +186,7 @@ rule call_variants:
         echo "  VG: {input.vg} -> $REL_VG" >> {log}
         echo "  XG: {input.xg} -> $REL_XG" >> {log}
         echo "  Reference: {input.reference} -> $REL_REF" >> {log}
-        echo "  Output VCF: {output.vcf}" >> {log}
+        echo "  Output VCF: {output.multi_vcf}" >> {log}
         echo "" >> {log}
         
         # Check available paths in the graph
@@ -203,21 +200,9 @@ rule call_variants:
             vg paths -v "$REL_VG" -L >> {log} 2>&1
         echo "" >> {log}
         
-        # Extract haplotype paths for this sample
-        HAP1_PATH="{params.sample}_hap1"
-        HAP2_PATH="{params.sample}_hap2"
+        # Check if reference path exists
         REF_PATH="reference"
-        
-        echo "Looking for paths:" >> {log}
-        echo "  Reference path: $REF_PATH" >> {log}
-        echo "  Expected hap1 path: $HAP1_PATH" >> {log}
-        echo "  Expected hap2 path: $HAP2_PATH" >> {log}
-        echo "" >> {log}
-        
-        # Check if the expected paths exist in the graph
         REF_EXISTS=false
-        HAP1_EXISTS=false
-        HAP2_EXISTS=false
         
         if docker run --rm \
             --user {params.user_id}:{params.group_id} \
@@ -230,35 +215,11 @@ rule call_variants:
             REF_EXISTS=true
         fi
         
-        if docker run --rm \
-            --user {params.user_id}:{params.group_id} \
-            --memory=2g \
-            -v {params.mount_dir}:/data \
-            -w /data \
-            {params.docker_image} \
-            vg paths -v "$REL_VG" -L | grep -q "^$HAP1_PATH$"; then
-            echo "Found haplotype path: $HAP1_PATH" >> {log}
-            HAP1_EXISTS=true
-        fi
-        
-        if docker run --rm \
-            --user {params.user_id}:{params.group_id} \
-            --memory=2g \
-            -v {params.mount_dir}:/data \
-            -w /data \
-            {params.docker_image} \
-            vg paths -v "$REL_VG" -L | grep -q "^$HAP2_PATH$"; then
-            echo "Found haplotype path: $HAP2_PATH" >> {log}
-            HAP2_EXISTS=true
-        fi
-        
-        if [ "$REF_EXISTS" = true ] && ([ "$HAP1_EXISTS" = true ] || [ "$HAP2_EXISTS" = true ]); then
+        if [ "$REF_EXISTS" = true ]; then
             echo "Using vg deconstruct with reference as baseline..." >> {log}
             
-            echo "Using reference path: $REF_PATH" >> {log}
-            
             # Use vg deconstruct to call variants against reference path
-            # This generates a VCF with variants relative to the reference
+            # This generates a multi-sample VCF with all haplotypes
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
                 --memory=32g \
@@ -266,9 +227,9 @@ rule call_variants:
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
-                vg deconstruct -p "$REF_PATH" -a -t {threads} "$REL_VG" > {output.vcf} 2>> {log}
+                vg deconstruct -p "$REF_PATH" -a -t {threads} "$REL_VG" > {output.multi_vcf} 2>> {log}
         else
-            echo "Reference or haplotype paths not found, using vg call with XG index..." >> {log}
+            echo "Reference path not found, using vg call with XG index..." >> {log}
             # Fallback to vg call using XG index and reference
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
@@ -277,24 +238,95 @@ rule call_variants:
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
-                vg call "$REL_XG" -r "$REL_REF" -t {threads} > {output.vcf} 2>> {log}
+                vg call "$REL_XG" -r "$REL_REF" -t {threads} > {output.multi_vcf} 2>> {log}
         fi
         
         # Check if VCF was created
-        if [ ! -f {output.vcf} ]; then
-            echo "ERROR: VCF file was not created for {params.sample}" >> {log}
+        if [ ! -f {output.multi_vcf} ]; then
+            echo "ERROR: Multi-sample VCF file was not created" >> {log}
             echo "Contents of output directory:" >> {log}
-            ls -la $(dirname {output.vcf}) >> {log}
+            ls -la $(dirname {output.multi_vcf}) >> {log}
             exit 1
         fi
         
-        # Check if VCF has content and validate format
-        if [ ! -s {output.vcf} ]; then
-            echo "WARNING: VCF file is empty for {params.sample}" >> {log}
-            # Create a minimal VCF header with reference chromosome
+        # Check if VCF has content
+        if [ ! -s {output.multi_vcf} ]; then
+            echo "WARNING: Multi-sample VCF file is empty" >> {log}
+            # Create a minimal VCF header
+            echo "##fileformat=VCFv4.2" > {output.multi_vcf}
+            echo "##source=vg" >> {output.multi_vcf}
+            echo "##reference=file://$REL_REF" >> {output.multi_vcf}
+            
+            # Get reference chromosome name
+            REF_CHR=$(docker run --rm \
+                --user {params.user_id}:{params.group_id} \
+                --memory=1g \
+                -v {params.mount_dir}:/data \
+                -w /data \
+                {params.docker_image} \
+                sh -c "head -1 '$REL_REF' | sed 's/^>//' | cut -d' ' -f1")
+            
+            echo "##contig=<ID=$REF_CHR>" >> {output.multi_vcf}
+            echo "#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	sample" >> {output.multi_vcf}
+        fi
+        
+        echo "Multi-sample variant calling completed" >> {log}
+        echo "Output VCF info:" >> {log}
+        ls -lh {output.multi_vcf} >> {log}
+        echo "Number of variants:" >> {log}
+        grep -v '^#' {output.multi_vcf} | wc -l >> {log}
+        echo "First few variants:" >> {log}
+        grep -v '^#' {output.multi_vcf} | head -5 >> {log}
+        echo "VCF header:" >> {log}
+        grep '^#' {output.multi_vcf} | head -10 >> {log}
+        """
+
+# Extract individual sample VCF from multi-sample VCF
+rule call_variants:
+    input:
+        multi_vcf=os.path.join(OUTPUT_DIR, "all_samples.vcf"),
+        vg=PANGENOME_VG,
+        reference=REFERENCE
+    output:
+        vcf=os.path.join(OUTPUT_DIR, "{sample}.vcf")
+    wildcard_constraints:
+        sample="[^_]+(?:_[0-9]+)*"  # Match sample names but not those ending with "_phased"
+    threads: 1
+    log:
+        os.path.join(OUTPUT_DIR, "logs", "call_{sample}.log")
+    params:
+        mount_dir=MOUNT_DIR,
+        docker_image=VG_DOCKER,
+        sample="{sample}",
+        user_id=USER_ID,
+        group_id=GROUP_ID
+    shell:
+        """
+        mkdir -p $(dirname {log})
+        
+        echo "Extracting variants for sample {params.sample}..." > {log}
+        echo "Running as user {params.user_id}:{params.group_id}" >> {log}
+        
+        # Create relative paths for Docker
+        REL_REF=$(realpath --relative-to={params.mount_dir} {input.reference})
+        
+        # Extract haplotype columns for this sample
+        HAP1_COL="{params.sample}_hap1"
+        HAP2_COL="{params.sample}_hap2"
+        
+        echo "Looking for haplotype columns:" >> {log}
+        echo "  Hap1: $HAP1_COL" >> {log}
+        echo "  Hap2: $HAP2_COL" >> {log}
+        echo "" >> {log}
+        
+        # Check if the multi-sample VCF has the expected columns
+        if [ ! -s {input.multi_vcf} ]; then
+            echo "WARNING: Multi-sample VCF is empty, creating empty sample VCF" >> {log}
+            # Create minimal VCF for this sample
             echo "##fileformat=VCFv4.2" > {output.vcf}
             echo "##source=vg" >> {output.vcf}
             echo "##reference=file://$REL_REF" >> {output.vcf}
+            echo "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">" >> {output.vcf}
             
             # Get reference chromosome name
             REF_CHR=$(docker run --rm \
@@ -307,240 +339,156 @@ rule call_variants:
             
             echo "##contig=<ID=$REF_CHR>" >> {output.vcf}
             echo "#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	{params.sample}" >> {output.vcf}
-        else
-            # Validate VCF format
-            echo "Validating VCF format..." >> {log}
-            if ! grep -q "^##fileformat=VCF" {output.vcf}; then
-                echo "WARNING: VCF missing proper header, adding minimal header..." >> {log}
-                # Create temporary file with proper header
-                TEMP_VCF={output.vcf}.tmp
-                echo "##fileformat=VCFv4.2" > "$TEMP_VCF"
-                echo "##source=vg" >> "$TEMP_VCF"
-                echo "##reference=file://$REL_REF" >> "$TEMP_VCF"
-                
-                # Get reference chromosome name
-                REF_CHR=$(docker run --rm \
-                    --user {params.user_id}:{params.group_id} \
-                    --memory=1g \
-                    -v {params.mount_dir}:/data \
-                    -w /data \
-                    {params.docker_image} \
-                    sh -c "head -1 '$REL_REF' | sed 's/^>//' | cut -d' ' -f1")
-                
-                echo "##contig=<ID=$REF_CHR>" >> "$TEMP_VCF"
-                
-                # Add header line if missing
-                if ! grep -q "^#CHROM" {output.vcf}; then
-                    echo "#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	{params.sample}" >> "$TEMP_VCF"
-                fi
-                
-                # Append original content (skip any existing headers)
-                grep -v "^#" {output.vcf} >> "$TEMP_VCF" || true
-                mv "$TEMP_VCF" {output.vcf}
-            fi
+            exit 0
         fi
         
-        echo "Variant calling completed for {params.sample}" >> {log}
+        # Get header line to find column positions
+        HEADER_LINE=$(grep '^#CHROM' {input.multi_vcf})
+        echo "Header line: $HEADER_LINE" >> {log}
+        
+        # Find column positions for the haplotypes
+        HAP1_POS=$(echo "$HEADER_LINE" | tr '\t' '\n' | grep -n "^$HAP1_COL$" | cut -d: -f1)
+        HAP2_POS=$(echo "$HEADER_LINE" | tr '\t' '\n' | grep -n "^$HAP2_COL$" | cut -d: -f1)
+        
+        echo "Column positions:" >> {log}
+        echo "  $HAP1_COL: $HAP1_POS" >> {log}
+        echo "  $HAP2_COL: $HAP2_POS" >> {log}
+        echo "" >> {log}
+        
+        if [ -z "$HAP1_POS" ] && [ -z "$HAP2_POS" ]; then
+            echo "WARNING: No haplotype columns found for {params.sample}" >> {log}
+            echo "Available columns:" >> {log}
+            echo "$HEADER_LINE" | tr '\t' '\n' | nl >> {log}
+            
+            # Create empty VCF
+            echo "##fileformat=VCFv4.2" > {output.vcf}
+            echo "##source=vg" >> {output.vcf}
+            echo "##reference=file://$REL_REF" >> {output.vcf}
+            echo "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">" >> {output.vcf}
+            
+            REF_CHR=$(docker run --rm \
+                --user {params.user_id}:{params.group_id} \
+                --memory=1g \
+                -v {params.mount_dir}:/data \
+                -w /data \
+                {params.docker_image} \
+                sh -c "head -1 '$REL_REF' | sed 's/^>//' | cut -d' ' -f1")
+            
+            echo "##contig=<ID=$REF_CHR>" >> {output.vcf}
+            echo "#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	{params.sample}" >> {output.vcf}
+            exit 0
+        fi
+        
+        # Create Python script to convert haplotype calls to genotypes
+        cat > /tmp/convert_to_genotype_{params.sample}.py << 'EOF'
+import sys
+
+def convert_haplotype_to_genotype(hap1_gt, hap2_gt):
+    """Convert haplotype genotypes to diploid genotype"""
+    # Handle missing data
+    if hap1_gt == '.' or hap2_gt == '.':
+        return './.'
+    
+    # Convert to integers
+    try:
+        h1 = int(hap1_gt)
+        h2 = int(hap2_gt)
+        return f"{h1}|{h2}"  # Phased genotype
+    except ValueError:
+        return './.'
+
+# Read input
+input_file = sys.argv[1]
+output_file = sys.argv[2]
+sample_name = sys.argv[3]
+hap1_pos = int(sys.argv[4]) if sys.argv[4] else None
+hap2_pos = int(sys.argv[5]) if sys.argv[5] else None
+
+with open(input_file, 'r') as f_in, open(output_file, 'w') as f_out:
+    for line in f_in:
+        if line.startswith('##'):
+            # Copy header lines, but modify sample-specific ones
+            f_out.write(line)
+        elif line.startswith('#CHROM'):
+            # Modify column header
+            parts = line.strip().split('\t')
+            new_header = parts[:9] + [sample_name]  # Keep first 9 columns, replace samples
+            f_out.write('\t'.join(new_header) + '\n')
+        else:
+            # Process variant lines
+            parts = line.strip().split('\t')
+            if len(parts) < 10:
+                continue
+                
+            # Get haplotype genotypes
+            hap1_gt = parts[hap1_pos - 1] if hap1_pos and hap1_pos <= len(parts) else '.'
+            hap2_gt = parts[hap2_pos - 1] if hap2_pos and hap2_pos <= len(parts) else '.'
+            
+            # Convert to diploid genotype
+            diploid_gt = convert_haplotype_to_genotype(hap1_gt, hap2_gt)
+            
+            # Skip variants where both haplotypes are reference (0|0)
+            if diploid_gt == '0|0':
+                continue
+                
+            # Build new line
+            new_parts = parts[:9] + [diploid_gt]
+            f_out.write('\t'.join(new_parts) + '\n')
+EOF
+        
+        # Run the conversion
+        python /tmp/convert_to_genotype_{params.sample}.py {input.multi_vcf} {output.vcf} {params.sample} "$HAP1_POS" "$HAP2_POS" 2>> {log}
+        
+        # Clean up
+        rm -f /tmp/convert_to_genotype_{params.sample}.py
+        
+        # Validate output
+        if [ ! -f {output.vcf} ]; then
+            echo "ERROR: Sample VCF file was not created for {params.sample}" >> {log}
+            exit 1
+        fi
+        
+        echo "Sample variant extraction completed for {params.sample}" >> {log}
         echo "Output VCF info:" >> {log}
         ls -lh {output.vcf} >> {log}
         echo "Number of variants:" >> {log}
         grep -v '^#' {output.vcf} | wc -l >> {log}
         echo "First few variants:" >> {log}
         grep -v '^#' {output.vcf} | head -5 >> {log}
-        echo "VCF header:" >> {log}
-        grep '^#' {output.vcf} | head -10 >> {log}
         """
 
-# Generate phased VCF for each sample using proper phasing
+# Generate phased VCF for each sample (same as unphased for now since we're already phased)
 rule phase_variants:
     input:
         vcf=os.path.join(OUTPUT_DIR, "{sample}.vcf"),
         vg=PANGENOME_VG,
-        xg=os.path.join(OUTPUT_DIR, "pangenome.xg"),
         reference=REFERENCE
     output:
-        phased_vcf=os.path.join(OUTPUT_DIR, "{sample}_phased.vcf"),
-        # Declare temporary file using temp()
-        temp_vcf=temp(os.path.join(OUTPUT_DIR, "{sample}_phased.vcf.tmp"))
+        phased_vcf=os.path.join(OUTPUT_DIR, "{sample}_phased.vcf")
     wildcard_constraints:
         sample="[^_]+(?:_[0-9]+)*"  # Match sample names but not those ending with "_phased"
-    threads: THREADS
+    threads: 1
     log:
         os.path.join(OUTPUT_DIR, "logs", "phase_{sample}.log")
     params:
-        mount_dir=MOUNT_DIR,
-        docker_image=VG_DOCKER,
-        sample="{sample}",
-        user_id=USER_ID,
-        group_id=GROUP_ID,
-        # Calculate relative path to script here in Python
-        script_rel_path=os.path.relpath(
-            os.path.join(Path(__file__).parent.parent.parent, "scripts", "vcf_phasing_fix.py"),
-            MOUNT_DIR
-        )
+        sample="{sample}"
     shell:
         """
         mkdir -p $(dirname {log})
         
-        echo "Phasing variants for sample {params.sample}..." > {log}
-        echo "Running as user {params.user_id}:{params.group_id}" >> {log}
+        echo "Creating phased VCF for sample {params.sample}..." > {log}
         
-        # Create relative paths for Docker
-        REL_VG=$(realpath --relative-to={params.mount_dir} {input.vg})
-        REL_XG=$(realpath --relative-to={params.mount_dir} {input.xg})
-        REL_REF=$(realpath --relative-to={params.mount_dir} {input.reference})
-        # Use the pre-calculated relative script path directly
-        REL_SCRIPT="{params.script_rel_path}"
+        # Since our VCF is already phased (using | separator), just copy it
+        # In the future, we could add additional phasing logic here
+        cp {input.vcf} {output.phased_vcf}
         
-        # Extract haplotype paths for this sample
-        HAP1_PATH="{params.sample}_hap1"
-        HAP2_PATH="{params.sample}_hap2"
-        REF_PATH="reference"
-        
-        echo "Extracting haplotype information..." >> {log}
-        echo "Reference path: $REF_PATH" >> {log}
-        echo "Haplotype 1 path: $HAP1_PATH" >> {log}
-        echo "Haplotype 2 path: $HAP2_PATH" >> {log}
-        echo "" >> {log}
-        
-        # Check if paths exist in the graph
-        echo "Checking available paths in graph..." >> {log}
-        docker run --rm \
-            --user {params.user_id}:{params.group_id} \
-            --memory=2g \
-            -v {params.mount_dir}:/data \
-            -w /data \
-            {params.docker_image} \
-            vg paths -v "$REL_VG" -L >> {log} 2>&1
-        echo "" >> {log}
-        
-        # Check if all required paths exist
-        REF_EXISTS=false
-        HAP1_EXISTS=false
-        HAP2_EXISTS=false
-        
-        if docker run --rm \
-            --user {params.user_id}:{params.group_id} \
-            --memory=2g \
-            -v {params.mount_dir}:/data \
-            -w /data \
-            {params.docker_image} \
-            vg paths -v "$REL_VG" -L | grep -q "^$REF_PATH$"; then
-            REF_EXISTS=true
-            echo "Found reference path: $REF_PATH" >> {log}
-        fi
-        
-        if docker run --rm \
-            --user {params.user_id}:{params.group_id} \
-            --memory=2g \
-            -v {params.mount_dir}:/data \
-            -w /data \
-            {params.docker_image} \
-            vg paths -v "$REL_VG" -L | grep -q "^$HAP1_PATH$"; then
-            HAP1_EXISTS=true
-            echo "Found haplotype path: $HAP1_PATH" >> {log}
-        fi
-        
-        if docker run --rm \
-            --user {params.user_id}:{params.group_id} \
-            --memory=2g \
-            -v {params.mount_dir}:/data \
-            -w /data \
-            {params.docker_image} \
-            vg paths -v "$REL_VG" -L | grep -q "^$HAP2_PATH$"; then
-            HAP2_EXISTS=true
-            echo "Found haplotype path: $HAP2_PATH" >> {log}
-        fi
-        
-        if [ "$REF_EXISTS" = true ] && [ "$HAP1_EXISTS" = true ] && [ "$HAP2_EXISTS" = true ]; then
-            echo "Using vg deconstruct for proper phased calling..." >> {log}
-            
-            # Calculate relative paths for temp and final VCF files
-            REL_TEMP_VCF=$(realpath --relative-to={params.mount_dir} {output.temp_vcf})
-            REL_FINAL_VCF=$(realpath --relative-to={params.mount_dir} {output.phased_vcf})
-            
-            # First, run vg deconstruct to get raw VCF with all paths
-            echo "Running vg deconstruct to generate raw phased VCF..." >> {log}
-            docker run --rm \
-                --user {params.user_id}:{params.group_id} \
-                --memory=32g \
-                --memory-swap=64g \
-                -v {params.mount_dir}:/data \
-                -w /data \
-                {params.docker_image} \
-                vg deconstruct -p "$REF_PATH" -a -t {threads} "$REL_VG" > {output.temp_vcf} 2>> {log}
-            
-            # Check if temp VCF was created
-            if [ ! -f {output.temp_vcf} ]; then
-                echo "ERROR: Temporary VCF file was not created" >> {log}
-                exit 1
-            fi
-            
-            # Check if Python script exists
-            if [ ! -f {params.mount_dir}/$REL_SCRIPT ]; then
-                echo "WARNING: Python phasing script not found at {params.mount_dir}/$REL_SCRIPT" >> {log}
-                echo "Copying raw VCF as phased VCF..." >> {log}
-                cp {output.temp_vcf} {output.phased_vcf}
-            else
-                # Use Python script to fix phasing
-                echo "Running Python script to fix phasing..." >> {log}
-                python {params.mount_dir}/$REL_SCRIPT {output.temp_vcf} {output.phased_vcf} {params.sample} $HAP1_PATH $HAP2_PATH 2>> {log}
-            fi
-            
-        elif [ "$REF_EXISTS" = true ] && ([ "$HAP1_EXISTS" = true ] || [ "$HAP2_EXISTS" = true ]); then
-            echo "Using vg deconstruct with available haplotype path..." >> {log}
-            
-            docker run --rm \
-                --user {params.user_id}:{params.group_id} \
-                --memory=32g \
-                --memory-swap=64g \
-                -v {params.mount_dir}:/data \
-                -w /data \
-                {params.docker_image} \
-                vg deconstruct -p "$REF_PATH" -a -t {threads} "$REL_VG" > {output.phased_vcf} 2>> {log}
-        else
-            echo "Required paths not found, copying unphased VCF..." >> {log}
-            cp {input.vcf} {output.phased_vcf}
-        fi
-        
-        # Check if phased VCF was created
-        if [ ! -f {output.phased_vcf} ]; then
-            echo "ERROR: Phased VCF file was not created for {params.sample}" >> {log}
-            echo "Contents of output directory:" >> {log}
-            ls -la $(dirname {output.phased_vcf}) >> {log}
-            exit 1
-        fi
-        
-        # Check if VCF has content, create minimal header if empty
-        if [ ! -s {output.phased_vcf} ]; then
-            echo "WARNING: Phased VCF file is empty for {params.sample}" >> {log}
-            # Create a minimal VCF header with reference chromosome
-            echo "##fileformat=VCFv4.2" > {output.phased_vcf}
-            echo "##source=vg" >> {output.phased_vcf}
-            echo "##reference=file://$REL_REF" >> {output.phased_vcf}
-            
-            # Get reference chromosome name
-            REF_CHR=$(docker run --rm \
-                --user {params.user_id}:{params.group_id} \
-                --memory=4g \
-                -v {params.mount_dir}:/data \
-                -w /data \
-                {params.docker_image} \
-                sh -c "head -1 '$REL_REF' | sed 's/^>//' | cut -d' ' -f1")
-            
-            echo "##contig=<ID=$REF_CHR>" >> {output.phased_vcf}
-            echo "#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	{params.sample}" >> {output.phased_vcf}
-        fi
-        
-        echo "Phasing completed for {params.sample}" >> {log}
+        echo "Phased VCF created for {params.sample}" >> {log}
         echo "Output phased VCF info:" >> {log}
         ls -lh {output.phased_vcf} >> {log}
         echo "Number of phased variants:" >> {log}
         grep -v '^#' {output.phased_vcf} | wc -l >> {log}
         echo "First few phased variants:" >> {log}
         grep -v '^#' {output.phased_vcf} | head -5 >> {log}
-        echo "Phased VCF header:" >> {log}
-        grep '^#' {output.phased_vcf} | head -10 >> {log}
         """
 
 # Generate calling statistics
