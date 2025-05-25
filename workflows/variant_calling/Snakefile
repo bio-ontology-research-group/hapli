@@ -393,7 +393,7 @@ def convert_haplotype_to_genotype(hap1_gt, hap2_gt):
     try:
         h1 = int(hap1_gt)
         h2 = int(hap2_gt)
-        return f"{h1}|{h2}"  # Phased genotype
+        return str(h1) + "|" + str(h2)  # Phased genotype
     except ValueError:
         return './.'
 
