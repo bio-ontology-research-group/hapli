@@ -420,8 +420,7 @@ rule phase_variants:
         if [ "$REF_EXISTS" = true ] && [ "$HAP1_EXISTS" = true ] && [ "$HAP2_EXISTS" = true ]; then
             echo "Using vg deconstruct for proper phased calling..." >> {log}
             
-            # Use vg deconstruct with reference path specified correctly
-            # This should generate a VCF with all samples/paths included
+            # Use a single docker run command to execute both vg deconstruct and the python script
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
                 --memory=32g \
@@ -429,20 +428,12 @@ rule phase_variants:
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
-                vg deconstruct -p "$REF_PATH" -a -t {threads} "$REL_VG" > {output.phased_vcf}.tmp 2>> {log}
+                bash -c "\
+                    vg deconstruct -p \"$REF_PATH\" -a -t {threads} \"$REL_VG\" > \"$(realpath --relative-to=/data {output.phased_vcf}.tmp)\" 2>> {log} && \
+                    python \"$REL_SCRIPT\" \"$(realpath --relative-to=/data {output.phased_vcf}.tmp)\" \"$(realpath --relative-to=/data {output.phased_vcf})\" \"{params.sample}\" \"$HAP1_PATH\" \"$HAP2_PATH\" 2>> {log} \
+                "
             
-            # Post-process the VCF to create proper phased genotypes for this specific sample
-            echo "Post-processing VCF for proper phasing using /data/$REL_SCRIPT..." >> {log}
-            
-            # Call the external Python script, ensuring it's run from /data
-            docker run --rm \
-                --user {params.user_id}:{params.group_id} \
-                --memory=1g \
-                -v {params.mount_dir}:/data \
-                -w /data \
-                python "$REL_SCRIPT" $(realpath --relative-to=/data {output.phased_vcf}.tmp) $(realpath --relative-to=/data {output.phased_vcf}) {params.sample} "$HAP1_PATH" "$HAP2_PATH" 2>> {log}
-            
-            # Clean up temporary files
+            # Clean up temporary files (this will be executed by Snakemake after the docker command finishes)
             rm -f {output.phased_vcf}.tmp
             
         elif [ "$REF_EXISTS" = true ] && ([ "$HAP1_EXISTS" = true ] || [ "$HAP2_EXISTS" = true ]); then
