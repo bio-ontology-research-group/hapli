@@ -8,6 +8,7 @@ it to a multi-sample VCF with proper diploid genotypes for each sample.
 
 import sys
 import re
+import os
 
 def convert_haplotype_to_genotype(hap1_gt, hap2_gt):
     """Convert haplotype genotypes to diploid genotype"""
@@ -26,14 +27,25 @@ def convert_haplotype_to_genotype(hap1_gt, hap2_gt):
 def get_reference_chromosome_name(reference_file):
     """Extract the first chromosome name from reference FASTA"""
     try:
+        # Handle both absolute and relative paths
+        if not os.path.exists(reference_file):
+            # Try without /data prefix
+            alt_path = reference_file.replace('/data/', '')
+            if os.path.exists(alt_path):
+                reference_file = alt_path
+            else:
+                print(f"Warning: Reference file not found: {reference_file}", file=sys.stderr)
+                return None
+                
         with open(reference_file, 'r') as f:
             for line in f:
                 if line.startswith('>'):
                     # Extract chromosome name (first word after >)
                     chrom_name = line[1:].split()[0]
+                    print(f"Extracted chromosome name: {chrom_name}", file=sys.stderr)
                     return chrom_name
-    except:
-        pass
+    except Exception as e:
+        print(f"Error reading reference file {reference_file}: {e}", file=sys.stderr)
     return None
 
 def main():
@@ -44,6 +56,8 @@ def main():
     input_file = sys.argv[1]
     output_file = sys.argv[2]
     sample_names = sys.argv[3:]
+
+    print(f"Converting multi-sample VCF for samples: {sample_names}", file=sys.stderr)
 
     # Try to get reference file path from VCF header to get correct chromosome name
     reference_file = None
@@ -69,6 +83,11 @@ def main():
     if not header_line:
         print("Error: Could not find header line in VCF")
         sys.exit(1)
+    
+    # If we couldn't get chromosome from reference, use a default
+    if not reference_chrom:
+        reference_chrom = "chr1"
+        print(f"Using default chromosome name: {reference_chrom}", file=sys.stderr)
     
     # Parse header to find column positions
     header_parts = header_line.split('\t')
@@ -140,6 +159,8 @@ def main():
                 if has_variant:
                     new_parts.extend(sample_genotypes)
                     f_out.write('\t'.join(new_parts) + '\n')
+
+    print(f"Multi-sample conversion completed", file=sys.stderr)
 
 if __name__ == "__main__":
     main()

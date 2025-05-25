@@ -162,7 +162,7 @@ rule call_all_variants:
         xg=os.path.join(OUTPUT_DIR, "pangenome.xg"),
         reference=REFERENCE
     output:
-        multi_vcf=os.path.join(OUTPUT_DIR, "all_samples.vcf")
+        multi_vcf=os.path.join(OUTPUT_DIR, "all_samples_raw.vcf")
     threads: THREADS
     log:
         os.path.join(OUTPUT_DIR, "logs", "call_all_variants.log")
@@ -288,7 +288,7 @@ rule call_all_variants:
 # Extract individual sample VCF from multi-sample VCF
 rule call_variants:
     input:
-        multi_vcf=os.path.join(OUTPUT_DIR, "all_samples.vcf"),
+        multi_vcf=os.path.join(OUTPUT_DIR, "all_samples_raw.vcf"),
         vg=PANGENOME_VG,
         reference=REFERENCE
     output:
@@ -443,7 +443,7 @@ rule phase_variants:
 # Generate multi-sample phased VCF with all samples
 rule create_all_samples_phased:
     input:
-        multi_vcf=os.path.join(OUTPUT_DIR, "all_samples.vcf"),
+        multi_vcf=os.path.join(OUTPUT_DIR, "all_samples_raw.vcf"),
         vg=PANGENOME_VG,
         reference=REFERENCE
     output:
@@ -522,6 +522,17 @@ rule create_all_samples_phased:
         grep -v '^#' {output.all_phased_vcf} | head -5 >> {log}
         echo "VCF header:" >> {log}
         grep '^#' {output.all_phased_vcf} | head -10 >> {log}
+        """
+
+# Create a compatibility rule for the old filename
+rule create_all_samples_vcf:
+    input:
+        all_phased_vcf=os.path.join(OUTPUT_DIR, "all_samples_phased.vcf")
+    output:
+        all_samples_vcf=os.path.join(OUTPUT_DIR, "all_samples.vcf")
+    shell:
+        """
+        cp {input.all_phased_vcf} {output.all_samples_vcf}
         """
 
 # Generate calling statistics

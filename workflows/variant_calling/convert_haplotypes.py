@@ -7,6 +7,7 @@ it to a single-sample VCF with proper diploid genotypes.
 """
 
 import sys
+import os
 
 def convert_haplotype_to_genotype(hap1_gt, hap2_gt):
     """Convert haplotype genotypes to diploid genotype"""
@@ -25,14 +26,25 @@ def convert_haplotype_to_genotype(hap1_gt, hap2_gt):
 def get_reference_chromosome_name(reference_file):
     """Extract the first chromosome name from reference FASTA"""
     try:
+        # Handle both absolute and relative paths
+        if not os.path.exists(reference_file):
+            # Try without /data prefix
+            alt_path = reference_file.replace('/data/', '')
+            if os.path.exists(alt_path):
+                reference_file = alt_path
+            else:
+                print(f"Warning: Reference file not found: {reference_file}", file=sys.stderr)
+                return None
+                
         with open(reference_file, 'r') as f:
             for line in f:
                 if line.startswith('>'):
                     # Extract chromosome name (first word after >)
                     chrom_name = line[1:].split()[0]
+                    print(f"Extracted chromosome name: {chrom_name}", file=sys.stderr)
                     return chrom_name
-    except:
-        pass
+    except Exception as e:
+        print(f"Error reading reference file {reference_file}: {e}", file=sys.stderr)
     return None
 
 def main():
@@ -43,8 +55,11 @@ def main():
     input_file = sys.argv[1]
     output_file = sys.argv[2]
     sample_name = sys.argv[3]
-    hap1_pos = int(sys.argv[4]) if sys.argv[4] else None
-    hap2_pos = int(sys.argv[5]) if sys.argv[5] else None
+    hap1_pos = int(sys.argv[4]) if sys.argv[4] and sys.argv[4] != 'None' else None
+    hap2_pos = int(sys.argv[5]) if sys.argv[5] and sys.argv[5] != 'None' else None
+
+    print(f"Converting haplotypes for sample: {sample_name}", file=sys.stderr)
+    print(f"Hap1 position: {hap1_pos}, Hap2 position: {hap2_pos}", file=sys.stderr)
 
     # Try to get reference file path from VCF header to get correct chromosome name
     reference_chrom = None
@@ -63,6 +78,11 @@ def main():
                 break
             elif line.startswith('#CHROM'):
                 break
+
+    # If we couldn't get chromosome from reference, use a default
+    if not reference_chrom:
+        reference_chrom = "chr1"
+        print(f"Using default chromosome name: {reference_chrom}", file=sys.stderr)
 
     with open(input_file, 'r') as f_in, open(output_file, 'w') as f_out:
         for line in f_in:
@@ -101,6 +121,8 @@ def main():
                 # Build new line
                 new_parts = parts[:9] + [diploid_gt]
                 f_out.write('\t'.join(new_parts) + '\n')
+
+    print(f"Conversion completed for sample: {sample_name}", file=sys.stderr)
 
 if __name__ == "__main__":
     main()
