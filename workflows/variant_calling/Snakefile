@@ -209,7 +209,7 @@ rule call_variants:
         
         echo "Looking for paths:" >> {log}
         echo "  Reference path: $REF_PATH" >> {log}
-        echo "  Expected hap1 path: $HAP1_1_PATH" >> {log}
+        echo "  Expected hap1 path: $HAP1_PATH" >> {log}
         echo "  Expected hap2 path: $HAP2_PATH" >> {log}
         echo "" >> {log}
         
