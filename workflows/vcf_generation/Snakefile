@@ -169,29 +169,27 @@ rule call_sample_variants:
         echo "Reference sample: {params.ref_sample}" >> {log}
         echo "Target sample: {wildcards.sample}" >> {log}
         
-        # First check what samples are available in GBWT
-        echo "Checking samples in GBWT..." >> {log}
+        # Check what samples are available in the original VG graph
+        echo "Checking samples in VG graph..." >> {log}
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {VG_DOCKER} \
-            bash -c 'vg paths -M -g /data/test/vcf_from_pangenome/pangenome.gbwt' >> {log} 2>&1
+            bash -c 'vg paths -v /data/test/pangenome/pangenome.vg -L' >> {log} 2>&1
         
-        # Call variants for this sample using the correct approach
-        # Use -S to specify the sample and call against all other samples
+        # Call variants using deconstruct approach - this extracts variants from the graph
+        # relative to a reference path and outputs them for specific samples
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {VG_DOCKER} \
             bash -c 'mkdir -p /data/test/vcf_from_pangenome/per_sample && \
-                     vg call /data/test/vcf_from_pangenome/pangenome.xg \
-                         -k /data/test/pangenome/pangenome.vg \
-                         -r /data/test/vcf_from_pangenome/pangenome.snarls \
-                         -g /data/test/vcf_from_pangenome/pangenome.gbwt \
-                         -S {wildcards.sample} \
-                         -t {threads} \
+                     vg deconstruct /data/test/pangenome/pangenome.vg \
+                         -P {params.ref_sample} \
+                         -H "#{wildcards.sample}" \
+                         -e \
                          -a \
                          > /data/test/vcf_from_pangenome/per_sample/{wildcards.sample}.vcf' 2>> {log}
         
