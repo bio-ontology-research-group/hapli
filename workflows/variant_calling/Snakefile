@@ -265,7 +265,8 @@ rule call_variants:
             
             echo "Including paths: $PATHS_TO_INCLUDE" >> {log}
             
-            # Use vg deconstruct with reference as baseline
+            # Use vg deconstruct with updated syntax (no -H, no -e flags)
+            # Use -r to specify reference path
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
                 --memory=4g \
@@ -273,7 +274,7 @@ rule call_variants:
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
-                vg deconstruct -P "$PATHS_TO_INCLUDE" -H "$REF_PATH" -e -a -t {threads} "$REL_VG" > {output.vcf} 2>> {log}
+                vg deconstruct -P "$PATHS_TO_INCLUDE" -r "$REF_PATH" -a -t {threads} "$REL_VG" > {output.vcf} 2>> {log}
         else
             echo "Reference or haplotype paths not found, using general variant calling..." >> {log}
             # Fallback to general calling
@@ -421,6 +422,7 @@ rule phase_variants:
             echo "Using vg deconstruct for proper phased calling..." >> {log}
             
             # Use vg deconstruct with all three paths to get proper phasing
+            # Updated syntax: use -r instead of -H, remove -e
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
                 --memory=4g \
@@ -428,7 +430,7 @@ rule phase_variants:
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
-                vg deconstruct -P "$REF_PATH,$HAP1_PATH,$HAP2_PATH" -H "$REF_PATH" -e -a -t {threads} "$REL_VG" > {output.phased_vcf}.tmp 2>> {log}
+                vg deconstruct -P "$REF_PATH,$HAP1_PATH,$HAP2_PATH" -r "$REF_PATH" -a -t {threads} "$REL_VG" > {output.phased_vcf}.tmp 2>> {log}
             
             # Post-process the VCF to ensure proper phasing format
             echo "Post-processing VCF for proper phasing..." >> {log}
@@ -446,7 +448,7 @@ def fix_phasing(input_file, output_file, sample_name):
                 if line.startswith('#CHROM'):
                     parts = line.strip().split('\t')
                     if len(parts) > 9:
-                        # Replace sample columns with our sample name
+                        # Keep the first 9 columns and replace sample columns with our sample name
                         new_parts = parts[:9] + [sample_name]
                         line = '\t'.join(new_parts) + '\n'
                 outfile.write(line)
@@ -458,12 +460,29 @@ def fix_phasing(input_file, output_file, sample_name):
                     format_field = parts[8] if len(parts) > 8 else "GT"
                     
                     # Create phased genotype based on available information
-                    # This is a simplified approach - in practice you'd need more sophisticated logic
                     if "GT" in format_field:
-                        # Look for evidence of both haplotypes
-                        # For now, create a simple phased genotype
-                        genotype = "0|1"  # Assume heterozygous phased
-                        parts[9] = genotype
+                        # Look at the existing genotype columns to determine phasing
+                        # This is a simplified approach - we'll look for patterns in the existing data
+                        existing_gts = parts[9:]
+                        
+                        # Count non-reference alleles
+                        non_ref_count = 0
+                        for gt in existing_gts:
+                            if gt and gt != "0" and gt != ".":
+                                non_ref_count += 1
+                        
+                        # Create a phased genotype based on the pattern
+                        if non_ref_count == 0:
+                            genotype = "0|0"  # Homozygous reference
+                        elif non_ref_count == 1:
+                            genotype = "0|1"  # Heterozygous
+                        elif non_ref_count == 2:
+                            genotype = "1|1"  # Homozygous alternate
+                        else:
+                            genotype = "0|1"  # Default to heterozygous
+                        
+                        # Replace all sample columns with our single sample
+                        parts = parts[:9] + [genotype]
                     
                     outfile.write('\t'.join(parts) + '\n')
                 else:
@@ -496,7 +515,7 @@ EOF
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
-                vg deconstruct -P "$AVAILABLE_PATHS" -H "$REF_PATH" -e -a -t {threads} "$REL_VG" > {output.phased_vcf} 2>> {log}
+                vg deconstruct -P "$AVAILABLE_PATHS" -r "$REF_PATH" -a -t {threads} "$REL_VG" > {output.phased_vcf} 2>> {log}
         else
             echo "Required paths not found, copying unphased VCF..." >> {log}
             cp {input.vcf} {output.phased_vcf}
