@@ -10,6 +10,7 @@ import os
 import random
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
+from dataclasses import asdict
 
 from Bio import SeqIO
 from Bio.Seq import Seq
@@ -26,7 +27,7 @@ def setup_logging() -> None:
     )
 
 
-def load_reference_genome(fasta_path: str) -> Dict[str, SeqRecord]:
+def load_reference_genome(fasta_path: Path) -> Dict[str, SeqRecord]:
     """Load reference genome from FASTA file."""
     logging.info(f"Loading reference genome from {fasta_path}")
     
@@ -203,6 +204,10 @@ def apply_variant_to_sequence(sequence: str, variant: Variant) -> str:
     
     elif isinstance(variant, Insertion):
         # Insert after the reference position
+        # Note: This is a simplified application. For true VCF representation,
+        # the insertion happens *between* pos-1 and pos.
+        # Here, we are replacing the ref_allele at pos with ref_allele + insert_seq.
+        # This might not be 100% accurate for all VCF interpretations but works for FASTA generation.
         if pos < len(seq_list):
             seq_list[pos] = variant.ref_allele + variant.insert_sequence
     
@@ -211,6 +216,9 @@ def apply_variant_to_sequence(sequence: str, variant: Variant) -> str:
         end_pos = pos + variant.deleted_length
         if pos < len(seq_list) and end_pos <= len(seq_list):
             seq_list[pos:end_pos] = [variant.alt_allele]
+    
+    # Add other variant types if needed (Inversion, Duplication, ComplexVariant, Translocation)
+    # For now, only SNV, Insertion, Deletion are handled by generate_* functions.
     
     return ''.join(seq_list)
 
@@ -266,15 +274,15 @@ def create_modified_genome_with_variants(genome: Dict[str, SeqRecord], variants:
     return modified_genome
 
 
-def generate_variant_set(genome: Dict[str, SeqRecord], variants_per_genome: int, 
+def generate_variant_set(genome: Dict[str, SeqRecord], variants_per_haplotype: int, 
                         variant_types: List[str]) -> List[Variant]:
-    """Generate a set of variants for a single genome."""
+    """Generate a set of variants for a single haplotype."""
     variants = []
     
     # Calculate number of each variant type
     type_counts = {}
-    base_count = variants_per_genome // len(variant_types)
-    remainder = variants_per_genome % len(variant_types)
+    base_count = variants_per_haplotype // len(variant_types)
+    remainder = variants_per_haplotype % len(variant_types)
     
     for i, vtype in enumerate(variant_types):
         type_counts[vtype] = base_count + (1 if i < remainder else 0)
@@ -291,8 +299,15 @@ def generate_variant_set(genome: Dict[str, SeqRecord], variants_per_genome: int,
                     variant = generate_insertion(genome, variants)
                 elif vtype == 'deletion':
                     variant = generate_deletion(genome, variants)
+                # Add other variant types here if their generate_* functions are implemented
+                # elif vtype == 'inversion':
+                #     variant = generate_inversion(genome, variants)
+                # elif vtype == 'duplication':
+                #     variant = generate_duplication(genome, variants)
+                # elif vtype == 'complex':
+                #     variant = generate_complex_variant(genome, variants)
                 else:
-                    logging.warning(f"Unknown variant type: {vtype}")
+                    logging.warning(f"Unknown or unimplemented variant type: {vtype}. Skipping.")
                     continue
                 
                 variants.append(variant)
@@ -304,107 +319,68 @@ def generate_variant_set(genome: Dict[str, SeqRecord], variants_per_genome: int,
     return variants
 
 
-def generate_all_variant_sets(genome: Dict[str, SeqRecord], num_genomes: int, 
-                             variants_per_genome: int, variant_types: List[str]) -> List[List[Variant]]:
-    """Generate multiple sets of variants for multiple genomes."""
-    all_variant_sets = []
-    
-    for genome_idx in range(num_genomes):
-        logging.info(f"Generating variant set {genome_idx + 1}/{num_genomes}")
-        variant_set = generate_variant_set(genome, variants_per_genome, variant_types)
-        all_variant_sets.append(variant_set)
-    
-    return all_variant_sets
+def generate_all_variant_sets_for_samples(genome: Dict[str, SeqRecord], num_samples: int, 
+                                         variants_per_haplotype: int, variant_types: List[str],
+                                         output_dir: Path) -> None:
+    """
+    Generates variant sets for multiple diploid samples and writes their FASTA files.
+    Each sample will have two haplotypes, each with its own set of variants.
+    """
+    logging.info(f"Generating variants for {num_samples} diploid samples.")
 
+    for i in range(num_samples):
+        sample_name = f"sample_{i:03d}"
+        sample_output_dir = output_dir / sample_name
+        sample_output_dir.mkdir(parents=True, exist_ok=True)
 
-def write_variant_set_outputs(variant_set: List[Variant], genome: Dict[str, SeqRecord], 
-                             output_dir: Path, set_index: int) -> None:
-    """Write output files for a set of variants."""
-    set_id = f"set_{set_index:03d}"
-    
-    # Write description file
-    desc_file = output_dir / f"{set_id}_description.txt"
-    with open(desc_file, 'w') as f:
-        f.write(f"Variant Set ID: {set_id}\n")
-        f.write(f"Number of variants: {len(variant_set)}\n")
-        f.write(f"Variants:\n")
-        f.write("=" * 50 + "\n")
+        logging.info(f"Generating variants for {sample_name} (Haplotype 1)...")
+        haplotype1_variants = generate_variant_set(genome, variants_per_haplotype, variant_types)
         
-        for i, variant in enumerate(variant_set, 1):
-            f.write(f"\nVariant {i}:\n")
-            f.write(f"  ID: {variant.variant_id}\n")
-            f.write(f"  Type: {variant.variant_type}\n")
-            f.write(f"  Description: {variant.to_english_description()}\n")
-            f.write(f"  HGVS: {variant.to_hgvs_notation()}\n")
-            f.write(f"  Affected Region: {variant.get_affected_region()}\n")
-    
-    # Create complete modified genome with all variants
-    modified_genome = create_modified_genome_with_variants(genome, variant_set)
-    
-    # Write complete modified genome to FASTA
-    fa_file = output_dir / f"{set_id}_genome.fa"
-    with open(fa_file, 'w') as f:
-        # Write all chromosomes in the same order as original
-        for chrom_id in genome.keys():
-            SeqIO.write(modified_genome[chrom_id], f, 'fasta')
-    
-    logging.info(f"Written complete modified genome with {len(variant_set)} variants to {fa_file}")
-
-
-def write_summary(all_variant_sets: List[List[Variant]], output_dir: Path) -> None:
-    """Write summary JSON file for all variant sets."""
-    summary_data = {
-        'total_genomes': len(all_variant_sets),
-        'total_variants': sum(len(variant_set) for variant_set in all_variant_sets),
-        'variant_sets': []
-    }
-    
-    for set_idx, variant_set in enumerate(all_variant_sets):
-        set_data = {
-            'set_id': f"set_{set_idx:03d}",
-            'num_variants': len(variant_set),
-            'variants': []
-        }
+        logging.info(f"Generating variants for {sample_name} (Haplotype 2)...")
+        haplotype2_variants = generate_variant_set(genome, variants_per_haplotype, variant_types)
         
-        for variant in variant_set:
-            variant_data = {
-                'variant_id': variant.variant_id,
-                'variant_type': variant.variant_type,
-                'chromosome': variant.chromosome,
-                'position': variant.position,
-                'ref_allele': variant.ref_allele,
-                'alt_allele': variant.alt_allele,
-                'description': variant.to_english_description(),
-                'hgvs': variant.to_hgvs_notation(),
-                'affected_region': variant.get_affected_region()
-            }
-            
-            # Add type-specific fields
-            if isinstance(variant, Insertion):
-                variant_data['insert_sequence'] = variant.insert_sequence
-            elif isinstance(variant, Deletion):
-                variant_data['deleted_length'] = variant.deleted_length
-            
-            set_data['variants'].append(variant_data)
-        
-        summary_data['variant_sets'].append(set_data)
-    
-    summary_file = output_dir / 'variants_summary.json'
-    with open(summary_file, 'w') as f:
-        json.dump(summary_data, f, indent=2)
-    
-    logging.info(f"Summary written to {summary_file}")
+        # Write Haplotype 1 FASTA
+        modified_genome_hap1 = create_modified_genome_with_variants(genome, haplotype1_variants)
+        hap1_fasta_path = sample_output_dir / f"{sample_name}_hap1.fasta"
+        with open(hap1_fasta_path, "w") as f:
+            # Write all chromosomes in the same order as original reference
+            for chrom_id in genome.keys():
+                SeqIO.write(modified_genome_hap1[chrom_id], f, 'fasta')
+        logging.info(f"Modified genome for {sample_name}_hap1 written to {hap1_fasta_path}")
+
+        # Write Haplotype 1 JSON (for debugging/record-keeping)
+        hap1_json_path = sample_output_dir / f"{sample_name}_hap1_variants.json"
+        with open(hap1_json_path, "w") as f:
+            json.dump([asdict(v) for v in haplotype1_variants], f, indent=2)
+        logging.info(f"Variant data for {sample_name}_hap1 written to {hap1_json_path}")
+
+        # Write Haplotype 2 FASTA
+        modified_genome_hap2 = create_modified_genome_with_variants(genome, haplotype2_variants)
+        hap2_fasta_path = sample_output_dir / f"{sample_name}_hap2.fasta"
+        with open(hap2_fasta_path, "w") as f:
+            # Write all chromosomes in the same order as original reference
+            for chrom_id in genome.keys():
+                SeqIO.write(modified_genome_hap2[chrom_id], f, 'fasta')
+        logging.info(f"Modified genome for {sample_name}_hap2 written to {hap2_fasta_path}")
+
+        # Write Haplotype 2 JSON (for debugging/record-keeping)
+        hap2_json_path = sample_output_dir / f"{sample_name}_hap2_variants.json"
+        with open(hap2_json_path, "w") as f:
+            json.dump([asdict(v) for v in haplotype2_variants], f, indent=2)
+        logging.info(f"Variant data for {sample_name}_hap2 written to {hap2_json_path}")
+
+    logging.info(f"All variant data for {num_samples} samples generated.")
 
 
 def main():
     """Main function."""
-    parser = argparse.ArgumentParser(description='Generate random genetic variants')
-    parser.add_argument('--reference', required=True, help='Input reference FASTA file')
-    parser.add_argument('--num-genomes', type=int, default=1, help='Number of variant genomes to generate')
-    parser.add_argument('--variants-per-genome', type=int, default=10, help='Number of variants per genome')
-    parser.add_argument('--output-dir', default='data/test/variants/', help='Output directory')
+    parser = argparse.ArgumentParser(description='Generate random genetic variants for diploid samples')
+    parser.add_argument('--reference', type=Path, required=True, help='Input reference FASTA file')
+    parser.add_argument('--num-samples', type=int, default=1, help='Number of diploid samples to generate')
+    parser.add_argument('--variants-per-haplotype', type=int, default=10, help='Number of variants per haplotype')
+    parser.add_argument('--output-dir', type=Path, default='data/test/variants/', help='Output directory')
     parser.add_argument('--variant-types', default='snv,insertion,deletion', 
-                       help='Comma-separated list of variant types')
+                       help='Comma-separated list of variant types to generate (snv,insertion,deletion)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     
     args = parser.parse_args()
@@ -418,27 +394,17 @@ def main():
     variant_types = [vtype.strip().lower() for vtype in args.variant_types.split(',')]
     
     # Create output directory
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
     
     # Load reference genome
     genome = load_reference_genome(args.reference)
     
-    # Generate all variant sets
-    all_variant_sets = generate_all_variant_sets(
-        genome, args.num_genomes, args.variants_per_genome, variant_types
+    # Generate all variant sets for samples
+    generate_all_variant_sets_for_samples(
+        genome, args.num_samples, args.variants_per_haplotype, variant_types, args.output_dir
     )
     
-    total_variants = sum(len(variant_set) for variant_set in all_variant_sets)
-    logging.info(f"Generated {len(all_variant_sets)} variant sets with {total_variants} total variants")
-    
-    # Write outputs for each variant set
-    for set_idx, variant_set in enumerate(all_variant_sets):
-        write_variant_set_outputs(variant_set, genome, output_dir, set_idx)
-    
-    write_summary(all_variant_sets, output_dir)
-    
-    logging.info(f"All outputs written to {output_dir}")
+    logging.info(f"All outputs written to {args.output_dir}")
 
 
 if __name__ == '__main__':

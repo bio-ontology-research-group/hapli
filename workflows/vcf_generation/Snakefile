@@ -6,12 +6,17 @@ configfile: "config_vcf.yaml"
 
 # Set paths
 WORKFLOW_DIR = Path(workflow.basedir)
-PANGENOME_DIR = Path(config.get("pangenome_dir", "../../data/test/pangenome")).resolve()
-OUTPUT_DIR = Path(config.get("output_dir", "../../data/test/vcf_from_pangenome")).resolve()
 
-# Create output directory and logs directory
+# Define directories based on config
+REFERENCE_GENOME_DIR = Path(config["reference_genome_dir"]).resolve()
+VARIANT_DATA_DIR = Path(config["variant_data_dir"]).resolve()
+OUTPUT_DIR = Path("results/vcf_output").resolve()
+
+# Create output directories
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 (OUTPUT_DIR / "logs").mkdir(parents=True, exist_ok=True)
+(OUTPUT_DIR / "vg_graphs").mkdir(parents=True, exist_ok=True)
+(OUTPUT_DIR / "vcf").mkdir(parents=True, exist_ok=True)
 
 # Docker image
 VG_DOCKER = "quay.io/vgteam/vg:v1.65.0"
@@ -20,307 +25,140 @@ VG_DOCKER = "quay.io/vgteam/vg:v1.65.0"
 USER_ID = os.getuid()
 GROUP_ID = os.getgid()
 
-# Get sample names from the pangenome
-SAMPLES = config.get("samples", ["set_000", "set_001", "set_002", "set_003", "set_004", 
-                                 "set_005", "set_006", "set_007", "set_008", "set_009"])
-REFERENCE_NAME = config.get("reference_name", "reference")
+# Get sample names from config
+NUM_SAMPLES = config["num_samples"]
+SAMPLES = [f"sample_{i:03d}" for i in range(NUM_SAMPLES)]
 
-print(f"Pangenome directory: {PANGENOME_DIR}")
+print(f"Reference genome directory: {REFERENCE_GENOME_DIR}")
+print(f"Variant data directory: {VARIANT_DATA_DIR}")
 print(f"Output directory: {OUTPUT_DIR}")
-print(f"Samples to call: {SAMPLES}")
+print(f"Samples to process: {SAMPLES}")
 print(f"Running as user: {USER_ID}:{GROUP_ID}")
 
 # Final outputs
 rule all:
     input:
-        OUTPUT_DIR / "all_samples.vcf",
-        OUTPUT_DIR / "vcf_stats.txt",
-        OUTPUT_DIR / "paths_in_graph.txt"
+        # Ensure reference genome is generated
+        REFERENCE_GENOME_DIR / "reference.fasta",
+        # Ensure all variant data (haplotype fastas) are generated
+        expand(VARIANT_DATA_DIR / "{sample}" / "{sample}_hap1.fasta", sample=SAMPLES),
+        expand(VARIANT_DATA_DIR / "{sample}" / "{sample}_hap2.fasta", sample=SAMPLES),
+        # Ensure all per-sample VCFs are generated
+        expand(OUTPUT_DIR / "vcf" / "{sample}.vcf.gz", sample=SAMPLES)
 
-# Check paths in the graph first (diagnostic)
-rule check_paths:
-    input:
-        vg=PANGENOME_DIR / "pangenome.vg"
+# Rule to generate the reference genome
+rule generate_reference_genome:
     output:
-        paths=OUTPUT_DIR / "paths_in_graph.txt"
+        fasta=REFERENCE_GENOME_DIR / "reference.fasta"
+    log:
+        OUTPUT_DIR / "logs" / "generate_reference_genome.log"
     params:
-        mount_dir=str(PANGENOME_DIR.parent.parent.absolute()),
+        num_chromosomes=config["num_chromosomes"],
+        chr_length=config["base_length"],
+        length_decay=config["decay"],
+        gc_content=config["gc_content"],
+        seed=config["seed"]
+    shell:
+        "python scripts/test_data/generate_reference_genome.py "
+        "--num-chromosomes {params.num_chromosomes} "
+        "--chr-length {params.chr_length} "
+        "--length-decay {params.length_decay} "
+        "--gc-content {params.gc_content} "
+        "--output {output.fasta} "
+        "--seed {params.seed} > {log} 2>&1"
+
+# Rule to generate variant data (haplotype FASTAs and JSONs)
+rule generate_variant_data:
+    input:
+        reference=REFERENCE_GENOME_DIR / "reference.fasta"
+    output:
+        # Use a sentinel file to indicate completion of all variant data generation
+        touch(VARIANT_DATA_DIR / ".variants_generated_complete")
+    params:
+        num_samples=config["num_samples"],
+        variants_per_haplotype=config["variants_per_haplotype"],
+        output_dir=VARIANT_DATA_DIR,
+        variant_types="snv,insertion,deletion",
+        seed=config["seed"]
+    log:
+        OUTPUT_DIR / "logs" / "generate_variant_data.log"
+    shell:
+        "python scripts/test_data/generate_variants.py "
+        "--reference {input.reference} "
+        "--num-samples {params.num_samples} "
+        "--variants-per-haplotype {params.variants_per_haplotype} "
+        "--output-dir {params.output_dir} "
+        "--variant-types {params.variant_types} "
+        "--seed {params.seed} > {log} 2>&1"
+
+# Rule to build a vg graph for a diploid sample
+# This graph will contain the reference path and two haplotype paths
+rule build_sample_graph:
+    input:
+        reference=REFERENCE_GENOME_DIR / "reference.fasta",
+        hap1=VARIANT_DATA_DIR / "{sample}" / "{sample}_hap1.fasta",
+        hap2=VARIANT_DATA_DIR / "{sample}" / "{sample}_hap2.fasta"
+    output:
+        graph=OUTPUT_DIR / "vg_graphs" / "{sample}.vg"
+    log:
+        OUTPUT_DIR / "logs" / "build_graph_{sample}.log"
+    params:
+        mount_dir=str(WORKFLOW_DIR.parent.parent.absolute()),
         user_id=USER_ID,
-        group_id=GROUP_ID
+        group_id=GROUP_ID,
+        # Paths relative to mount_dir for docker
+        ref_path_docker=str(REFERENCE_GENOME_DIR.relative_to(WORKFLOW_DIR.parent.parent.absolute()) / "reference.fasta"),
+        hap1_path_docker=str(VARIANT_DATA_DIR.relative_to(WORKFLOW_DIR.parent.parent.absolute()) / "{sample}" / "{sample}_hap1.fasta"),
+        hap2_path_docker=str(VARIANT_DATA_DIR.relative_to(WORKFLOW_DIR.parent.parent.absolute()) / "{sample}" / "{sample}_hap2.fasta"),
+        graph_path_docker=str(OUTPUT_DIR.relative_to(WORKFLOW_DIR.parent.parent.absolute()) / "vg_graphs" / "{sample}.vg")
+    threads: config["threads"]
     shell:
         """
-        mkdir -p $(dirname {output.paths})
-        
+        echo "Building graph for {wildcards.sample}..." > {log}
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {VG_DOCKER} \
-            bash -c 'vg paths -v /data/test/pangenome/pangenome.vg -L > /data/test/vcf_from_pangenome/paths_in_graph.txt'
-        
-        echo "Paths found in graph:" >&2
-        cat {output.paths} >&2
+            vg construct -r {params.ref_path_docker} \
+                         -v {params.hap1_path_docker} \
+                         -v {params.hap2_path_docker} \
+                         -p -m -a \
+                         -t {threads} \
+                         > {params.graph_path_docker} 2>> {log}
         """
 
-# Create XG index from pangenome
-rule create_xg_index:
+# Rule to call variants from the sample graph
+rule call_variants:
     input:
-        vg=PANGENOME_DIR / "pangenome.vg"
+        graph=OUTPUT_DIR / "vg_graphs" / "{sample}.vg",
+        reference=REFERENCE_GENOME_DIR / "reference.fasta"
     output:
-        xg=OUTPUT_DIR / "pangenome.xg"
+        vcf=OUTPUT_DIR / "vcf" / "{sample}.vcf.gz"
     log:
-        OUTPUT_DIR / "logs" / "create_xg.log"
+        OUTPUT_DIR / "logs" / "call_variants_{sample}.log"
     params:
-        mount_dir=str(PANGENOME_DIR.parent.parent.absolute()),
+        mount_dir=str(WORKFLOW_DIR.parent.parent.absolute()),
         user_id=USER_ID,
-        group_id=GROUP_ID
-    threads: config.get("threads", 4)
+        group_id=GROUP_ID,
+        # Paths relative to mount_dir for docker
+        graph_path_docker=str(OUTPUT_DIR.relative_to(WORKFLOW_DIR.parent.parent.absolute()) / "vg_graphs" / "{sample}.vg"),
+        ref_path_docker=str(REFERENCE_GENOME_DIR.relative_to(WORKFLOW_DIR.parent.parent.absolute()) / "reference.fasta"),
+        vcf_path_docker=str(OUTPUT_DIR.relative_to(WORKFLOW_DIR.parent.parent.absolute()) / "vcf" / "{sample}.vcf.gz")
+    threads: config["threads"]
     shell:
         """
-        echo "Creating XG index..." > {log}
-        echo "Input VG: {input.vg}" >> {log}
-        echo "Output XG: {output.xg}" >> {log}
-        
-        docker run --rm \
-            --user {params.user_id}:{params.group_id} \
-            -v {params.mount_dir}:/data \
-            -w /data \
-            {VG_DOCKER} \
-            vg index -x /data/test/vcf_from_pangenome/pangenome.xg \
-                     -t {threads} \
-                     /data/test/pangenome/pangenome.vg 2>> {log}
-        """
-
-# Find snarls (variant sites) in the graph
-rule find_snarls:
-    input:
-        vg=PANGENOME_DIR / "pangenome.vg"
-    output:
-        snarls=OUTPUT_DIR / "pangenome.snarls"
-    log:
-        OUTPUT_DIR / "logs" / "find_snarls.log"
-    params:
-        mount_dir=str(PANGENOME_DIR.parent.parent.absolute()),
-        user_id=USER_ID,
-        group_id=GROUP_ID
-    shell:
-        """
-        echo "Finding snarls..." > {log}
-        
-        docker run --rm \
-            --user {params.user_id}:{params.group_id} \
-            -v {params.mount_dir}:/data \
-            -w /data \
-            {VG_DOCKER} \
-            bash -c 'vg snarls /data/test/pangenome/pangenome.vg > /data/test/vcf_from_pangenome/pangenome.snarls' 2>> {log}
-        """
-
-# Create GBWT index from embedded paths
-rule create_gbwt:
-    input:
-        vg=PANGENOME_DIR / "pangenome.vg",
-        xg=OUTPUT_DIR / "pangenome.xg"
-    output:
-        gbwt=OUTPUT_DIR / "pangenome.gbwt"
-    log:
-        OUTPUT_DIR / "logs" / "create_gbwt.log"
-    params:
-        mount_dir=str(PANGENOME_DIR.parent.parent.absolute()),
-        user_id=USER_ID,
-        group_id=GROUP_ID
-    threads: config.get("threads", 4)
-    shell:
-        """
-        echo "Creating GBWT index..." > {log}
-        
-        # Create GBWT from embedded paths using XG index
-        docker run --rm \
-            --user {params.user_id}:{params.group_id} \
-            -v {params.mount_dir}:/data \
-            -w /data \
-            {VG_DOCKER} \
-            vg gbwt -o /data/test/vcf_from_pangenome/pangenome.gbwt \
-                    -E \
-                    -x /data/test/vcf_from_pangenome/pangenome.xg 2>> {log}
-        """
-
-# Call variants for each sample against reference
-rule call_sample_variants:
-    input:
-        vg=PANGENOME_DIR / "pangenome.vg",
-        xg=OUTPUT_DIR / "pangenome.xg",
-        snarls=OUTPUT_DIR / "pangenome.snarls",
-        gbwt=OUTPUT_DIR / "pangenome.gbwt"
-    output:
-        vcf=OUTPUT_DIR / "per_sample" / "{sample}.vcf"
-    log:
-        OUTPUT_DIR / "logs" / "call_{sample}.log"
-    params:
-        mount_dir=str(PANGENOME_DIR.parent.parent.absolute()),
-        ref_sample=REFERENCE_NAME,
-        user_id=USER_ID,
-        group_id=GROUP_ID
-    threads: 2
-    shell:
-        """
-        mkdir -p $(dirname {output.vcf})
-        
         echo "Calling variants for {wildcards.sample}..." > {log}
-        echo "Reference sample: {params.ref_sample}" >> {log}
-        echo "Target sample: {wildcards.sample}" >> {log}
-        
-        # Check what samples are available in the original VG graph
-        echo "Checking samples in VG graph..." >> {log}
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {VG_DOCKER} \
-            bash -c 'vg paths -v /data/test/pangenome/pangenome.vg -L' >> {log} 2>&1
-        
-        # Call variants using deconstruct approach - this extracts variants from the graph
-        # relative to a reference path and outputs them for specific samples
-        docker run --rm \
-            --user {params.user_id}:{params.group_id} \
-            -v {params.mount_dir}:/data \
-            -w /data \
-            {VG_DOCKER} \
-            bash -c 'mkdir -p /data/test/vcf_from_pangenome/per_sample && \
-                     vg deconstruct /data/test/pangenome/pangenome.vg \
-                         -P {params.ref_sample} \
-                         -H "#{wildcards.sample}" \
-                         -e \
-                         -a \
-                         > /data/test/vcf_from_pangenome/per_sample/{wildcards.sample}.vcf' 2>> {log}
-        
-        # Check if VCF was created and has content
-        if [ -f {output.vcf} ]; then
-            echo "VCF created successfully" >> {log}
-            echo "VCF size: $(wc -l < {output.vcf}) lines" >> {log}
-            echo "Header lines: $(grep -c '^#' {output.vcf})" >> {log}
-            echo "Variant lines: $(grep -cv '^#' {output.vcf} || echo 0)" >> {log}
-        else
-            echo "ERROR: VCF file was not created" >> {log}
-            exit 1
-        fi
-        """
-
-# Merge individual VCFs
-rule merge_vcfs:
-    input:
-        vcfs=expand(OUTPUT_DIR / "per_sample" / "{sample}.vcf", sample=SAMPLES)
-    output:
-        merged=OUTPUT_DIR / "all_samples.vcf"
-    log:
-        OUTPUT_DIR / "logs" / "merge_vcfs.log"
-    shell:
-        """
-        echo "Merging VCF files..." > {log}
-        
-        # First check if VCFs have content
-        echo "Checking VCF files..." >> {log}
-        for vcf in {input.vcfs}; do
-            echo -n "$vcf: " >> {log}
-            if [ -f "$vcf" ]; then
-                grep -v '^#' "$vcf" | wc -l >> {log} || echo "0" >> {log}
-            else
-                echo "missing" >> {log}
-            fi
-        done
-        
-        # Check sample names in first VCF to understand the structure
-        echo "Sample names in first VCF:" >> {log}
-        if [ -f "{input.vcfs[0]}" ]; then
-            grep '^#CHROM' "{input.vcfs[0]}" | cut -f10- >> {log} 2>/dev/null || echo "No sample columns found" >> {log}
-        fi
-        
-        # Since vg deconstruct outputs variants for each sample separately,
-        # we need to concatenate them rather than merge them
-        echo "Concatenating VCF files..." >> {log}
-        
-        # Start with header from first VCF
-        if [ -f "{input.vcfs[0]}" ] && [ -s "{input.vcfs[0]}" ]; then
-            grep '^#' "{input.vcfs[0]}" > {output.merged}
-            
-            # Add variants from all VCFs
-            for vcf in {input.vcfs}; do
-                if [ -f "$vcf" ] && [ -s "$vcf" ]; then
-                    sample_name=$(basename "$vcf" .vcf)
-                    echo "Adding variants from $sample_name..." >> {log}
-                    
-                    # Add variants with sample info in ID field for tracking
-                    grep -v '^#' "$vcf" | awk -v sample="$sample_name" '{{
-                        if ($3 == ".") {{
-                            $3 = sample "_" NR
-                        }} else {{
-                            $3 = sample "_" $3
-                        }}
-                        print
-                    }}' >> {output.merged}
-                fi
-            done
-        else
-            # No valid VCFs, create empty VCF
-            echo "##fileformat=VCFv4.3" > {output.merged}
-            echo "##source=vg_deconstruct" >> {output.merged}
-            echo "##INFO=<ID=AT,Number=R,Type=String,Description=\"Allele Traversal\">" >> {output.merged}
-            echo "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO" >> {output.merged}
-        fi
-        
-        # Sort the VCF by position
-        if [ -s {output.merged} ]; then
-            echo "Sorting merged VCF..." >> {log}
-            (grep '^#' {output.merged}; grep -v '^#' {output.merged} | sort -k1,1 -k2,2n) > {output.merged}.tmp
-            mv {output.merged}.tmp {output.merged}
-        fi
-        """
-
-# Generate statistics
-rule vcf_stats:
-    input:
-        merged=OUTPUT_DIR / "all_samples.vcf",
-        per_sample=expand(OUTPUT_DIR / "per_sample" / "{sample}.vcf", sample=SAMPLES),
-        paths=OUTPUT_DIR / "paths_in_graph.txt"
-    output:
-        stats=OUTPUT_DIR / "vcf_stats.txt"
-    shell:
-        """
-        echo "=== VCF Generation Statistics ===" > {output.stats}
-        echo "Generated: $(date)" >> {output.stats}
-        echo "" >> {output.stats}
-        
-        echo "=== Paths in pangenome graph ===" >> {output.stats}
-        if [ -f {input.paths} ]; then
-            cat {input.paths} >> {output.stats}
-        else
-            echo "Path file not found" >> {output.stats}
-        fi
-        echo "" >> {output.stats}
-        
-        echo "=== Overall variant statistics ===" >> {output.stats}
-        if [ -s {input.merged} ]; then
-            total_variants=$(grep -v '^#' {input.merged} | wc -l)
-            echo "Total variants called: $total_variants" >> {output.stats}
-            echo "" >> {output.stats}
-            bcftools stats {input.merged} 2>/dev/null | grep -E "^SN" >> {output.stats} || true
-        else
-            echo "No variants in merged VCF" >> {output.stats}
-        fi
-        
-        echo -e "\n=== Per-sample variant counts ===" >> {output.stats}
-        for vcf in {input.per_sample}; do
-            sample=$(basename "$vcf" .vcf)
-            if [ -f "$vcf" ] && [ -s "$vcf" ]; then
-                count=$(grep -v '^#' "$vcf" | wc -l)
-            else
-                count=0
-            fi
-            echo "$sample: $count variants" >> {output.stats}
-        done
-        
-        echo -e "\n=== First few variants ===" >> {output.stats}
-        if [ -s {input.merged} ]; then
-            echo "First 5 variants:" >> {output.stats}
-            grep -v '^#' {input.merged} | head -5 >> {output.stats} || echo "No variants to show" >> {output.stats}
-        fi
+            vg call {params.graph_path_docker} \
+                    -r {params.ref_path_docker} \
+                    -k 16 \
+                    -s {wildcards.sample} \
+                    -P \
+                    -t {threads} \
+                    | bgzip > {params.vcf_path_docker} 2>> {log}
         """

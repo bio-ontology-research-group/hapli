@@ -1,27 +1,19 @@
-# Configuration for VCF generation from pangenome
+# General settings
+threads: 8
 
-# Input pangenome directory (where pangenome.vg is located)
-pangenome_dir: "../../data/test/pangenome"
+# Reference genome generation settings
+reference_genome_dir: "results/reference"
+num_chromosomes: 3
+base_length: 1000000
+decay: 0.9
+gc_content: 0.41
+seed: 42
 
-# Output directory for VCF files
-output_dir: "../../data/test/vcf_from_pangenome"
+# Variant generation settings
+variant_data_dir: "results/variant_data"
+num_samples: 2
+variants_per_haplotype: 5
 
-# Reference path name in the graph
+# VCF generation settings
+# Reference path name in the graph (should match the ID in reference.fasta)
 reference_name: "reference"
-
-# Sample names to call variants for
-# These should match the path names in your pangenome graph
-samples:
-  - set_000
-  - set_001
-  - set_002
-  - set_003
-  - set_004
-  - set_005
-  - set_006
-  - set_007
-  - set_008
-  - set_009
-
-# Number of threads to use
-threads: 4
