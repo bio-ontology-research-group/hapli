@@ -1,0 +1,198 @@
+import os
+from pathlib import Path
+
+# Load config - all paths and parameters will come from config
+configfile: "config.yaml"
+
+# All paths from config
+PANGENOME_VG = config["pangenome_vg"]
+PANGENOME_GFA = config["pangenome_gfa"]
+REFERENCE = config["reference"]
+OUTPUT_DIR = config["output_dir"]
+SAMPLE_NAMES = config["sample_names"]
+VG_DOCKER = config.get("vg_docker", "quay.io/vgteam/vg:v1.65.0")
+THREADS = config.get("threads", 4)
+MOUNT_DIR = config["mount_dir"]
+
+# Create output directory
+Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+
+# Final outputs - one VCF per sample
+rule all:
+    input:
+        expand(os.path.join(OUTPUT_DIR, "{sample}.vcf"), sample=SAMPLE_NAMES),
+        expand(os.path.join(OUTPUT_DIR, "{sample}_phased.vcf"), sample=SAMPLE_NAMES),
+        os.path.join(OUTPUT_DIR, "calling_stats.txt")
+
+# Index the pangenome graph
+rule index_pangenome:
+    input:
+        vg=PANGENOME_VG
+    output:
+        xg=os.path.join(OUTPUT_DIR, "pangenome.xg"),
+        gcsa=os.path.join(OUTPUT_DIR, "pangenome.gcsa"),
+        gcsa_lcp=os.path.join(OUTPUT_DIR, "pangenome.gcsa.lcp")
+    threads: THREADS
+    log:
+        os.path.join(OUTPUT_DIR, "logs", "index_pangenome.log")
+    params:
+        mount_dir=MOUNT_DIR,
+        docker_image=VG_DOCKER
+    shell:
+        """
+        mkdir -p $(dirname {log})
+        
+        echo "Indexing pangenome graph..." > {log}
+        
+        # Create relative paths for Docker
+        REL_VG=$(realpath --relative-to={params.mount_dir} {input.vg})
+        REL_XG=$(realpath --relative-to={params.mount_dir} {output.xg})
+        REL_GCSA=$(realpath --relative-to={params.mount_dir} {output.gcsa})
+        
+        echo "Creating XG index..." >> {log}
+        docker run --rm \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {params.docker_image} \
+            vg index -x "$REL_XG" "$REL_VG" 2>> {log}
+        
+        echo "Creating GCSA index..." >> {log}
+        docker run --rm \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {params.docker_image} \
+            vg index -g "$REL_GCSA" -k 16 "$REL_VG" 2>> {log}
+        
+        echo "Indexing completed successfully" >> {log}
+        """
+
+# Call variants for each sample
+rule call_variants:
+    input:
+        vg=PANGENOME_VG,
+        xg=os.path.join(OUTPUT_DIR, "pangenome.xg"),
+        gcsa=os.path.join(OUTPUT_DIR, "pangenome.gcsa"),
+        gcsa_lcp=os.path.join(OUTPUT_DIR, "pangenome.gcsa.lcp")
+    output:
+        vcf=os.path.join(OUTPUT_DIR, "{sample}.vcf")
+    threads: THREADS
+    log:
+        os.path.join(OUTPUT_DIR, "logs", "call_{sample}.log")
+    params:
+        mount_dir=MOUNT_DIR,
+        docker_image=VG_DOCKER,
+        sample="{sample}"
+    shell:
+        """
+        mkdir -p $(dirname {log})
+        
+        echo "Calling variants for sample {params.sample}..." > {log}
+        
+        # Create relative paths for Docker
+        REL_VG=$(realpath --relative-to={params.mount_dir} {input.vg})
+        REL_XG=$(realpath --relative-to={params.mount_dir} {input.xg})
+        REL_VCF=$(realpath --relative-to={params.mount_dir} {output.vcf})
+        
+        # Call variants using vg call
+        echo "Running vg call..." >> {log}
+        docker run --rm \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {params.docker_image} \
+            vg call "$REL_XG" -k "$REL_VG" -s {params.sample} -t {threads} > "$REL_VCF" 2>> {log}
+        
+        # Check if VCF was created
+        if [ ! -f {output.vcf} ]; then
+            echo "ERROR: VCF file was not created for {params.sample}" >> {log}
+            exit 1
+        fi
+        
+        echo "Variant calling completed for {params.sample}" >> {log}
+        """
+
+# Generate phased VCF for each sample
+rule phase_variants:
+    input:
+        vcf=os.path.join(OUTPUT_DIR, "{sample}.vcf"),
+        vg=PANGENOME_VG,
+        xg=os.path.join(OUTPUT_DIR, "pangenome.xg")
+    output:
+        phased_vcf=os.path.join(OUTPUT_DIR, "{sample}_phased.vcf")
+    threads: THREADS
+    log:
+        os.path.join(OUTPUT_DIR, "logs", "phase_{sample}.log")
+    params:
+        mount_dir=MOUNT_DIR,
+        docker_image=VG_DOCKER,
+        sample="{sample}"
+    shell:
+        """
+        mkdir -p $(dirname {log})
+        
+        echo "Phasing variants for sample {params.sample}..." > {log}
+        
+        # Create relative paths for Docker
+        REL_VCF=$(realpath --relative-to={params.mount_dir} {input.vcf})
+        REL_VG=$(realpath --relative-to={params.mount_dir} {input.vg})
+        REL_XG=$(realpath --relative-to={params.mount_dir} {input.xg})
+        REL_PHASED=$(realpath --relative-to={params.mount_dir} {output.phased_vcf})
+        
+        # Extract haplotype paths for this sample
+        HAP1_PATH="{params.sample}_hap1"
+        HAP2_PATH="{params.sample}_hap2"
+        
+        echo "Extracting haplotype information..." >> {log}
+        echo "Haplotype 1 path: $HAP1_PATH" >> {log}
+        echo "Haplotype 2 path: $HAP2_PATH" >> {log}
+        
+        # Use vg call with specific paths to get phased calls
+        docker run --rm \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {params.docker_image} \
+            vg call "$REL_XG" -k "$REL_VG" -s {params.sample} -p "$HAP1_PATH,$HAP2_PATH" -t {threads} > "$REL_PHASED" 2>> {log}
+        
+        # Check if phased VCF was created
+        if [ ! -f {output.phased_vcf} ]; then
+            echo "ERROR: Phased VCF file was not created for {params.sample}" >> {log}
+            exit 1
+        fi
+        
+        echo "Phasing completed for {params.sample}" >> {log}
+        """
+
+# Generate calling statistics
+rule calling_stats:
+    input:
+        vcfs=expand(os.path.join(OUTPUT_DIR, "{sample}.vcf"), sample=SAMPLE_NAMES),
+        phased_vcfs=expand(os.path.join(OUTPUT_DIR, "{sample}_phased.vcf"), sample=SAMPLE_NAMES)
+    output:
+        stats=os.path.join(OUTPUT_DIR, "calling_stats.txt")
+    shell:
+        """
+        echo "=== Variant Calling Statistics ===" > {output.stats}
+        echo "" >> {output.stats}
+        
+        echo "Sample-wise variant counts:" >> {output.stats}
+        for vcf in {input.vcfs}; do
+            sample=$(basename "$vcf" .vcf)
+            count=$(grep -v '^#' "$vcf" | wc -l)
+            echo "$sample: $count variants" >> {output.stats}
+        done
+        
+        echo "" >> {output.stats}
+        echo "Sample-wise phased variant counts:" >> {output.stats}
+        for vcf in {input.phased_vcfs}; do
+            sample=$(basename "$vcf" _phased.vcf)
+            count=$(grep -v '^#' "$vcf" | wc -l)
+            phased_count=$(grep -v '^#' "$vcf" | grep -c '|' || echo "0")
+            echo "$sample: $count variants ($phased_count phased)" >> {output.stats}
+        done
+        
+        echo "" >> {output.stats}
+        echo "Total variants across all samples:" >> {output.stats}
+        total_variants=$(cat {input.vcfs} | grep -v '^#' | wc -l)
+        total_phased=$(cat {input.phased_vcfs} | grep -v '^#' | wc -l)
+        echo "Unphased: $total_variants" >> {output.stats}
+        echo "Phased: $total_phased" >> {output.stats}
+        """
