@@ -43,27 +43,93 @@ rule index_pangenome:
         mkdir -p $(dirname {log})
         
         echo "Indexing pangenome graph..." > {log}
+        echo "Available disk space:" >> {log}
+        df -h >> {log}
+        echo "" >> {log}
+        
+        # Create a temporary directory for indexing
+        TEMP_DIR={output.xg}.tmp
+        mkdir -p "$TEMP_DIR"
         
         # Create relative paths for Docker
         REL_VG=$(realpath --relative-to={params.mount_dir} {input.vg})
         REL_XG=$(realpath --relative-to={params.mount_dir} {output.xg})
         REL_GCSA=$(realpath --relative-to={params.mount_dir} {output.gcsa})
+        REL_TEMP=$(realpath --relative-to={params.mount_dir} "$TEMP_DIR")
+        
+        echo "Input VG: {input.vg} -> $REL_VG" >> {log}
+        echo "Output XG: {output.xg} -> $REL_XG" >> {log}
+        echo "Output GCSA: {output.gcsa} -> $REL_GCSA" >> {log}
+        echo "Temp dir: $TEMP_DIR -> $REL_TEMP" >> {log}
+        echo "" >> {log}
+        
+        # Check input file
+        echo "Input VG file info:" >> {log}
+        ls -lh {input.vg} >> {log}
+        echo "" >> {log}
         
         echo "Creating XG index..." >> {log}
         docker run --rm \
             -v {params.mount_dir}:/data \
             -w /data \
+            --tmpfs /tmp:rw,size=2g \
             {params.docker_image} \
             vg index -x "$REL_XG" "$REL_VG" 2>> {log}
         
-        echo "Creating GCSA index..." >> {log}
+        if [ ! -f {output.xg} ]; then
+            echo "ERROR: XG index creation failed" >> {log}
+            exit 1
+        fi
+        
+        echo "XG index created successfully" >> {log}
+        ls -lh {output.xg} >> {log}
+        echo "" >> {log}
+        
+        echo "Creating GCSA index with reduced parameters..." >> {log}
+        echo "Using temporary directory: $REL_TEMP" >> {log}
+        
+        # Use more conservative GCSA parameters and custom temp directory
         docker run --rm \
             -v {params.mount_dir}:/data \
             -w /data \
+            --tmpfs /tmp:rw,size=4g \
+            -e TMPDIR="/data/$REL_TEMP" \
             {params.docker_image} \
-            vg index -g "$REL_GCSA" -k 16 "$REL_VG" 2>> {log}
+            bash -c "mkdir -p /data/$REL_TEMP && vg index -g '$REL_GCSA' -k 11 -X 2 -Z 1000 '$REL_VG'" 2>> {log}
+        
+        # Check if GCSA files were created
+        if [ ! -f {output.gcsa} ]; then
+            echo "ERROR: GCSA index creation failed" >> {log}
+            echo "Trying alternative indexing approach..." >> {log}
+            
+            # Try with even more conservative parameters
+            docker run --rm \
+                -v {params.mount_dir}:/data \
+                -w /data \
+                --tmpfs /tmp:rw,size=4g \
+                -e TMPDIR="/data/$REL_TEMP" \
+                {params.docker_image} \
+                bash -c "mkdir -p /data/$REL_TEMP && vg index -g '$REL_GCSA' -k 11 -X 1 -Z 500 '$REL_VG'" 2>> {log}
+        fi
+        
+        # Final check
+        if [ ! -f {output.gcsa} ] || [ ! -f {output.gcsa_lcp} ]; then
+            echo "ERROR: GCSA index files were not created" >> {log}
+            echo "Files in output directory:" >> {log}
+            ls -la $(dirname {output.gcsa}) >> {log}
+            exit 1
+        fi
+        
+        echo "GCSA index created successfully" >> {log}
+        ls -lh {output.gcsa}* >> {log}
+        echo "" >> {log}
+        
+        # Clean up temporary directory
+        rm -rf "$TEMP_DIR"
         
         echo "Indexing completed successfully" >> {log}
+        echo "Final index files:" >> {log}
+        ls -lh {output.xg} {output.gcsa}* >> {log}
         """
 
 # Call variants for each sample (unphased)
@@ -95,6 +161,12 @@ rule call_variants:
         REL_XG=$(realpath --relative-to={params.mount_dir} {input.xg})
         REL_VCF=$(realpath --relative-to={params.mount_dir} {output.vcf})
         
+        echo "Input files:" >> {log}
+        echo "  VG: {input.vg} -> $REL_VG" >> {log}
+        echo "  XG: {input.xg} -> $REL_XG" >> {log}
+        echo "  Output VCF: {output.vcf} -> $REL_VCF" >> {log}
+        echo "" >> {log}
+        
         # Call variants using vg call
         echo "Running vg call..." >> {log}
         docker run --rm \
@@ -106,10 +178,16 @@ rule call_variants:
         # Check if VCF was created
         if [ ! -f {output.vcf} ]; then
             echo "ERROR: VCF file was not created for {params.sample}" >> {log}
+            echo "Contents of output directory:" >> {log}
+            ls -la $(dirname {output.vcf}) >> {log}
             exit 1
         fi
         
         echo "Variant calling completed for {params.sample}" >> {log}
+        echo "Output VCF info:" >> {log}
+        ls -lh {output.vcf} >> {log}
+        echo "Number of variants:" >> {log}
+        grep -v '^#' {output.vcf} | wc -l >> {log}
         """
 
 # Generate phased VCF for each sample
@@ -148,8 +226,19 @@ rule phase_variants:
         echo "Extracting haplotype information..." >> {log}
         echo "Haplotype 1 path: $HAP1_PATH" >> {log}
         echo "Haplotype 2 path: $HAP2_PATH" >> {log}
+        echo "" >> {log}
+        
+        # Check if paths exist in the graph
+        echo "Checking available paths in graph..." >> {log}
+        docker run --rm \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {params.docker_image} \
+            vg paths -v "$REL_VG" -L >> {log} 2>&1
+        echo "" >> {log}
         
         # Use vg call with specific paths to get phased calls
+        echo "Running vg call with phasing..." >> {log}
         docker run --rm \
             -v {params.mount_dir}:/data \
             -w /data \
@@ -159,10 +248,16 @@ rule phase_variants:
         # Check if phased VCF was created
         if [ ! -f {output.phased_vcf} ]; then
             echo "ERROR: Phased VCF file was not created for {params.sample}" >> {log}
+            echo "Contents of output directory:" >> {log}
+            ls -la $(dirname {output.phased_vcf}) >> {log}
             exit 1
         fi
         
         echo "Phasing completed for {params.sample}" >> {log}
+        echo "Output phased VCF info:" >> {log}
+        ls -lh {output.phased_vcf} >> {log}
+        echo "Number of phased variants:" >> {log}
+        grep -v '^#' {output.phased_vcf} | wc -l >> {log}
         """
 
 # Generate calling statistics
