@@ -1,0 +1,288 @@
+import os
+from pathlib import Path
+
+# Load config
+configfile: "config_vcf.yaml"
+
+# Set paths
+WORKFLOW_DIR = Path(workflow.basedir)
+PANGENOME_DIR = Path(config.get("pangenome_dir", "../../data/test/pangenome")).resolve()
+OUTPUT_DIR = Path(config.get("output_dir", "../../data/test/vcf_from_pangenome")).resolve()
+
+# Create output directory and logs directory
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+(OUTPUT_DIR / "logs").mkdir(parents=True, exist_ok=True)
+
+# Docker image
+VG_DOCKER = "quay.io/vgteam/vg:v1.65.0"
+
+# Get current user ID and group ID for Docker
+USER_ID = os.getuid()
+GROUP_ID = os.getgid()
+
+# Get sample names from the pangenome
+SAMPLES = config.get("samples", ["set_000", "set_001", "set_002", "set_003", "set_004", 
+                                 "set_005", "set_006", "set_007", "set_008", "set_009"])
+REFERENCE_NAME = config.get("reference_name", "reference")
+
+print(f"Pangenome directory: {PANGENOME_DIR}")
+print(f"Output directory: {OUTPUT_DIR}")
+print(f"Samples to call: {SAMPLES}")
+print(f"Running as user: {USER_ID}:{GROUP_ID}")
+
+# Final outputs
+rule all:
+    input:
+        OUTPUT_DIR / "all_samples.vcf",
+        OUTPUT_DIR / "vcf_stats.txt",
+        OUTPUT_DIR / "paths_in_graph.txt"
+
+# Check paths in the graph first (diagnostic)
+rule check_paths:
+    input:
+        vg=PANGENOME_DIR / "pangenome.vg"
+    output:
+        paths=OUTPUT_DIR / "paths_in_graph.txt"
+    params:
+        mount_dir=str(PANGENOME_DIR.parent.parent.absolute()),
+        user_id=USER_ID,
+        group_id=GROUP_ID
+    shell:
+        """
+        mkdir -p $(dirname {output.paths})
+        
+        docker run --rm \
+            --user {params.user_id}:{params.group_id} \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {VG_DOCKER} \
+            vg paths -v /data/test/pangenome/pangenome.vg -L > /data/test/vcf_from_pangenome/paths_in_graph.txt
+        
+        echo "Paths found in graph:" >&2
+        cat {output.paths} >&2
+        """
+
+# Create XG index from pangenome
+rule create_xg_index:
+    input:
+        vg=PANGENOME_DIR / "pangenome.vg"
+    output:
+        xg=OUTPUT_DIR / "pangenome.xg"
+    log:
+        OUTPUT_DIR / "logs" / "create_xg.log"
+    params:
+        mount_dir=str(PANGENOME_DIR.parent.parent.absolute()),
+        user_id=USER_ID,
+        group_id=GROUP_ID
+    threads: config.get("threads", 4)
+    shell:
+        """
+        echo "Creating XG index..." > {log}
+        echo "Input VG: {input.vg}" >> {log}
+        echo "Output XG: {output.xg}" >> {log}
+        
+        docker run --rm \
+            --user {params.user_id}:{params.group_id} \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {VG_DOCKER} \
+            vg index -x /data/test/vcf_from_pangenome/pangenome.xg \
+                     -t {threads} \
+                     /data/test/pangenome/pangenome.vg 2>> {log}
+        """
+
+# Find snarls (variant sites) in the graph
+rule find_snarls:
+    input:
+        vg=PANGENOME_DIR / "pangenome.vg"
+    output:
+        snarls=OUTPUT_DIR / "pangenome.snarls"
+    log:
+        OUTPUT_DIR / "logs" / "find_snarls.log"
+    params:
+        mount_dir=str(PANGENOME_DIR.parent.parent.absolute()),
+        user_id=USER_ID,
+        group_id=GROUP_ID
+    shell:
+        """
+        echo "Finding snarls..." > {log}
+        
+        docker run --rm \
+            --user {params.user_id}:{params.group_id} \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {VG_DOCKER} \
+            vg snarls /data/test/pangenome/pangenome.vg > /data/test/vcf_from_pangenome/pangenome.snarls 2>> {log}
+        """
+
+# Create GBWT index from embedded paths
+rule create_gbwt:
+    input:
+        vg=PANGENOME_DIR / "pangenome.vg",
+        xg=OUTPUT_DIR / "pangenome.xg"
+    output:
+        gbwt=OUTPUT_DIR / "pangenome.gbwt"
+    log:
+        OUTPUT_DIR / "logs" / "create_gbwt.log"
+    params:
+        mount_dir=str(PANGENOME_DIR.parent.parent.absolute()),
+        user_id=USER_ID,
+        group_id=GROUP_ID
+    threads: config.get("threads", 4)
+    shell:
+        """
+        echo "Creating GBWT index..." > {log}
+        
+        # Use Docker with a temporary directory
+        docker run --rm \
+            --user {params.user_id}:{params.group_id} \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {VG_DOCKER} \
+            bash -c 'cd /data && \
+                     vg paths -v test/pangenome/pangenome.vg -X > paths.gam && \
+                     vg gbwt -o test/vcf_from_pangenome/pangenome.gbwt -E -x test/vcf_from_pangenome/pangenome.xg paths.gam && \
+                     rm paths.gam' 2>> {log}
+        """
+
+# Call variants for each sample against reference
+rule call_sample_variants:
+    input:
+        vg=PANGENOME_DIR / "pangenome.vg",
+        xg=OUTPUT_DIR / "pangenome.xg",
+        snarls=OUTPUT_DIR / "pangenome.snarls",
+        gbwt=OUTPUT_DIR / "pangenome.gbwt"
+    output:
+        vcf=OUTPUT_DIR / "per_sample" / "{sample}.vcf"
+    log:
+        OUTPUT_DIR / "logs" / "call_{sample}.log"
+    params:
+        mount_dir=str(PANGENOME_DIR.parent.parent.absolute()),
+        ref_sample=REFERENCE_NAME,
+        user_id=USER_ID,
+        group_id=GROUP_ID
+    threads: 2
+    shell:
+        """
+        mkdir -p $(dirname {output.vcf})
+        
+        echo "Calling variants for {wildcards.sample}..." > {log}
+        
+        # Call variants for this sample
+        docker run --rm \
+            --user {params.user_id}:{params.group_id} \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {VG_DOCKER} \
+            vg call test/vcf_from_pangenome/pangenome.xg \
+                -k test/pangenome/pangenome.vg \
+                -r test/vcf_from_pangenome/pangenome.snarls \
+                -g test/vcf_from_pangenome/pangenome.gbwt \
+                -s {params.ref_sample} \
+                -S {wildcards.sample} \
+                -t {threads} \
+                > test/vcf_from_pangenome/per_sample/{wildcards.sample}.vcf 2>> {log}
+        """
+
+# Merge individual VCFs
+rule merge_vcfs:
+    input:
+        vcfs=expand(OUTPUT_DIR / "per_sample" / "{sample}.vcf", sample=SAMPLES)
+    output:
+        merged=OUTPUT_DIR / "all_samples.vcf"
+    log:
+        OUTPUT_DIR / "logs" / "merge_vcfs.log"
+    shell:
+        """
+        echo "Merging VCF files..." > {log}
+        
+        # First check if VCFs have content
+        echo "Checking VCF files..." >> {log}
+        for vcf in {input.vcfs}; do
+            echo -n "$vcf: " >> {log}
+            if [ -f "$vcf" ]; then
+                grep -v '^#' "$vcf" | wc -l >> {log} || echo "0" >> {log}
+            else
+                echo "missing" >> {log}
+            fi
+        done
+        
+        # Compress and index each VCF
+        for vcf in {input.vcfs}; do
+            if [ -f "$vcf" ] && [ -s "$vcf" ]; then
+                bgzip -c "$vcf" > "$vcf.gz" 2>> {log}
+                tabix -p vcf "$vcf.gz" 2>> {log}
+            fi
+        done
+        
+        # Count valid VCF files
+        VALID_VCFS=$(ls {input.vcfs} 2>/dev/null | while read vcf; do [ -s "$vcf.gz" ] && echo "$vcf.gz"; done | wc -l)
+        
+        if [ "$VALID_VCFS" -gt 1 ]; then
+            # Multiple VCFs, merge them
+            bcftools merge $(ls {input.vcfs} | sed 's/$/.gz/g' | tr '\n' ' ') \
+                -o {output.merged} 2>> {log}
+        elif [ "$VALID_VCFS" -eq 1 ]; then
+            # Only one VCF
+            zcat $(ls {input.vcfs} | head -1).gz > {output.merged}
+        else
+            # No valid VCFs, create empty VCF
+            echo "##fileformat=VCFv4.3" > {output.merged}
+            echo "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO" >> {output.merged}
+        fi
+        
+        # Clean up compressed files
+        for vcf in {input.vcfs}; do
+            rm -f "$vcf.gz" "$vcf.gz.tbi" 2>/dev/null || true
+        done
+        """
+
+# Generate statistics
+rule vcf_stats:
+    input:
+        merged=OUTPUT_DIR / "all_samples.vcf",
+        per_sample=expand(OUTPUT_DIR / "per_sample" / "{sample}.vcf", sample=SAMPLES),
+        paths=OUTPUT_DIR / "paths_in_graph.txt"
+    output:
+        stats=OUTPUT_DIR / "vcf_stats.txt"
+    shell:
+        """
+        echo "=== VCF Generation Statistics ===" > {output.stats}
+        echo "Generated: $(date)" >> {output.stats}
+        echo "" >> {output.stats}
+        
+        echo "=== Paths in pangenome graph ===" >> {output.stats}
+        if [ -f {input.paths} ]; then
+            cat {input.paths} >> {output.stats}
+        else
+            echo "Path file not found" >> {output.stats}
+        fi
+        echo "" >> {output.stats}
+        
+        echo "=== Overall variant statistics ===" >> {output.stats}
+        if [ -s {input.merged} ]; then
+            total_variants=$(grep -v '^#' {input.merged} | wc -l)
+            echo "Total variants called: $total_variants" >> {output.stats}
+            echo "" >> {output.stats}
+            bcftools stats {input.merged} 2>/dev/null | grep -E "^SN" >> {output.stats} || true
+        else
+            echo "No variants in merged VCF" >> {output.stats}
+        fi
+        
+        echo -e "\n=== Per-sample variant counts ===" >> {output.stats}
+        for vcf in {input.per_sample}; do
+            sample=$(basename "$vcf" .vcf)
+            if [ -f "$vcf" ] && [ -s "$vcf" ]; then
+                count=$(grep -v '^#' "$vcf" | wc -l)
+            else
+                count=0
+            fi
+            echo "$sample: $count variants" >> {output.stats}
+        done
+        
+        echo -e "\n=== First few variants ===" >> {output.stats}
+        if [ -s {input.merged} ]; then
+            echo "First 5 variants:" >> {output.stats}
+            grep -v '^#' {input.merged} | head -5 >> {output.stats} || echo "No variants to show" >> {output.stats}
+        fi
+        """

@@ -1,6 +1,7 @@
 import os
 import glob
 from pathlib import Path
+import sys
 
 # Load config
 configfile: "config.yaml"
@@ -17,183 +18,237 @@ OUTPUT_DIR = Path(config["output_dir"]).resolve()
 # Create output directory
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Docker image
+VG_DOCKER = "quay.io/vgteam/vg:v1.65.0"
+
+# Get current user ID and group ID for Docker
+USER_ID = os.getuid()
+GROUP_ID = os.getgid()
+
+# Find all variant FASTA files
+VARIANT_FASTAS = sorted(glob.glob(str(VARIANTS_DIR / "set_*_genome.fa")))
+SAMPLE_NAMES = [Path(f).stem.replace("_genome", "") for f in VARIANT_FASTAS]
+
+print(f"Found {len(VARIANT_FASTAS)} variant FASTA files")
+print(f"Samples: {SAMPLE_NAMES}")
+
+if not VARIANT_FASTAS:
+    print("ERROR: No variant FASTA files found!")
+    print(f"Looking in: {VARIANTS_DIR}")
+    print(f"Pattern: set_*_genome.fa")
+    sys.exit(1)
+
 # Final outputs
 rule all:
     input:
-        OUTPUT_DIR / "graph.gfa",
-        OUTPUT_DIR / "graph.vg",
-        OUTPUT_DIR / "variants.vcf",
-        OUTPUT_DIR / "graph_stats.txt",
-        OUTPUT_DIR / "graph_stats.json"
+        OUTPUT_DIR / "pangenome.gfa",
+        OUTPUT_DIR / "pangenome_stats.txt",
+        OUTPUT_DIR / "sample_alignments.paf"
 
-# Index reference genome
-rule index_reference:
+# Create combined FASTA with all sequences
+rule combine_sequences:
+    input:
+        ref=REFERENCE,
+        variants=VARIANT_FASTAS
+    output:
+        combined=OUTPUT_DIR / "all_sequences.fa"
+    log:
+        OUTPUT_DIR / "logs" / "combine_sequences.log"
+    run:
+        with open(str(output.combined), 'w') as out:
+            # Add reference with clear naming
+            print(f"Adding reference: {input.ref}", file=open(str(log), 'w'))
+            with open(str(input.ref)) as f:
+                for line in f:
+                    if line.startswith('>'):
+                        out.write('>reference\n')
+                    else:
+                        out.write(line)
+            
+            # Add each variant
+            for i, var_path in enumerate(input.variants):
+                sample = SAMPLE_NAMES[i]
+                print(f"Adding sample {sample}: {var_path}", file=open(str(log), 'a'))
+                with open(var_path) as f:
+                    for line in f:
+                        if line.startswith('>'):
+                            out.write(f'>{sample}\n')
+                        else:
+                            out.write(line)
+
+# Create all-vs-all alignment (no Docker needed)
+rule align_all:
+    input:
+        seqs=OUTPUT_DIR / "all_sequences.fa"
+    output:
+        paf=OUTPUT_DIR / "sample_alignments.paf"
+    threads: config.get("threads", 4)
+    log:
+        OUTPUT_DIR / "logs" / "align_all.log"
+    shell:
+        """
+        minimap2 -x asm20 -X -c -t {threads} {input.seqs} {input.seqs} > {output.paf} 2> {log}
+        echo "Alignment complete. Lines in PAF:" >> {log}
+        wc -l {output.paf} >> {log}
+        """
+
+# Build pangenome using vg with Docker
+rule build_pangenome:
+    input:
+        seqs=OUTPUT_DIR / "all_sequences.fa"
+    output:
+        vg=OUTPUT_DIR / "pangenome.vg",
+        gfa=OUTPUT_DIR / "pangenome.gfa"
+    threads: config.get("threads", 4)
+    log:
+        OUTPUT_DIR / "logs" / "build_pangenome.log"
+    params:
+        # Get parent directory for mounting
+        mount_dir=str(OUTPUT_DIR.parent.parent.absolute())
+    shell:
+        """
+        # Build graph using msga with Docker
+        echo "Building pangenome graph with Docker..." > {log}
+        
+        # Create relative paths for Docker
+        REL_SEQS=$(realpath --relative-to={params.mount_dir} {input.seqs})
+        REL_VG=$(realpath --relative-to={params.mount_dir} {output.vg})
+        REL_GFA=$(realpath --relative-to={params.mount_dir} {output.gfa})
+        
+        # Run vg msga in Docker
+        docker run --rm \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {VG_DOCKER} \
+            vg msga -f $REL_SEQS -k 32 -B 128 -t {threads} > {output.vg} 2>> {log}
+        
+        # Convert to GFA
+        echo "Converting to GFA..." >> {log}
+        docker run --rm \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {VG_DOCKER} \
+            vg view -g $REL_VG > {output.gfa} 2>> {log}
+        """
+
+# Alternative: Build using reference + single-sample VCFs
+rule build_ref_graph:
     input:
         ref=REFERENCE
     output:
-        fai=str(REFERENCE) + ".fai"
-    conda:
-        "envs/pangenome.yaml"
+        vg=OUTPUT_DIR / "ref_graph.vg"
     log:
-        OUTPUT_DIR / "logs" / "index_reference.log"
+        OUTPUT_DIR / "logs" / "ref_graph.log"
+    params:
+        mount_dir=str(OUTPUT_DIR.parent.parent.absolute())
     shell:
-        "samtools faidx {input.ref} 2> {log}"
+        """
+        REL_REF=$(realpath --relative-to={params.mount_dir} {input.ref})
+        REL_VG=$(realpath --relative-to={params.mount_dir} {output.vg})
+        
+        docker run --rm \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {VG_DOCKER} \
+            vg construct -r $REL_REF -m 32 > {output.vg} 2> {log}
+        """
 
-# Convert variant descriptions to VCF
-rule variants_to_vcf:
+# Call variants for each sample individually
+rule align_and_call_sample:
     input:
         ref=REFERENCE,
-        ref_idx=str(REFERENCE) + ".fai",
-        variants_dir=VARIANTS_DIR
+        sample=VARIANTS_DIR / "{sample}_genome.fa"
     output:
-        vcf=OUTPUT_DIR / "variants.vcf"
+        bam=OUTPUT_DIR / "alignments" / "{sample}.bam",
+        vcf=OUTPUT_DIR / "vcf_singles" / "{sample}.vcf"
+    threads: 2
+    log:
+        OUTPUT_DIR / "logs" / "call_{sample}.log"
+    shell:
+        """
+        mkdir -p $(dirname {output.bam}) $(dirname {output.vcf})
+        
+        # Align with minimap2
+        minimap2 -a -x asm20 --cs {input.ref} {input.sample} 2> {log} | \
+        samtools sort -o {output.bam} 2>> {log}
+        samtools index {output.bam}
+        
+        # Call variants
+        bcftools mpileup -Ou -f {input.ref} {output.bam} 2>> {log} | \
+        bcftools call -mv -Ov -o {output.vcf} 2>> {log}
+        """
+
+# Build graph with each single-sample VCF
+rule build_sample_graph:
+    input:
+        ref_graph=OUTPUT_DIR / "ref_graph.vg",
+        vcf=OUTPUT_DIR / "vcf_singles" / "{sample}.vcf"
+    output:
+        vg=OUTPUT_DIR / "sample_graphs" / "{sample}.vg"
+    log:
+        OUTPUT_DIR / "logs" / "graph_{sample}.log"
     params:
-        script=PROJECT_ROOT / "scripts" / "test_data" / "variants_to_vcf.py"
-    conda:
-        "envs/pangenome.yaml"
-    log:
-        OUTPUT_DIR / "logs" / "variants_to_vcf.log"
+        mount_dir=str(OUTPUT_DIR.parent.parent.absolute())
     shell:
         """
-        python {params.script} \
-            --variants-dir {input.variants_dir} \
-            --reference {input.ref} \
-            --output {output.vcf} 2> {log}
+        mkdir -p $(dirname {output.vg})
+        
+        REL_GRAPH=$(realpath --relative-to={params.mount_dir} {input.ref_graph})
+        REL_VCF=$(realpath --relative-to={params.mount_dir} {input.vcf})
+        REL_OUT=$(realpath --relative-to={params.mount_dir} {output.vg})
+        
+        # Check if VCF has variants
+        if grep -v '^#' {input.vcf} | head -1 | grep -q .; then
+            docker run --rm \
+                -v {params.mount_dir}:/data \
+                -w /data \
+                {VG_DOCKER} \
+                vg mod -v $REL_VCF $REL_GRAPH > {output.vg} 2> {log}
+        else
+            cp {input.ref_graph} {output.vg}
+            echo "No variants for {wildcards.sample}" >> {log}
+        fi
         """
 
-# Sort and index VCF
-rule sort_vcf:
-    input:
-        vcf=OUTPUT_DIR / "variants.vcf"
-    output:
-        sorted_vcf=OUTPUT_DIR / "variants.sorted.vcf",
-        index=OUTPUT_DIR / "variants.sorted.vcf.gz.tbi"
-    conda:
-        "envs/pangenome.yaml"
-    log:
-        OUTPUT_DIR / "logs" / "sort_vcf.log"
-    shell:
-        """
-        bcftools sort {input.vcf} -o {output.sorted_vcf} 2> {log}
-        bgzip -c {output.sorted_vcf} > {output.sorted_vcf}.gz
-        tabix -p vcf {output.sorted_vcf}.gz
-        """
-
-# Construct VG graph
-rule construct_vg:
-    input:
-        ref=REFERENCE,
-        vcf=OUTPUT_DIR / "variants.sorted.vcf"
-    output:
-        vg=OUTPUT_DIR / "graph.vg"
-    params:
-        node_length=config.get("min_node_length", 32),
-        opts=config.get("vg_construct_opts", "")
-    conda:
-        "envs/pangenome.yaml"
-    threads: config.get("threads", 4)
-    log:
-        OUTPUT_DIR / "logs" / "construct_vg.log"
-    benchmark:
-        OUTPUT_DIR / "benchmarks" / "construct_vg.txt"
-    shell:
-        """
-        vg construct \
-            -r {input.ref} \
-            -v {input.vcf} \
-            -m {params.node_length} \
-            -t {threads} \
-            -p \
-            {params.opts} \
-            > {output.vg} 2> {log}
-        """
-
-# Export to GFA format
-rule export_gfa:
-    input:
-        vg=OUTPUT_DIR / "graph.vg"
-    output:
-        gfa=OUTPUT_DIR / "graph.gfa"
-    conda:
-        "envs/pangenome.yaml"
-    log:
-        OUTPUT_DIR / "logs" / "export_gfa.log"
-    shell:
-        "vg view -g {input.vg} > {output.gfa} 2> {log}"
-
-# Generate graph statistics
+# Generate statistics
 rule graph_stats:
     input:
-        vg=OUTPUT_DIR / "graph.vg"
+        vg=OUTPUT_DIR / "pangenome.vg",
+        gfa=OUTPUT_DIR / "pangenome.gfa",
+        paf=OUTPUT_DIR / "sample_alignments.paf"
     output:
-        stats=OUTPUT_DIR / "graph_stats.txt",
-        json=OUTPUT_DIR / "graph_stats.json"
-    conda:
-        "envs/pangenome.yaml"
-    log:
-        OUTPUT_DIR / "logs" / "graph_stats.log"
+        stats=OUTPUT_DIR / "pangenome_stats.txt"
+    params:
+        mount_dir=str(OUTPUT_DIR.parent.parent.absolute())
     shell:
         """
-        vg stats -z {input.vg} > {output.stats} 2> {log}
-        vg stats -lz {input.vg} > {output.json}
+        echo "=== Pangenome Statistics ===" > {output.stats}
+        echo "" >> {output.stats}
+        
+        echo "Graph structure:" >> {output.stats}
+        REL_VG=$(realpath --relative-to={params.mount_dir} {input.vg})
+        docker run --rm \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {VG_DOCKER} \
+            vg stats -z $REL_VG >> {output.stats}
+        
+        echo -e "\nPaths in graph:" >> {output.stats}
+        docker run --rm \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            {VG_DOCKER} \
+            vg paths -v $REL_VG -L >> {output.stats} 2>/dev/null || echo "No paths found" >> {output.stats}
+        
+        echo -e "\nGFA summary:" >> {output.stats}
+        echo -n "Nodes: " >> {output.stats}
+        grep -c '^S' {input.gfa} >> {output.stats} || echo "0" >> {output.stats}
+        echo -n "Edges: " >> {output.stats}
+        grep -c '^L' {input.gfa} >> {output.stats} || echo "0" >> {output.stats}
+        echo -n "Paths: " >> {output.stats}
+        grep -c '^P' {input.gfa} >> {output.stats} || echo "0" >> {output.stats}
+        
+        echo -e "\nAlignment summary:" >> {output.stats}
+        echo -n "Total alignments: " >> {output.stats}
+        wc -l < {input.paf} >> {output.stats}
         """
-
-# Optional: Create XG index
-rule index_xg:
-    input:
-        vg=OUTPUT_DIR / "graph.vg"
-    output:
-        xg=OUTPUT_DIR / "graph.xg"
-    conda:
-        "envs/pangenome.yaml"
-    threads: config.get("threads", 4)
-    log:
-        OUTPUT_DIR / "logs" / "index_xg.log"
-    shell:
-        "vg index -x {output.xg} -t {threads} {input.vg} 2> {log}"
-
-# Optional: Visualize small graphs
-rule visualize_graph:
-    input:
-        vg=OUTPUT_DIR / "graph.vg"
-    output:
-        dot=OUTPUT_DIR / "graph.dot",
-        svg=OUTPUT_DIR / "graph.svg"
-    conda:
-        "envs/pangenome.yaml"
-    log:
-        OUTPUT_DIR / "logs" / "visualize.log"
-    shell:
-        """
-        vg view -d {input.vg} > {output.dot} 2> {log}
-        dot -Tsvg {output.dot} > {output.svg} 2>> {log} || echo "Graph too large for visualization" >> {log}
-        """
-
-# Generate summary report
-rule summary_report:
-    input:
-        stats=OUTPUT_DIR / "graph_stats.txt",
-        json=OUTPUT_DIR / "graph_stats.json",
-        vcf=OUTPUT_DIR / "variants.sorted.vcf",
-        gfa=OUTPUT_DIR / "graph.gfa"
-    output:
-        report=OUTPUT_DIR / "summary_report.txt"
-    run:
-        with open(output.report, 'w') as f:
-            f.write("Pangenome Graph Construction Summary\n")
-            f.write("=" * 50 + "\n\n")
-            
-            # Count variants
-            vcf_lines = sum(1 for line in open(input.vcf) if not line.startswith('#'))
-            f.write(f"Total variants in VCF: {vcf_lines}\n")
-            
-            # Graph size
-            gfa_nodes = sum(1 for line in open(input.gfa) if line.startswith('S\t'))
-            gfa_edges = sum(1 for line in open(input.gfa) if line.startswith('L\t'))
-            f.write(f"Graph nodes: {gfa_nodes}\n")
-            f.write(f"Graph edges: {gfa_edges}\n\n")
-            
-            # Include stats
-            f.write("VG Statistics:\n")
-            with open(input.stats) as stats:
-                f.write(stats.read())

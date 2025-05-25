@@ -1,15 +1,14 @@
 name: pangenome
 channels:
-  - bioconda
   - conda-forge
+  - bioconda
   - defaults
 dependencies:
   - python=3.10
-  - vg=1.50.1
   - samtools=1.17
   - bcftools=1.17
   - tabix
-  - graphviz  # For visualization
+  - graphviz
   - pyfaidx
   - pyyaml
   - pip:

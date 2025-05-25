@@ -1,0 +1,27 @@
+# Configuration for VCF generation from pangenome
+
+# Input pangenome directory (where pangenome.vg is located)
+pangenome_dir: "../../data/test/pangenome"
+
+# Output directory for VCF files
+output_dir: "../../data/test/vcf_from_pangenome"
+
+# Reference path name in the graph
+reference_name: "reference"
+
+# Sample names to call variants for
+# These should match the path names in your pangenome graph
+samples:
+  - set_000
+  - set_001
+  - set_002
+  - set_003
+  - set_004
+  - set_005
+  - set_006
+  - set_007
+  - set_008
+  - set_009
+
+# Number of threads to use
+threads: 4
