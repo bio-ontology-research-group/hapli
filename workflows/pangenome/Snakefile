@@ -216,17 +216,34 @@ rule build_pangenome:
         # Build graph using msga with Docker
         echo "Building pangenome graph with Docker..." > {log}
         
-        # Create relative paths for Docker
-        REL_SEQS=$(realpath --relative-to={params.mount_dir} {input.seqs})
-        REL_VG=$(realpath --relative-to={params.mount_dir} {output.vg})
-        REL_GFA=$(realpath --relative-to={params.mount_dir} {output.gfa})
+        # Get absolute paths
+        ABS_SEQS=$(realpath {input.seqs})
+        ABS_VG=$(realpath -m {output.vg})
+        ABS_GFA=$(realpath -m {output.gfa})
+        
+        # Create relative paths for Docker (relative to mount point)
+        REL_SEQS=$(realpath --relative-to={params.mount_dir} "$ABS_SEQS")
+        REL_VG=$(realpath --relative-to={params.mount_dir} "$ABS_VG")
+        REL_GFA=$(realpath --relative-to={params.mount_dir} "$ABS_GFA")
+        
+        echo "Mount dir: {params.mount_dir}" >> {log}
+        echo "Input sequences: $ABS_SEQS -> $REL_SEQS" >> {log}
+        echo "Output VG: $ABS_VG -> $REL_VG" >> {log}
+        echo "Output GFA: $ABS_GFA -> $REL_GFA" >> {log}
         
         # Run vg msga in Docker
+        echo "Running vg msga..." >> {log}
         docker run --rm \
             -v {params.mount_dir}:/data \
             -w /data \
             {VG_DOCKER} \
-            vg msga -f $REL_SEQS -k 32 -B 128 -t {threads} > $REL_VG 2>> {log}
+            vg msga -f "$REL_SEQS" -k 32 -B 128 -t {threads} > "$REL_VG" 2>> {log}
+        
+        # Check if VG file was created
+        if [ ! -f {output.vg} ]; then
+            echo "ERROR: VG file was not created" >> {log}
+            exit 1
+        fi
         
         # Convert to GFA
         echo "Converting to GFA..." >> {log}
@@ -234,7 +251,15 @@ rule build_pangenome:
             -v {params.mount_dir}:/data \
             -w /data \
             {VG_DOCKER} \
-            vg view -g $REL_VG > $REL_GFA 2>> {log}
+            vg view -g "$REL_VG" > "$REL_GFA" 2>> {log}
+        
+        # Check if GFA file was created
+        if [ ! -f {output.gfa} ]; then
+            echo "ERROR: GFA file was not created" >> {log}
+            exit 1
+        fi
+        
+        echo "Pangenome construction completed successfully" >> {log}
         """
 
 # Alternative: Build using reference + single-sample VCFs
