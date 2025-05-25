@@ -1,0 +1,1 @@
+vg gbwt -o /data/test/vcf_from_pangenome/pangenome.gbwt -E /data/test/pangenome/pangenome.vg

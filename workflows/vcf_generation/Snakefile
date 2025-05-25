@@ -118,8 +118,7 @@ rule find_snarls:
 # Create GBWT index from embedded paths
 rule create_gbwt:
     input:
-        vg=PANGENOME_DIR / "pangenome.vg",
-        xg=OUTPUT_DIR / "pangenome.xg"
+        vg=PANGENOME_DIR / "pangenome.vg"
     output:
         gbwt=OUTPUT_DIR / "pangenome.gbwt"
     log:
@@ -133,16 +132,15 @@ rule create_gbwt:
         """
         echo "Creating GBWT index..." > {log}
         
-        # Use Docker with a temporary directory
+        # Create GBWT from embedded paths in the VG graph
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {VG_DOCKER} \
-            bash -c 'cd /data && \
-                     vg paths -v test/pangenome/pangenome.vg -X > paths.gam && \
-                     vg gbwt -o test/vcf_from_pangenome/pangenome.gbwt -E -x test/vcf_from_pangenome/pangenome.xg paths.gam && \
-                     rm paths.gam' 2>> {log}
+            vg gbwt -o /data/test/vcf_from_pangenome/pangenome.gbwt \
+                    -E \
+                    /data/test/pangenome/pangenome.vg 2>> {log}
         """
 
 # Call variants for each sample against reference
