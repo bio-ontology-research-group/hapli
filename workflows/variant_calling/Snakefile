@@ -257,9 +257,8 @@ rule call_variants:
             
             echo "Using reference path: $REF_PATH" >> {log}
             
-            # Use vg deconstruct with correct syntax:
-            # -p specifies reference path, not -r (which is for snarls file)
-            # Include all paths but use reference as the baseline
+            # Use vg deconstruct to call variants against reference path
+            # This generates a VCF with variants relative to the reference
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
                 --memory=32g \
@@ -269,8 +268,8 @@ rule call_variants:
                 {params.docker_image} \
                 vg deconstruct -p "$REF_PATH" -a -t {threads} "$REL_VG" > {output.vcf} 2>> {log}
         else
-            echo "Reference or haplotype paths not found, using general variant calling..." >> {log}
-            # Fallback to general calling
+            echo "Reference or haplotype paths not found, using vg call with XG index..." >> {log}
+            # Fallback to vg call using XG index and reference
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
                 --memory=32g \
@@ -289,7 +288,7 @@ rule call_variants:
             exit 1
         fi
         
-        # Check if VCF has content
+        # Check if VCF has content and validate format
         if [ ! -s {output.vcf} ]; then
             echo "WARNING: VCF file is empty for {params.sample}" >> {log}
             # Create a minimal VCF header with reference chromosome
@@ -308,6 +307,37 @@ rule call_variants:
             
             echo "##contig=<ID=$REF_CHR>" >> {output.vcf}
             echo "#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	{params.sample}" >> {output.vcf}
+        else
+            # Validate VCF format
+            echo "Validating VCF format..." >> {log}
+            if ! grep -q "^##fileformat=VCF" {output.vcf}; then
+                echo "WARNING: VCF missing proper header, adding minimal header..." >> {log}
+                # Create temporary file with proper header
+                TEMP_VCF={output.vcf}.tmp
+                echo "##fileformat=VCFv4.2" > "$TEMP_VCF"
+                echo "##source=vg" >> "$TEMP_VCF"
+                echo "##reference=file://$REL_REF" >> "$TEMP_VCF"
+                
+                # Get reference chromosome name
+                REF_CHR=$(docker run --rm \
+                    --user {params.user_id}:{params.group_id} \
+                    --memory=1g \
+                    -v {params.mount_dir}:/data \
+                    -w /data \
+                    {params.docker_image} \
+                    sh -c "head -1 '$REL_REF' | sed 's/^>//' | cut -d' ' -f1")
+                
+                echo "##contig=<ID=$REF_CHR>" >> "$TEMP_VCF"
+                
+                # Add header line if missing
+                if ! grep -q "^#CHROM" {output.vcf}; then
+                    echo "#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	{params.sample}" >> "$TEMP_VCF"
+                fi
+                
+                # Append original content (skip any existing headers)
+                grep -v "^#" {output.vcf} >> "$TEMP_VCF" || true
+                mv "$TEMP_VCF" {output.vcf}
+            fi
         fi
         
         echo "Variant calling completed for {params.sample}" >> {log}
@@ -317,6 +347,8 @@ rule call_variants:
         grep -v '^#' {output.vcf} | wc -l >> {log}
         echo "First few variants:" >> {log}
         grep -v '^#' {output.vcf} | head -5 >> {log}
+        echo "VCF header:" >> {log}
+        grep '^#' {output.vcf} | head -10 >> {log}
         """
 
 # Generate phased VCF for each sample using proper phasing
@@ -427,7 +459,8 @@ rule phase_variants:
             REL_TEMP_VCF=$(realpath --relative-to={params.mount_dir} {output.temp_vcf})
             REL_FINAL_VCF=$(realpath --relative-to={params.mount_dir} {output.phased_vcf})
             
-            # Use a single docker run command to execute both vg deconstruct and the python script
+            # First, run vg deconstruct to get raw VCF with all paths
+            echo "Running vg deconstruct to generate raw phased VCF..." >> {log}
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
                 --memory=32g \
@@ -435,8 +468,24 @@ rule phase_variants:
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
-                bash -c "vg deconstruct -p \"$REF_PATH\" -a -t {threads} \"$REL_VG\" > \"$REL_TEMP_VCF\" 2>> {log} && python \"$REL_SCRIPT\" \"$REL_TEMP_VCF\" \"$REL_FINAL_VCF\" \"{params.sample}\" \"$HAP1_PATH\" \"$HAP2_PATH\" 2>> {log}"
-            # Removed manual rm -f, Snakemake's temp() will handle cleanup
+                vg deconstruct -p "$REF_PATH" -a -t {threads} "$REL_VG" > {output.temp_vcf} 2>> {log}
+            
+            # Check if temp VCF was created
+            if [ ! -f {output.temp_vcf} ]; then
+                echo "ERROR: Temporary VCF file was not created" >> {log}
+                exit 1
+            fi
+            
+            # Check if Python script exists
+            if [ ! -f {params.mount_dir}/$REL_SCRIPT ]; then
+                echo "WARNING: Python phasing script not found at {params.mount_dir}/$REL_SCRIPT" >> {log}
+                echo "Copying raw VCF as phased VCF..." >> {log}
+                cp {output.temp_vcf} {output.phased_vcf}
+            else
+                # Use Python script to fix phasing
+                echo "Running Python script to fix phasing..." >> {log}
+                python {params.mount_dir}/$REL_SCRIPT {output.temp_vcf} {output.phased_vcf} {params.sample} $HAP1_PATH $HAP2_PATH 2>> {log}
+            fi
             
         elif [ "$REF_EXISTS" = true ] && ([ "$HAP1_EXISTS" = true ] || [ "$HAP2_EXISTS" = true ]); then
             echo "Using vg deconstruct with available haplotype path..." >> {log}
@@ -490,6 +539,8 @@ rule phase_variants:
         grep -v '^#' {output.phased_vcf} | wc -l >> {log}
         echo "First few phased variants:" >> {log}
         grep -v '^#' {output.phased_vcf} | head -5 >> {log}
+        echo "Phased VCF header:" >> {log}
+        grep '^#' {output.phased_vcf} | head -10 >> {log}
         """
 
 # Generate calling statistics
@@ -499,8 +550,14 @@ rule calling_stats:
         phased_vcfs=expand(os.path.join(OUTPUT_DIR, "{sample}_phased.vcf"), sample=SAMPLE_NAMES)
     output:
         stats=os.path.join(OUTPUT_DIR, "calling_stats.txt")
+    log:
+        os.path.join(OUTPUT_DIR, "logs", "calling_stats.log")
     shell:
         """
+        mkdir -p $(dirname {log})
+        
+        echo "Generating calling statistics..." > {log}
+        
         echo "=== Variant Calling Statistics ===" > {output.stats}
         echo "" >> {output.stats}
         
@@ -509,6 +566,7 @@ rule calling_stats:
             sample=$(basename "$vcf" .vcf)
             count=$(grep -v '^#' "$vcf" | wc -l)
             echo "$sample: $count variants" >> {output.stats}
+            echo "  $sample: $count variants" >> {log}
         done
         
         echo "" >> {output.stats}
@@ -518,6 +576,7 @@ rule calling_stats:
             count=$(grep -v '^#' "$vcf" | wc -l)
             phased_count=$(grep -v '^#' "$vcf" | grep -c '|' || echo "0")
             echo "$sample: $count variants ($phased_count phased)" >> {output.stats}
+            echo "  $sample: $count variants ($phased_count phased)" >> {log}
         done
         
         echo "" >> {output.stats}
@@ -526,14 +585,18 @@ rule calling_stats:
         total_phased=$(cat {input.phased_vcfs} | grep -v '^#' | wc -l)
         echo "Unphased: $total_variants" >> {output.stats}
         echo "Phased: $total_phased" >> {output.stats}
+        echo "Total unphased: $total_variants" >> {log}
+        echo "Total phased: $total_phased" >> {log}
         
         echo "" >> {output.stats}
         echo "Sample details:" >> {output.stats}
         for vcf in {input.phased_vcfs}; do
             sample=$(basename "$vcf" _phased.vcf)
             echo "=== $sample ===" >> {output.stats}
-            echo "Chromosomes in VCF:" >> {log}
+            echo "Chromosomes in VCF:" >> {output.stats}
             grep -v '^#' "$vcf" | cut -f1 | sort | uniq -c >> {output.stats} || echo "No variants" >> {output.stats}
             echo "" >> {output.stats}
         done
+        
+        echo "Statistics generation completed" >> {log}
         """
