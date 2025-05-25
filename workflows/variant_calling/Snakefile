@@ -234,8 +234,8 @@ rule call_all_variants:
             echo "Using vg deconstruct with reference as baseline..." >> {log}
             
             # Use vg deconstruct to call variants against reference path
-            # Add -e flag to include all edges and -a flag to include all alleles
-            # Add -H flag to include haplotype information
+            # Remove deprecated flags -e and -H, use -a for all snarls
+            echo "Running: vg deconstruct -p $REF_PATH -a -t {threads} $REL_VG" >> {log}
             docker run --rm \
                 --user {params.user_id}:{params.group_id} \
                 --memory=32g \
@@ -243,7 +243,7 @@ rule call_all_variants:
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
-                vg deconstruct -p "$REF_PATH" -e -a -H -t {threads} "$REL_VG" > {output.multi_vcf} 2>> {log}
+                vg deconstruct -p "$REF_PATH" -a -t {threads} "$REL_VG" > {output.multi_vcf} 2>> {log}
         else
             echo "Reference path not found, using vg call with XG index..." >> {log}
             # Fallback to vg call using XG index and reference
