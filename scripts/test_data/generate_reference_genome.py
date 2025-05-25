@@ -7,12 +7,18 @@ similar to the human genome (hg38). It generates chromosomes with:
 - Weighted nucleotide selection to match target GC content
 - Repetitive regions (5-10% of each chromosome)
 - N regions representing unknown sequences (1-2% of length)
+- CpG islands with elevated GC content
+- Telomeric repeats at chromosome ends
+- Centromeric regions with tandem repeats
 - Realistic chromosome naming and sizing
 
 Algorithm:
 1. Calculate chromosome lengths using exponential decay
 2. For each chromosome:
    - Generate base sequence with target GC content
+   - Add CpG islands near chromosome start
+   - Add telomeric repeats at chromosome ends
+   - Add centromeric region in the middle
    - Add repetitive regions (simple tandem repeats)
    - Insert N regions randomly
    - Write to FASTA with proper headers
@@ -122,6 +128,153 @@ def generate_weighted_sequence(length: int, gc_content: float) -> str:
     return ''.join(sequence)
 
 
+def add_cpg_islands(sequence: str, chr_length: int) -> str:
+    """
+    Add CpG islands with elevated GC content near chromosome start.
+    
+    Args:
+        sequence: Input DNA sequence
+        chr_length: Total chromosome length
+        
+    Returns:
+        Sequence with CpG islands added
+    """
+    seq_list = list(sequence)
+    
+    # Add 2-5 CpG islands per chromosome
+    num_islands = random.randint(2, 5)
+    
+    # Place within first 10% of chromosome
+    search_region = int(chr_length * 0.1)
+    
+    for _ in range(num_islands):
+        # Island size: 500-2000 bp
+        island_length = random.randint(500, 2000)
+        
+        # Make sure we don't exceed sequence bounds
+        if search_region < island_length:
+            continue
+            
+        # Random position within search region
+        start_pos = random.randint(0, search_region - island_length)
+        
+        # Generate high GC content sequence (70-80%)
+        high_gc_content = random.uniform(0.70, 0.80)
+        island_seq = generate_weighted_sequence(island_length, high_gc_content)
+        
+        # Replace the region
+        for i, nucleotide in enumerate(island_seq):
+            if start_pos + i < len(seq_list):
+                seq_list[start_pos + i] = nucleotide
+    
+    return ''.join(seq_list)
+
+
+def add_telomeric_repeats(sequence: str) -> str:
+    """
+    Add telomeric repeats (TTAGGG) at chromosome ends.
+    
+    Args:
+        sequence: Input DNA sequence
+        
+    Returns:
+        Sequence with telomeric repeats added
+    """
+    seq_list = list(sequence)
+    seq_length = len(sequence)
+    
+    # Number of repeats at each end: 50-200
+    num_repeats_start = random.randint(50, 200)
+    num_repeats_end = random.randint(50, 200)
+    
+    # Telomeric repeat motif
+    telomere_motif = "TTAGGG"
+    
+    # Add to start of chromosome
+    start_length = min(num_repeats_start * len(telomere_motif), seq_length // 4)
+    start_seq = (telomere_motif * (start_length // len(telomere_motif) + 1))[:start_length]
+    
+    # Add some degenerate copies (5% chance of mutation per base)
+    start_seq_list = list(start_seq)
+    for i in range(len(start_seq_list)):
+        if random.random() < 0.05:  # 5% mutation rate
+            start_seq_list[i] = random.choice(['A', 'T', 'G', 'C'])
+    start_seq = ''.join(start_seq_list)
+    
+    # Replace start region
+    for i, nucleotide in enumerate(start_seq):
+        if i < len(seq_list):
+            seq_list[i] = nucleotide
+    
+    # Add to end of chromosome
+    end_length = min(num_repeats_end * len(telomere_motif), seq_length // 4)
+    end_seq = (telomere_motif * (end_length // len(telomere_motif) + 1))[:end_length]
+    
+    # Add some degenerate copies
+    end_seq_list = list(end_seq)
+    for i in range(len(end_seq_list)):
+        if random.random() < 0.05:  # 5% mutation rate
+            end_seq_list[i] = random.choice(['A', 'T', 'G', 'C'])
+    end_seq = ''.join(end_seq_list)
+    
+    # Replace end region
+    start_pos = seq_length - end_length
+    for i, nucleotide in enumerate(end_seq):
+        if start_pos + i < len(seq_list):
+            seq_list[start_pos + i] = nucleotide
+    
+    return ''.join(seq_list)
+
+
+def add_centromeric_region(sequence: str, chr_length: int) -> str:
+    """
+    Add centromeric region with tandem repeats and Ns.
+    
+    Args:
+        sequence: Input DNA sequence
+        chr_length: Total chromosome length
+        
+    Returns:
+        Sequence with centromeric region added
+    """
+    seq_list = list(sequence)
+    
+    # Centromere size: 1-5% of chromosome length
+    centromere_fraction = random.uniform(0.01, 0.05)
+    centromere_length = int(chr_length * centromere_fraction)
+    
+    # Position: 40-60% of chromosome length
+    center_position = random.uniform(0.40, 0.60)
+    start_pos = int(chr_length * center_position - centromere_length // 2)
+    start_pos = max(0, min(start_pos, chr_length - centromere_length))
+    
+    # Centromeric repeat motifs (alpha satellite-like)
+    centromere_motifs = ["ATATACATAG", "CATTCCATTC", "AATCAACCC", "TTCCATTCCATTC"]
+    
+    # Fill centromere with repeats and Ns
+    centromere_seq = []
+    pos = 0
+    while pos < centromere_length:
+        if random.random() < 0.3:  # 30% chance of N region
+            n_length = min(random.randint(5, 50), centromere_length - pos)
+            centromere_seq.extend(['N'] * n_length)
+            pos += n_length
+        else:
+            # Add tandem repeat
+            motif = random.choice(centromere_motifs)
+            repeat_length = min(random.randint(20, 200), centromere_length - pos)
+            repeat_seq = (motif * (repeat_length // len(motif) + 1))[:repeat_length]
+            centromere_seq.extend(list(repeat_seq))
+            pos += repeat_length
+    
+    # Replace the centromeric region
+    for i, nucleotide in enumerate(centromere_seq):
+        if start_pos + i < len(seq_list):
+            seq_list[start_pos + i] = nucleotide
+    
+    return ''.join(seq_list)
+
+
 def add_repetitive_regions(sequence: str, repeat_fraction: float = 0.075) -> str:
     """
     Add repetitive regions to simulate tandem repeats.
@@ -199,7 +352,9 @@ def add_n_regions(sequence: str, n_fraction: float = 0.015) -> str:
     return ''.join(seq_list)
 
 
-def generate_chromosome(name: str, length: int, gc_content: float) -> SeqRecord:
+def generate_chromosome(name: str, length: int, gc_content: float, 
+                       add_cpg_islands: bool = True, add_telomeres: bool = True, 
+                       add_centromeres: bool = True) -> SeqRecord:
     """
     Generate a single chromosome with realistic features.
     
@@ -207,6 +362,9 @@ def generate_chromosome(name: str, length: int, gc_content: float) -> SeqRecord:
         name: Chromosome name
         length: Chromosome length in bp
         gc_content: Target GC content
+        add_cpg_islands: Whether to add CpG islands
+        add_telomeres: Whether to add telomeric repeats
+        add_centromeres: Whether to add centromeric regions
         
     Returns:
         SeqRecord object representing the chromosome
@@ -216,17 +374,36 @@ def generate_chromosome(name: str, length: int, gc_content: float) -> SeqRecord:
     # Generate base sequence
     sequence = generate_weighted_sequence(length, gc_content)
     
+    # Add realistic genomic features
+    if add_cpg_islands:
+        sequence = add_cpg_islands(sequence, length)
+    
+    if add_telomeres:
+        sequence = add_telomeric_repeats(sequence)
+    
+    if add_centromeres:
+        sequence = add_centromeric_region(sequence, length)
+    
     # Add repetitive regions
     sequence = add_repetitive_regions(sequence)
     
     # Add N regions
     sequence = add_n_regions(sequence)
     
-    # Create SeqRecord with metadata
+    # Create chromosome number for header
+    chr_num = name.replace('chr', '')
+    if chr_num.isdigit():
+        chr_description = f"Homo sapiens chromosome {chr_num}, Test Assembly"
+    elif chr_num in ['X', 'Y', 'M']:
+        chr_description = f"Homo sapiens chromosome {chr_num}, Test Assembly"
+    else:
+        chr_description = f"Homo sapiens chromosome {chr_num}, Test Assembly"
+    
+    # Create SeqRecord with hg38-like metadata
     seq_record = SeqRecord(
         Seq(sequence),
         id=name,
-        description=f"Synthetic chromosome {name} | length={length} | assembly=synthetic_hg38"
+        description=f"{chr_description} (length={len(sequence)})"
     )
     
     return seq_record
@@ -281,6 +458,48 @@ def main():
         help="Random seed for reproducibility"
     )
     
+    parser.add_argument(
+        "--add-cpg-islands",
+        action="store_true",
+        default=True,
+        help="Add CpG islands with elevated GC content"
+    )
+    
+    parser.add_argument(
+        "--no-cpg-islands",
+        action="store_false",
+        dest="add_cpg_islands",
+        help="Do not add CpG islands"
+    )
+    
+    parser.add_argument(
+        "--add-telomeres",
+        action="store_true",
+        default=True,
+        help="Add telomeric repeats at chromosome ends"
+    )
+    
+    parser.add_argument(
+        "--no-telomeres",
+        action="store_false",
+        dest="add_telomeres",
+        help="Do not add telomeric repeats"
+    )
+    
+    parser.add_argument(
+        "--add-centromeres",
+        action="store_true",
+        default=True,
+        help="Add centromeric regions with tandem repeats"
+    )
+    
+    parser.add_argument(
+        "--no-centromeres",
+        action="store_false",
+        dest="add_centromeres",
+        help="Do not add centromeric regions"
+    )
+    
     args = parser.parse_args()
     
     # Setup
@@ -311,12 +530,16 @@ def main():
     logging.info(f"Generating {args.num_chromosomes} chromosomes")
     logging.info(f"Total genome size: {sum(chr_lengths):,} bp")
     logging.info(f"Target GC content: {args.gc_content:.1%}")
+    logging.info(f"Features: CpG islands={args.add_cpg_islands}, Telomeres={args.add_telomeres}, Centromeres={args.add_centromeres}")
     logging.info(f"Output file: {args.output}")
     
     # Generate chromosomes
     chromosomes = []
     for name, length in zip(chr_names, chr_lengths):
-        chromosome = generate_chromosome(name, length, args.gc_content)
+        chromosome = generate_chromosome(
+            name, length, args.gc_content,
+            args.add_cpg_islands, args.add_telomeres, args.add_centromeres
+        )
         chromosomes.append(chromosome)
     
     # Write to FASTA file
@@ -329,11 +552,13 @@ def main():
     # Report statistics
     total_length = sum(len(chr.seq) for chr in chromosomes)
     total_gc = sum(chr.seq.count('G') + chr.seq.count('C') for chr in chromosomes)
-    actual_gc_content = total_gc / total_length if total_length > 0 else 0
+    total_n = sum(chr.seq.count('N') for chr in chromosomes)
+    actual_gc_content = total_gc / (total_length - total_n) if (total_length - total_n) > 0 else 0
     
     logging.info(f"Final statistics:")
     logging.info(f"  Total length: {total_length:,} bp")
     logging.info(f"  Actual GC content: {actual_gc_content:.1%}")
+    logging.info(f"  N content: {total_n / total_length:.1%}")
     logging.info(f"  Chromosomes: {len(chromosomes)}")
 
 
