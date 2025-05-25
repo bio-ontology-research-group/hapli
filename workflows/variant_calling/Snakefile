@@ -22,6 +22,9 @@ GROUP_ID = os.getgid()
 # Create output directory
 Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 
+# Get the workflow directory (where this Snakefile is located)
+WORKFLOW_DIR = Path(workflow.snakefile).parent
+
 # Final outputs - one VCF per sample
 rule all:
     input:
@@ -300,7 +303,7 @@ rule call_variants:
         sample="{sample}",
         user_id=USER_ID,
         group_id=GROUP_ID,
-        script_path=os.path.join(Path(__file__).parent, "convert_haplotypes.py")
+        script_path=os.path.join(WORKFLOW_DIR, "convert_haplotypes.py")
     shell:
         """
         mkdir -p $(dirname {log})
