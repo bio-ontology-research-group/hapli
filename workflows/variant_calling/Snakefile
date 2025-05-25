@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from snakemake.io import temp # Import temp function
 
 # Load config - all paths and parameters will come from config
 configfile: "config.yaml"
@@ -326,7 +327,9 @@ rule phase_variants:
         xg=os.path.join(OUTPUT_DIR, "pangenome.xg"),
         reference=REFERENCE
     output:
-        phased_vcf=os.path.join(OUTPUT_DIR, "{sample}_phased.vcf")
+        phased_vcf=os.path.join(OUTPUT_DIR, "{sample}_phased.vcf"),
+        # Declare temporary file using temp()
+        temp_vcf=temp(os.path.join(OUTPUT_DIR, "{sample}_phased.vcf.tmp"))
     wildcard_constraints:
         sample="[^_]+(?:_[0-9]+)*"  # Match sample names but not those ending with "_phased"
     threads: THREADS
@@ -382,7 +385,7 @@ rule phase_variants:
         # Check if all required paths exist
         REF_EXISTS=false
         HAP1_EXISTS=false
-        HAP2_EXISTS=false # Corrected from H2_EXISTS
+        HAP2_EXISTS=false
         
         if docker run --rm \
             --user {params.user_id}:{params.group_id} \
@@ -412,12 +415,12 @@ rule phase_variants:
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
-            vg paths -v "$REL_VG" -L | grep -q "^$HAP2_PATH$"; then # Corrected from H2_PATH
-            HAP2_EXISTS=true # Corrected from H2_EXISTS
-            echo "Found haplotype path: $HAP2_PATH" >> {log} # Corrected from H2_PATH
+            vg paths -v "$REL_VG" -L | grep -q "^$HAP2_PATH$"; then
+            HAP2_EXISTS=true
+            echo "Found haplotype path: $HAP2_PATH" >> {log}
         fi
         
-        if [ "$REF_EXISTS" = true ] && [ "$HAP1_EXISTS" = true ] && [ "$HAP2_EXISTS" = true ]; then # Corrected from H2_EXISTS
+        if [ "$REF_EXISTS" = true ] && [ "$HAP1_EXISTS" = true ] && [ "$HAP2_EXISTS" = true ]; then
             echo "Using vg deconstruct for proper phased calling..." >> {log}
             
             # Use a single docker run command to execute both vg deconstruct and the python script
@@ -429,15 +432,14 @@ rule phase_variants:
                 -w /data \
                 {params.docker_image} \
                 bash -c "\
-                    TEMP_VCF_PATH=$(realpath --relative-to=/data {output.phased_vcf}.tmp) && \
+                    TEMP_VCF_PATH=$(realpath --relative-to=/data {output.temp_vcf}) && \
                     FINAL_VCF_PATH=$(realpath --relative-to=/data {output.phased_vcf}) && \
                     vg deconstruct -p \"$REF_PATH\" -a -t {threads} \"$REL_VG\" > \"$TEMP_VCF_PATH\" 2>> {log} && \
                     python \"$REL_SCRIPT\" \"$TEMP_VCF_PATH\" \"$FINAL_VCF_PATH\" \"{params.sample}\" \"$HAP1_PATH\" \"$HAP2_PATH\" 2>> {log} \
                 "
-            # Clean up temporary files (this will be executed by Snakemake after the docker command finishes)
-            rm -f {output.phased_vcf}.tmp
+            # Removed manual rm -f, Snakemake's temp() will handle cleanup
             
-        elif [ "$REF_EXISTS" = true ] && ([ "$HAP1_EXISTS" = true ] || [ "$HAP2_EXISTS" = true ]); then # Corrected from H2_EXISTS
+        elif [ "$REF_EXISTS" = true ] && ([ "$HAP1_EXISTS" = true ] || [ "$HAP2_EXISTS" = true ]); then
             echo "Using vg deconstruct with available haplotype path..." >> {log}
             
             docker run --rm \
