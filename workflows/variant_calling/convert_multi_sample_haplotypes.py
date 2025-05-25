@@ -56,7 +56,11 @@ def main():
             if line.startswith('##reference=file://'):
                 # Extract reference file path
                 ref_path = line.strip().split('file://', 1)[1]
+                # Remove any /data prefix that might be from Docker mount
+                if ref_path.startswith('/data/'):
+                    ref_path = ref_path[6:]
                 reference_chrom = get_reference_chromosome_name(ref_path)
+                print(f"Found reference file: {ref_path}", file=sys.stderr)
                 print(f"Found reference chromosome: {reference_chrom}", file=sys.stderr)
             elif line.startswith('#CHROM'):
                 header_line = line.strip()

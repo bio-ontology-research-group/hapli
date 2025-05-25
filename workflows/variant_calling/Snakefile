@@ -385,6 +385,8 @@ rule call_variants:
         fi
         
         # Run the conversion using the separate Python script
+        echo "Running conversion script..." >> {log}
+        echo "Command: python {params.script_path} {input.multi_vcf} {output.vcf} {params.sample} $HAP1_POS $HAP2_POS" >> {log}
         python {params.script_path} {input.multi_vcf} {output.vcf} {params.sample} "$HAP1_POS" "$HAP2_POS" 2>> {log}
         
         # Validate output
@@ -400,6 +402,8 @@ rule call_variants:
         grep -v '^#' {output.vcf} | wc -l >> {log}
         echo "First few variants:" >> {log}
         grep -v '^#' {output.vcf} | head -5 >> {log}
+        echo "VCF header:" >> {log}
+        grep '^#' {output.vcf} | head -10 >> {log}
         """
 
 # Generate phased VCF for each sample (same as unphased for now since we're already phased)
@@ -499,6 +503,8 @@ rule create_all_samples_phased:
         echo "Header line: $HEADER_LINE" >> {log}
         
         # Run the conversion using the separate Python script
+        echo "Running multi-sample conversion script..." >> {log}
+        echo "Command: python {params.script_path} {input.multi_vcf} {output.all_phased_vcf} {params.sample_names}" >> {log}
         python {params.script_path} {input.multi_vcf} {output.all_phased_vcf} {params.sample_names} 2>> {log}
         
         # Validate output
