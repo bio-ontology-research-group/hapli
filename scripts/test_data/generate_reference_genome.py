@@ -353,8 +353,8 @@ def add_n_regions(sequence: str, n_fraction: float = 0.015) -> str:
 
 
 def generate_chromosome(name: str, length: int, gc_content: float, 
-                       add_cpg_islands: bool = True, add_telomeres: bool = True, 
-                       add_centromeres: bool = True) -> SeqRecord:
+                       include_cpg_islands: bool = True, include_telomeres: bool = True, 
+                       include_centromeres: bool = True) -> SeqRecord:
     """
     Generate a single chromosome with realistic features.
     
@@ -362,9 +362,9 @@ def generate_chromosome(name: str, length: int, gc_content: float,
         name: Chromosome name
         length: Chromosome length in bp
         gc_content: Target GC content
-        add_cpg_islands: Whether to add CpG islands
-        add_telomeres: Whether to add telomeric repeats
-        add_centromeres: Whether to add centromeric regions
+        include_cpg_islands: Whether to add CpG islands
+        include_telomeres: Whether to add telomeric repeats
+        include_centromeres: Whether to add centromeric regions
         
     Returns:
         SeqRecord object representing the chromosome
@@ -375,13 +375,13 @@ def generate_chromosome(name: str, length: int, gc_content: float,
     sequence = generate_weighted_sequence(length, gc_content)
     
     # Add realistic genomic features
-    if add_cpg_islands:
+    if include_cpg_islands:
         sequence = add_cpg_islands(sequence, length)
     
-    if add_telomeres:
+    if include_telomeres:
         sequence = add_telomeric_repeats(sequence)
     
-    if add_centromeres:
+    if include_centromeres:
         sequence = add_centromeric_region(sequence, length)
     
     # Add repetitive regions
