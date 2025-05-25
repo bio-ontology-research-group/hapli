@@ -56,7 +56,7 @@ rule check_paths:
             -v {params.mount_dir}:/data \
             -w /data \
             {VG_DOCKER} \
-            vg paths -v /data/test/pangenome/pangenome.vg -L > /data/test/vcf_from_pangenome/paths_in_graph.txt
+            bash -c 'vg paths -v /data/test/pangenome/pangenome.vg -L > /data/test/vcf_from_pangenome/paths_in_graph.txt'
         
         echo "Paths found in graph:" >&2
         cat {output.paths} >&2
@@ -112,7 +112,7 @@ rule find_snarls:
             -v {params.mount_dir}:/data \
             -w /data \
             {VG_DOCKER} \
-            vg snarls /data/test/pangenome/pangenome.vg > /data/test/vcf_from_pangenome/pangenome.snarls 2>> {log}
+            bash -c 'vg snarls /data/test/pangenome/pangenome.vg > /data/test/vcf_from_pangenome/pangenome.snarls' 2>> {log}
         """
 
 # Create GBWT index from embedded paths
@@ -173,14 +173,14 @@ rule call_sample_variants:
             -v {params.mount_dir}:/data \
             -w /data \
             {VG_DOCKER} \
-            vg call test/vcf_from_pangenome/pangenome.xg \
-                -k test/pangenome/pangenome.vg \
-                -r test/vcf_from_pangenome/pangenome.snarls \
-                -g test/vcf_from_pangenome/pangenome.gbwt \
+            bash -c 'vg call /data/test/vcf_from_pangenome/pangenome.xg \
+                -k /data/test/pangenome/pangenome.vg \
+                -r /data/test/vcf_from_pangenome/pangenome.snarls \
+                -g /data/test/vcf_from_pangenome/pangenome.gbwt \
                 -s {params.ref_sample} \
                 -S {wildcards.sample} \
                 -t {threads} \
-                > test/vcf_from_pangenome/per_sample/{wildcards.sample}.vcf 2>> {log}
+                > /data/test/vcf_from_pangenome/per_sample/{wildcards.sample}.vcf' 2>> {log}
         """
 
 # Merge individual VCFs
