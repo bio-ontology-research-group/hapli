@@ -429,8 +429,10 @@ rule phase_variants:
                 -w /data \
                 {params.docker_image} \
                 bash -c "\
-                    vg deconstruct -p \"$REF_PATH\" -a -t {threads} \"$REL_VG\" > \"$(realpath --relative-to=/data {output.phased_vcf}.tmp)\" 2>> {log} && \
-                    python \"$REL_SCRIPT\" \"$(realpath --relative-to=/data {output.phased_vcf}.tmp)\" \"$(realpath --relative-to=/data {output.phased_vcf})\" \"{params.sample}\" \"$HAP1_PATH\" \"$HAP2_PATH\" 2>> {log} \
+                    TEMP_VCF_PATH=$(realpath --relative-to=/data {output.phased_vcf}.tmp) && \
+                    FINAL_VCF_PATH=$(realpath --relative-to=/data {output.phased_vcf}) && \
+                    vg deconstruct -p \"$REF_PATH\" -a -t {threads} \"$REL_VG\" > \"$TEMP_VCF_PATH\" 2>> {log} && \
+                    python \"$REL_SCRIPT\" \"$TEMP_VCF_PATH\" \"$FINAL_VCF_PATH\" \"{params.sample}\" \"$HAP1_PATH\" \"$HAP2_PATH\" 2>> {log} \
                 "
             
             # Clean up temporary files (this will be executed by Snakemake after the docker command finishes)
