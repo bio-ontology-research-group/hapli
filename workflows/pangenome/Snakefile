@@ -1,146 +1,26 @@
 import os
-import glob
 from pathlib import Path
-import sys
 
-# Load config
+# Load config - all paths and parameters will come from config
 configfile: "config.yaml"
 
-# Set working directory relative to Snakefile
-WORKFLOW_DIR = Path(workflow.basedir)
-PROJECT_ROOT = WORKFLOW_DIR.parent.parent
-
-# Resolve paths
-REFERENCE = Path(config["reference"]).resolve()
-# Updated: Use haplotype_data_dir from config
-HAPLOTYPE_DATA_DIR = Path(config["haplotype_data_dir"]).resolve()
-OUTPUT_DIR = Path(config["output_dir"]).resolve()
+# All paths from config
+REFERENCE = config["reference"]
+HAPLOTYPE_FASTAS = config["haplotype_fastas"]
+OUTPUT_DIR = config["output_dir"]
+VG_DOCKER = config.get("vg_docker", "quay.io/vgteam/vg:v1.65.0")
+THREADS = config.get("threads", 4)
+MOUNT_DIR = config["mount_dir"]
 
 # Create output directory
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-# Docker image
-VG_DOCKER = "quay.io/vgteam/vg:v1.65.0"
-
-# Get current user ID and group ID for Docker
-USER_ID = os.getuid()
-GROUP_ID = os.getgid()
-
-# Debug: Print directory contents
-print(f"Looking for haplotype files in: {HAPLOTYPE_DATA_DIR}")
-print(f"Directory exists: {HAPLOTYPE_DATA_DIR.exists()}")
-
-if HAPLOTYPE_DATA_DIR.exists():
-    print("Contents of haplotype data directory:")
-    for item in HAPLOTYPE_DATA_DIR.iterdir():
-        print(f"  {item}")
-        if item.is_dir():
-            print(f"    Contents of {item.name}:")
-            for subitem in item.iterdir():
-                print(f"      {subitem}")
-
-# Find all haplotype FASTA files with multiple patterns
-HAPLOTYPE_FASTAS = []
-
-# Try different patterns to find the files
-patterns_to_try = [
-    str(HAPLOTYPE_DATA_DIR / "sample_*" / "sample_*.fasta"),
-    str(HAPLOTYPE_DATA_DIR / "sample_*" / "*.fasta"),
-    str(HAPLOTYPE_DATA_DIR / "*" / "sample_*.fasta"),
-    str(HAPLOTYPE_DATA_DIR / "*" / "*_hap*.fasta"),
-    str(HAPLOTYPE_DATA_DIR / "sample_*.fasta"),
-    str(HAPLOTYPE_DATA_DIR / "*_hap*.fasta"),
-]
-
-for pattern in patterns_to_try:
-    found_files = sorted(glob.glob(pattern))
-    if found_files:
-        print(f"Pattern '{pattern}' found {len(found_files)} files:")
-        for f in found_files:
-            print(f"  {f}")
-        HAPLOTYPE_FASTAS = found_files
-        break
-    else:
-        print(f"Pattern '{pattern}' found no files")
-
-# If still no files found, check if we can find any FASTA files at all
-if not HAPLOTYPE_FASTAS:
-    print("No files found with standard patterns. Searching for any .fasta files...")
-    all_fasta_pattern = str(HAPLOTYPE_DATA_DIR / "**" / "*.fasta")
-    all_fastas = sorted(glob.glob(all_fasta_pattern, recursive=True))
-    if all_fastas:
-        print(f"Found {len(all_fastas)} .fasta files total:")
-        for f in all_fastas:
-            print(f"  {f}")
-        # Filter for haplotype files (containing 'hap' in the name)
-        hap_fastas = [f for f in all_fastas if 'hap' in Path(f).name.lower()]
-        if hap_fastas:
-            print(f"Using {len(hap_fastas)} files that contain 'hap' in the name")
-            HAPLOTYPE_FASTAS = hap_fastas
-        else:
-            print("No files contain 'hap' in the name")
-
-# Create a list of unique sample names
-UNIQUE_SAMPLE_NAMES = []
-GRAPH_PATH_NAMES = []
-
-if HAPLOTYPE_FASTAS:
-    # Extract sample names from file paths
-    sample_names = set()
-    for fasta_path in HAPLOTYPE_FASTAS:
-        path_obj = Path(fasta_path)
-        # Try to extract sample name from filename
-        filename = path_obj.stem
-        
-        # Common patterns: sample_XXX_hap1, sample_XXX_hap2
-        if '_hap' in filename:
-            sample_base = filename.split('_hap')[0]
-            sample_names.add(sample_base)
-        else:
-            # If no clear haplotype pattern, use parent directory or filename
-            if path_obj.parent.name.startswith('sample_'):
-                sample_names.add(path_obj.parent.name)
-            else:
-                # Use filename without extension as sample name
-                sample_names.add(filename)
-    
-    UNIQUE_SAMPLE_NAMES = sorted(list(sample_names))
-    
-    # Create graph path names
-    for sample_name in UNIQUE_SAMPLE_NAMES:
-        # Check if we have both haplotypes for this sample
-        hap1_files = [f for f in HAPLOTYPE_FASTAS if sample_name in f and 'hap1' in f]
-        hap2_files = [f for f in HAPLOTYPE_FASTAS if sample_name in f and 'hap2' in f]
-        
-        if hap1_files:
-            GRAPH_PATH_NAMES.append(f"{sample_name}_hap1")
-        if hap2_files:
-            GRAPH_PATH_NAMES.append(f"{sample_name}_hap2")
-
-print(f"Found {len(HAPLOTYPE_FASTAS)} haplotype FASTA files for {len(UNIQUE_SAMPLE_NAMES)} samples")
-print(f"Unique sample names: {UNIQUE_SAMPLE_NAMES}")
-print(f"Graph paths will be: {GRAPH_PATH_NAMES}")
-
-if not HAPLOTYPE_FASTAS:
-    print("ERROR: No haplotype FASTA files found!")
-    print(f"Looking in: {HAPLOTYPE_DATA_DIR}")
-    print("Please check that:")
-    print("1. The haplotype_data_dir path in config.yaml is correct")
-    print("2. The variant generation workflow has been run successfully")
-    print("3. The FASTA files exist in the expected location")
-    sys.exit(1)
-
-# Check that reference file exists
-if not REFERENCE.exists():
-    print(f"ERROR: Reference file not found: {REFERENCE}")
-    sys.exit(1)
+Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 
 # Final outputs
 rule all:
     input:
-        OUTPUT_DIR / "pangenome.gfa",
-        OUTPUT_DIR / "pangenome_stats.txt",
-        OUTPUT_DIR / "sample_alignments.paf"
+        os.path.join(OUTPUT_DIR, "pangenome.gfa"),
+        os.path.join(OUTPUT_DIR, "pangenome_stats.txt"),
+        os.path.join(OUTPUT_DIR, "sample_alignments.paf")
 
 # Create combined FASTA with all sequences
 rule combine_sequences:
@@ -148,9 +28,9 @@ rule combine_sequences:
         ref=REFERENCE,
         haplotypes=HAPLOTYPE_FASTAS
     output:
-        combined=OUTPUT_DIR / "all_sequences.fa"
+        combined=os.path.join(OUTPUT_DIR, "all_sequences.fa")
     log:
-        OUTPUT_DIR / "logs" / "combine_sequences.log"
+        os.path.join(OUTPUT_DIR, "logs", "combine_sequences.log")
     run:
         # Create logs directory
         Path(str(log)).parent.mkdir(parents=True, exist_ok=True)
@@ -161,33 +41,31 @@ rule combine_sequences:
             with open(str(input.ref)) as f:
                 for line in f:
                     if line.startswith('>'):
-                        out.write('>reference\n') # Ensure reference sequence is named 'reference'
+                        out.write('>reference\n')
                     else:
                         out.write(line)
             
             # Add each haplotype
-            # Sort haplotypes to ensure consistent ordering (hap1 before hap2)
             sorted_haplotypes = sorted(input.haplotypes)
             for var_path in sorted_haplotypes:
-                # Extract sample_XXX_hapX from path
                 haplotype_name = Path(var_path).stem 
                 print(f"Adding haplotype {haplotype_name}: {var_path}", file=open(str(log), 'a'))
                 with open(var_path) as f:
                     for line in f:
                         if line.startswith('>'):
-                            out.write(f'>{haplotype_name}\n') # Name sequence by its haplotype name
+                            out.write(f'>{haplotype_name}\n')
                         else:
                             out.write(line)
 
-# Create all-vs-all alignment (no Docker needed)
+# Create all-vs-all alignment
 rule align_all:
     input:
-        seqs=OUTPUT_DIR / "all_sequences.fa"
+        seqs=os.path.join(OUTPUT_DIR, "all_sequences.fa")
     output:
-        paf=OUTPUT_DIR / "sample_alignments.paf"
-    threads: config.get("threads", 4)
+        paf=os.path.join(OUTPUT_DIR, "sample_alignments.paf")
+    threads: THREADS
     log:
-        OUTPUT_DIR / "logs" / "align_all.log"
+        os.path.join(OUTPUT_DIR, "logs", "align_all.log")
     shell:
         """
         mkdir -p $(dirname {log})
@@ -199,16 +77,16 @@ rule align_all:
 # Build pangenome using vg with Docker
 rule build_pangenome:
     input:
-        seqs=OUTPUT_DIR / "all_sequences.fa"
+        seqs=os.path.join(OUTPUT_DIR, "all_sequences.fa")
     output:
-        vg=OUTPUT_DIR / "pangenome.vg",
-        gfa=OUTPUT_DIR / "pangenome.gfa"
-    threads: config.get("threads", 4)
+        vg=os.path.join(OUTPUT_DIR, "pangenome.vg"),
+        gfa=os.path.join(OUTPUT_DIR, "pangenome.gfa")
+    threads: THREADS
     log:
-        OUTPUT_DIR / "logs" / "build_pangenome.log"
+        os.path.join(OUTPUT_DIR, "logs", "build_pangenome.log")
     params:
-        # Get parent directory for mounting
-        mount_dir=str(OUTPUT_DIR.parent.parent.absolute())
+        mount_dir=MOUNT_DIR,
+        docker_image=VG_DOCKER
     shell:
         """
         mkdir -p $(dirname {log})
@@ -236,7 +114,7 @@ rule build_pangenome:
         docker run --rm \
             -v {params.mount_dir}:/data \
             -w /data \
-            {VG_DOCKER} \
+            {params.docker_image} \
             vg msga -f "$REL_SEQS" -k 32 -B 128 -t {threads} > "$REL_VG" 2>> {log}
         
         # Check if VG file was created
@@ -250,7 +128,7 @@ rule build_pangenome:
         docker run --rm \
             -v {params.mount_dir}:/data \
             -w /data \
-            {VG_DOCKER} \
+            {params.docker_image} \
             vg view -g "$REL_VG" > "$REL_GFA" 2>> {log}
         
         # Check if GFA file was created
@@ -262,100 +140,17 @@ rule build_pangenome:
         echo "Pangenome construction completed successfully" >> {log}
         """
 
-# Alternative: Build using reference + single-sample VCFs
-# This rule is likely not needed for the pangenome graph, but kept for now.
-rule build_ref_graph:
-    input:
-        ref=REFERENCE
-    output:
-        vg=OUTPUT_DIR / "ref_graph.vg"
-    log:
-        OUTPUT_DIR / "logs" / "ref_graph.log"
-    params:
-        mount_dir=str(OUTPUT_DIR.parent.parent.absolute())
-    shell:
-        """
-        mkdir -p $(dirname {log})
-        
-        REL_REF=$(realpath --relative-to={params.mount_dir} {input.ref})
-        REL_VG=$(realpath --relative-to={params.mount_dir} {output.vg})
-        
-        docker run --rm \
-            -v {params.mount_dir}:/data \
-            -w /data \
-            {VG_DOCKER} \
-            vg construct -r $REL_REF -m 32 > $REL_VG 2> {log}
-        """
-
-# Call variants for each sample individually
-# This rule is likely not needed for the pangenome graph, but kept for now.
-rule align_and_call_sample:
-    input:
-        ref=REFERENCE,
-        sample=HAPLOTYPE_DATA_DIR / "{sample_id}" / "{sample_id}_hap1.fasta" # Assuming hap1 for alignment
-    output:
-        bam=OUTPUT_DIR / "alignments" / "{sample_id}.bam",
-        vcf=OUTPUT_DIR / "vcf_singles" / "{sample_id}.vcf"
-    threads: 2
-    log:
-        OUTPUT_DIR / "logs" / "call_{sample_id}.log"
-    shell:
-        """
-        mkdir -p $(dirname {output.bam}) $(dirname {output.vcf}) $(dirname {log})
-        
-        # Align with minimap2
-        minimap2 -a -x asm20 --cs {input.ref} {input.sample} 2> {log} | \
-        samtools sort -o {output.bam} 2>> {log}
-        samtools index {output.bam}
-        
-        # Call variants
-        bcftools mpileup -Ou -f {input.ref} {output.bam} 2>> {log} | \
-        bcftools call -mv -Ov -o {output.vcf} 2>> {log}
-        """
-
-# Build graph with each single-sample VCF
-# This rule is likely not needed for the pangenome graph, but kept for now.
-rule build_sample_graph:
-    input:
-        ref_graph=OUTPUT_DIR / "ref_graph.vg",
-        vcf=OUTPUT_DIR / "vcf_singles" / "{sample}.vcf"
-    output:
-        vg=OUTPUT_DIR / "sample_graphs" / "{sample}.vg"
-    log:
-        OUTPUT_DIR / "logs" / "graph_{sample}.log"
-    params:
-        mount_dir=str(OUTPUT_DIR.parent.parent.absolute())
-    shell:
-        """
-        mkdir -p $(dirname {output.vg}) $(dirname {log})
-        
-        REL_GRAPH=$(realpath --relative-to={params.mount_dir} {input.ref_graph})
-        REL_VCF=$(realpath --relative-to={params.mount_dir} {input.vcf})
-        REL_OUT=$(realpath --relative-to={params.mount_dir} {output.vg})
-        
-        # Check if VCF has variants
-        if grep -v '^#' {input.vcf} | head -1 | grep -q .; then
-            docker run --rm \
-                -v {params.mount_dir}:/data \
-                -w /data \
-                {VG_DOCKER} \
-                vg mod -v $REL_VCF $REL_GRAPH > $REL_OUT 2> {log}
-        else
-            cp {input.ref_graph} $REL_OUT
-            echo "No variants for {wildcards.sample}" >> {log}
-        fi
-        """
-
 # Generate statistics
 rule graph_stats:
     input:
-        vg=OUTPUT_DIR / "pangenome.vg",
-        gfa=OUTPUT_DIR / "pangenome.gfa",
-        paf=OUTPUT_DIR / "sample_alignments.paf"
+        vg=os.path.join(OUTPUT_DIR, "pangenome.vg"),
+        gfa=os.path.join(OUTPUT_DIR, "pangenome.gfa"),
+        paf=os.path.join(OUTPUT_DIR, "sample_alignments.paf")
     output:
-        stats=OUTPUT_DIR / "pangenome_stats.txt"
+        stats=os.path.join(OUTPUT_DIR, "pangenome_stats.txt")
     params:
-        mount_dir=str(OUTPUT_DIR.parent.parent.absolute())
+        mount_dir=MOUNT_DIR,
+        docker_image=VG_DOCKER
     shell:
         """
         echo "=== Pangenome Statistics ===" > {output.stats}
@@ -366,15 +161,15 @@ rule graph_stats:
         docker run --rm \
             -v {params.mount_dir}:/data \
             -w /data \
-            {VG_DOCKER} \
-            vg stats -z $REL_VG >> {output.stats}
+            {params.docker_image} \
+            vg stats -z "$REL_VG" >> {output.stats}
         
         echo -e "\nPaths in graph:" >> {output.stats}
         docker run --rm \
             -v {params.mount_dir}:/data \
             -w /data \
-            {VG_DOCKER} \
-            vg paths -v $REL_VG -L >> {output.stats} 2>/dev/null || echo "No paths found" >> {output.stats}
+            {params.docker_image} \
+            vg paths -v "$REL_VG" -L >> {output.stats} 2>/dev/null || echo "No paths found" >> {output.stats}
         
         echo -e "\nGFA summary:" >> {output.stats}
         echo -n "Nodes: " >> {output.stats}

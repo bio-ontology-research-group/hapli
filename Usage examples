@@ -1,0 +1,8 @@
+# Build from sample directories
+python scripts/build_pangenome.py -r data/test/reference.fa -s data/test/variants/sample_* -o output/pangenome
+
+# Build from specific files
+python scripts/build_pangenome.py -r reference.fa -f sample1_hap1.fa sample1_hap2.fa -o output
+
+# Dry run
+python scripts/build_pangenome.py -r reference.fa -s sample_dirs/* -o output --dry-run
