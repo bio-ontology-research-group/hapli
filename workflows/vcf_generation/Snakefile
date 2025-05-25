@@ -166,6 +166,8 @@ rule call_sample_variants:
         mkdir -p $(dirname {output.vcf})
         
         echo "Calling variants for {wildcards.sample}..." > {log}
+        echo "Reference sample: {params.ref_sample}" >> {log}
+        echo "Target sample: {wildcards.sample}" >> {log}
         
         # Call variants for this sample
         docker run --rm \
@@ -173,14 +175,27 @@ rule call_sample_variants:
             -v {params.mount_dir}:/data \
             -w /data \
             {VG_DOCKER} \
-            bash -c 'vg call /data/test/vcf_from_pangenome/pangenome.xg \
-                -k /data/test/pangenome/pangenome.vg \
-                -r /data/test/vcf_from_pangenome/pangenome.snarls \
-                -g /data/test/vcf_from_pangenome/pangenome.gbwt \
-                -s {params.ref_sample} \
-                -S {wildcards.sample} \
-                -t {threads} \
-                > /data/test/vcf_from_pangenome/per_sample/{wildcards.sample}.vcf' 2>> {log}
+            bash -c 'mkdir -p /data/test/vcf_from_pangenome/per_sample && \
+                     vg call /data/test/vcf_from_pangenome/pangenome.xg \
+                         -k /data/test/pangenome/pangenome.vg \
+                         -r /data/test/vcf_from_pangenome/pangenome.snarls \
+                         -g /data/test/vcf_from_pangenome/pangenome.gbwt \
+                         -s {params.ref_sample} \
+                         -S {wildcards.sample} \
+                         -t {threads} \
+                         -a \
+                         > /data/test/vcf_from_pangenome/per_sample/{wildcards.sample}.vcf' 2>> {log}
+        
+        # Check if VCF was created and has content
+        if [ -f {output.vcf} ]; then
+            echo "VCF created successfully" >> {log}
+            echo "VCF size: $(wc -l < {output.vcf}) lines" >> {log}
+            echo "Header lines: $(grep -c '^#' {output.vcf})" >> {log}
+            echo "Variant lines: $(grep -cv '^#' {output.vcf} || echo 0)" >> {log}
+        else
+            echo "ERROR: VCF file was not created" >> {log}
+            exit 1
+        fi
         """
 
 # Merge individual VCFs
