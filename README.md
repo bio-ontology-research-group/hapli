@@ -1,9 +1,10 @@
-# Hapli Test Data Generation
+# Hapli: Pangenome Test Data Generation and Variant Calling
 
 ## Overview
 
-## Scripts
+Hapli is a comprehensive toolkit for generating synthetic genomic test data and performing variant calling using pangenome graphs. The pipeline supports the complete workflow from reference genome generation through variant calling, producing realistic test datasets for pangenome analysis.
 
-## Generated Data
+## Quick Start
 
-## Usage Examples
+Generate a complete test dataset with a single command:
+
