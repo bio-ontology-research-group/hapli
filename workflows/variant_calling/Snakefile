@@ -119,7 +119,7 @@ rule index_pangenome:
         echo "Indexing completed successfully" >> {log}
         """
 
-# Call variants using vg deconstruct to get phased VCF for all samples
+# Call variants using vg deconstruct to get phased VCF for all samples and all chromosomes
 rule call_all_variants:
     input:
         vg=PANGENOME_VG,
@@ -175,20 +175,54 @@ rule call_all_variants:
         echo "" >> {log}
         
         if [ -n "$REF_PATHS" ]; then
-            # Use the first reference path for deconstruction
-            FIRST_REF_PATH=$(echo "$REF_PATHS" | head -1)
-            echo "Using reference path for deconstruction: $FIRST_REF_PATH" >> {log}
+            # Create temporary VCF files for each reference path
+            echo "Calling variants for each reference path..." >> {log}
+            TEMP_VCFS=""
             
-            # Use vg deconstruct to call variants against reference paths
-            echo "Running: vg deconstruct -P $FIRST_REF_PATH -H '!' -a -t {threads} $REL_VG" >> {log}
-            docker run --rm \
-                --user {params.user_id}:{params.group_id} \
-                --memory=32g \
-                --memory-swap=64g \
-                -v {params.mount_dir}:/data \
-                -w /data \
-                {params.docker_image} \
-                vg deconstruct -P "$FIRST_REF_PATH" -H '!' -a -t {threads} "$REL_VG" > {output.multi_vcf} 2>> {log}
+            while IFS= read -r ref_path; do
+                if [ -n "$ref_path" ]; then
+                    echo "Processing reference path: $ref_path" >> {log}
+                    TEMP_VCF="/tmp/variants_${{ref_path//[^a-zA-Z0-9]/_}}.vcf"
+                    TEMP_VCFS="$TEMP_VCFS $TEMP_VCF"
+                    
+                    echo "Running: vg deconstruct -P $ref_path -H '!' -a -t {threads} $REL_VG" >> {log}
+                    docker run --rm \
+                        --user {params.user_id}:{params.group_id} \
+                        --memory=32g \
+                        --memory-swap=64g \
+                        -v {params.mount_dir}:/data \
+                        -w /data \
+                        {params.docker_image} \
+                        vg deconstruct -P "$ref_path" -H '!' -a -t {threads} "$REL_VG" > "$TEMP_VCF" 2>> {log}
+                    
+                    echo "Variants called for $ref_path: $(grep -v '^#' "$TEMP_VCF" | wc -l)" >> {log}
+                fi
+            done <<< "$REF_PATHS"
+            
+            # Merge all VCF files
+            echo "Merging VCF files..." >> {log}
+            echo "Temporary VCF files: $TEMP_VCFS" >> {log}
+            
+            # Get header from first VCF
+            FIRST_VCF=$(echo $TEMP_VCFS | cut -d' ' -f1)
+            if [ -f "$FIRST_VCF" ]; then
+                grep '^#' "$FIRST_VCF" > {output.multi_vcf}
+                
+                # Append variants from all VCFs, converting chromosome names
+                for temp_vcf in $TEMP_VCFS; do
+                    if [ -f "$temp_vcf" ]; then
+                        echo "Processing variants from $temp_vcf..." >> {log}
+                        # Convert chromosome names from path format to simple chromosome names
+                        grep -v '^#' "$temp_vcf" | sed 's/^chr[^#]*#0#//' >> {output.multi_vcf}
+                    fi
+                done
+                
+                # Clean up temporary files
+                rm -f $TEMP_VCFS
+            else
+                echo "ERROR: No temporary VCF files were created" >> {log}
+                exit 1
+            fi
         else
             echo "No reference paths found, creating empty VCF..." >> {log}
             # Create minimal VCF header
@@ -237,6 +271,8 @@ rule call_all_variants:
         ls -lh {output.multi_vcf} >> {log}
         echo "Number of variants:" >> {log}
         grep -v '^#' {output.multi_vcf} | wc -l >> {log}
+        echo "Chromosome distribution:" >> {log}
+        grep -v '^#' {output.multi_vcf} | cut -f1 | sort | uniq -c >> {log}
         echo "First few variants:" >> {log}
         grep -v '^#' {output.multi_vcf} | head -5 >> {log}
         """
@@ -384,6 +420,8 @@ rule extract_sample_vcf:
         ls -lh {output.vcf} >> {log}
         echo "Number of variants:" >> {log}
         zcat {output.vcf} | grep -v '^#' | wc -l >> {log}
+        echo "Chromosome distribution:" >> {log}
+        zcat {output.vcf} | grep -v '^#' | cut -f1 | sort | uniq -c >> {log}
         echo "First few variants:" >> {log}
         zcat {output.vcf} | grep -v '^#' | head -5 >> {log}
         """
@@ -508,6 +546,8 @@ rule create_multi_sample_vcf:
         ls -lh {output.all_vcf} >> {log}
         echo "Number of variants:" >> {log}
         zcat {output.all_vcf} | grep -v '^#' | wc -l >> {log}
+        echo "Chromosome distribution:" >> {log}
+        zcat {output.all_vcf} | grep -v '^#' | cut -f1 | sort | uniq -c >> {log}
         echo "First few variants:" >> {log}
         zcat {output.all_vcf} | grep -v '^#' | head -5 >> {log}
         """
