@@ -61,43 +61,72 @@ def get_reference_chromosomes(reference_path: str) -> Set[str]:
     return chromosomes
 
 
-def get_pangenome_paths(gfa_path: str) -> Set[str]:
+def get_pangenome_paths_from_vg(vg_path: str, vg_docker: str, mount_dir: str) -> Set[str]:
     """
-    Extract path names from GFA file, focusing on reference paths.
+    Extract path names from VG file using vg paths command.
     """
     paths = set()
     
-    with open(gfa_path, 'r') as f:
-        for line in f:
-            if line.startswith('P\t'):  # Path line
-                parts = line.strip().split('\t')
-                if len(parts) >= 2:
-                    path_name = parts[1]
-                    paths.add(path_name)
+    try:
+        # Get relative path for Docker
+        rel_vg = str(Path(vg_path).relative_to(mount_dir))
+        
+        # Run vg paths command
+        cmd = [
+            "docker", "run", "--rm",
+            "-v", f"{mount_dir}:/data",
+            "-w", "/data",
+            vg_docker,
+            "vg", "paths", "-v", rel_vg, "-L"
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        
+        for line in result.stdout.strip().split('\n'):
+            if line.strip():
+                paths.add(line.strip())
+                
+    except subprocess.CalledProcessError as e:
+        print(f"Warning: Could not extract paths from VG file: {e}")
+        print(f"stderr: {e.stderr}")
     
     return paths
 
 
-def get_reference_paths_from_pangenome(gfa_path: str) -> Set[str]:
+def get_reference_paths_from_pangenome(vg_path: str, vg_docker: str, mount_dir: str) -> Set[str]:
     """
-    Extract reference path names from GFA file (paths that don't contain sample info).
+    Extract reference path names from VG file.
+    Reference paths typically follow pattern: chr*#0#chr*
     """
+    all_paths = get_pangenome_paths_from_vg(vg_path, vg_docker, mount_dir)
     ref_paths = set()
     
-    with open(gfa_path, 'r') as f:
-        for line in f:
-            if line.startswith('P\t'):  # Path line
-                parts = line.strip().split('\t')
-                if len(parts) >= 2:
-                    path_name = parts[1]
-                    # Reference paths typically don't have _hap suffix
-                    if '_hap' not in path_name and not path_name.startswith('sample_'):
-                        ref_paths.add(path_name)
+    for path in all_paths:
+        # Reference paths don't contain sample names and follow chr*#0#chr* pattern
+        if not path.startswith('sample_') and '#0#chr' in path:
+            ref_paths.add(path)
     
     return ref_paths
 
 
-def check_chromosome_coverage(reference_path: str, gfa_path: str) -> None:
+def extract_sample_names_from_vg(vg_path: str, vg_docker: str, mount_dir: str) -> List[str]:
+    """
+    Extract sample names from VG file by looking at path names.
+    """
+    all_paths = get_pangenome_paths_from_vg(vg_path, vg_docker, mount_dir)
+    sample_names = set()
+    
+    for path in all_paths:
+        # Extract sample name from path like "sample_000_hap1#0#chr1#0"
+        if path.startswith('sample_') and '_hap' in path:
+            # Extract everything before _hap
+            sample_base = path.split('_hap')[0]
+            sample_names.add(sample_base)
+    
+    return sorted(list(sample_names))
+
+
+def check_chromosome_coverage(reference_path: str, vg_path: str, vg_docker: str, mount_dir: str) -> None:
     """
     Check if all chromosomes from reference are present in pangenome.
     """
@@ -108,46 +137,36 @@ def check_chromosome_coverage(reference_path: str, gfa_path: str) -> None:
     print(f"Reference chromosomes ({len(ref_chroms)}): {sorted(ref_chroms)}")
     
     # Get all paths from pangenome
-    all_paths = get_pangenome_paths(gfa_path)
+    all_paths = get_pangenome_paths_from_vg(vg_path, vg_docker, mount_dir)
     print(f"All pangenome paths ({len(all_paths)}): {sorted(all_paths)}")
     
     # Get reference paths from pangenome
-    ref_paths = get_reference_paths_from_pangenome(gfa_path)
+    ref_paths = get_reference_paths_from_pangenome(vg_path, vg_docker, mount_dir)
     print(f"Reference paths in pangenome ({len(ref_paths)}): {sorted(ref_paths)}")
     
+    # Extract chromosome names from reference paths
+    pangenome_chroms = set()
+    for path in ref_paths:
+        # Extract chromosome from path like "chr1#0#chr1"
+        if '#0#' in path:
+            chrom = path.split('#0#')[-1]
+            pangenome_chroms.add(chrom)
+    
+    print(f"Chromosomes in pangenome ({len(pangenome_chroms)}): {sorted(pangenome_chroms)}")
+    
     # Check coverage
-    missing_chroms = ref_chroms - ref_paths
-    extra_paths = ref_paths - ref_chroms
+    missing_chroms = ref_chroms - pangenome_chroms
+    extra_chroms = pangenome_chroms - ref_chroms
     
     if missing_chroms:
         print(f"\n❌ MISSING chromosomes in pangenome: {sorted(missing_chroms)}")
     else:
         print(f"\n✅ All reference chromosomes found in pangenome")
     
-    if extra_paths:
-        print(f"ℹ️  Extra paths in pangenome: {sorted(extra_paths)}")
+    if extra_chroms:
+        print(f"ℹ️  Extra chromosomes in pangenome: {sorted(extra_chroms)}")
     
     print("=" * 40)
-
-
-def extract_sample_names_from_gfa(gfa_path: str) -> List[str]:
-    """
-    Extract sample names from GFA file by looking at path names.
-    """
-    sample_names = set()
-    
-    with open(gfa_path, 'r') as f:
-        for line in f:
-            if line.startswith('P\t'):  # Path line
-                parts = line.strip().split('\t')
-                if len(parts) >= 2:
-                    path_name = parts[1]
-                    # Extract sample name from path like "sample_000_hap1"
-                    if '_hap' in path_name:
-                        sample_base = path_name.split('_hap')[0]
-                        sample_names.add(sample_base)
-    
-    return sorted(list(sample_names))
 
 
 def create_config(args: argparse.Namespace) -> Dict[str, Any]:
@@ -156,37 +175,33 @@ def create_config(args: argparse.Namespace) -> Dict[str, Any]:
     """
     # Resolve paths
     pangenome_vg = str(Path(args.pangenome_vg).resolve())
-    pangenome_gfa = str(Path(args.pangenome_gfa).resolve())
     reference = str(Path(args.reference).resolve())
     output_dir = str(Path(args.output).resolve())
     
     # Verify input files exist
     if not Path(pangenome_vg).exists():
         raise FileNotFoundError(f"Pangenome VG file not found: {pangenome_vg}")
-    if not Path(pangenome_gfa).exists():
-        raise FileNotFoundError(f"Pangenome GFA file not found: {pangenome_gfa}")
     if not Path(reference).exists():
         raise FileNotFoundError(f"Reference file not found: {reference}")
     
-    # Check chromosome coverage
-    check_chromosome_coverage(reference, pangenome_gfa)
+    # Find common mount point for Docker
+    all_paths = [pangenome_vg, reference, output_dir]
+    mount_dir = find_common_mount_point(all_paths)
     
-    # Extract sample names from GFA if not provided
+    # Check chromosome coverage
+    check_chromosome_coverage(reference, pangenome_vg, args.vg_docker, mount_dir)
+    
+    # Extract sample names from VG if not provided
     if args.samples:
         sample_names = args.samples
     else:
-        sample_names = extract_sample_names_from_gfa(pangenome_gfa)
+        sample_names = extract_sample_names_from_vg(pangenome_vg, args.vg_docker, mount_dir)
         if not sample_names:
-            raise ValueError("No sample names found in GFA file. Please specify --samples explicitly.")
+            raise ValueError("No sample names found in VG file. Please specify --samples explicitly.")
     
     print(f"Sample names: {sample_names}")
     
-    # Find common mount point for Docker
-    all_paths = [pangenome_vg, pangenome_gfa, reference, output_dir]
-    mount_dir = find_common_mount_point(all_paths)
-    
     print(f"Pangenome VG: {pangenome_vg}")
-    print(f"Pangenome GFA: {pangenome_gfa}")
     print(f"Reference: {reference}")
     print(f"Output directory: {output_dir}")
     print(f"Docker mount point: {mount_dir}")
@@ -194,7 +209,6 @@ def create_config(args: argparse.Namespace) -> Dict[str, Any]:
     # Create config
     config = {
         "pangenome_vg": pangenome_vg,
-        "pangenome_gfa": pangenome_gfa,
         "reference": reference,
         "output_dir": output_dir,
         "mount_dir": mount_dir,
@@ -259,19 +273,19 @@ def main():
         epilog="""
 Examples:
   # Call variants for all samples in pangenome
-  %(prog)s -v pangenome.vg -g pangenome.gfa -r reference.fa -o vcf_output
+  %(prog)s -v pangenome.vg -r reference.fa -o vcf_output
 
   # Call variants for specific samples
-  %(prog)s -v pangenome.vg -g pangenome.gfa -r reference.fa -o vcf_output --samples sample_001 sample_002
+  %(prog)s -v pangenome.vg -r reference.fa -o vcf_output --samples sample_001 sample_002
 
   # Dry run to see what would be executed
-  %(prog)s -v pangenome.vg -g pangenome.gfa -r reference.fa -o vcf_output --dry-run
+  %(prog)s -v pangenome.vg -r reference.fa -o vcf_output --dry-run
 
   # Use more cores
-  %(prog)s -v pangenome.vg -g pangenome.gfa -r reference.fa -o vcf_output --cores 8
+  %(prog)s -v pangenome.vg -r reference.fa -o vcf_output --cores 8
 
   # Check chromosome coverage without running variant calling
-  %(prog)s -v pangenome.vg -g pangenome.gfa -r reference.fa -o vcf_output --check-only
+  %(prog)s -v pangenome.vg -r reference.fa -o vcf_output --check-only
         """
     )
     
@@ -280,12 +294,6 @@ Examples:
         "-v", "--pangenome-vg",
         required=True,
         help="Pangenome VG file"
-    )
-    
-    parser.add_argument(
-        "-g", "--pangenome-gfa",
-        required=True,
-        help="Pangenome GFA file"
     )
     
     parser.add_argument(
@@ -304,21 +312,21 @@ Examples:
     parser.add_argument(
         "--samples",
         nargs="+",
-        help="Sample names to call variants for (if not specified, extract from GFA)"
+        help="Sample names to call variants for (if not specified, extract from VG)"
     )
     
     # Execution options
     parser.add_argument(
         "--cores",
         type=int,
-        default=8, # Changed default from 4 to 8
+        default=8,
         help="Number of CPU cores for Snakemake (default: 8)"
     )
     
     parser.add_argument(
         "--threads",
         type=int,
-        default=8, # Changed default from 4 to 8
+        default=8,
         help="Number of threads for individual tools (default: 8)"
     )
     
