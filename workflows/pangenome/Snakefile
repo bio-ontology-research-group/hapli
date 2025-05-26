@@ -190,7 +190,7 @@ rule build_pangenome:
             fi
             " 2>> {log}
         
-        # Run Cactus pangenome construction with proper environment setup
+        # Run Cactus pangenome construction with increased memory and disk resources
         echo "Running cactus-pangenome..." >> {log}
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
@@ -200,6 +200,8 @@ rule build_pangenome:
             -e TOIL_HOME="/data/$TOIL_HOME_DIR" \
             -e TMPDIR="/data/$REL_OUTPUT_DIR/tmp" \
             -e XDG_RUNTIME_DIR="/data/$REL_OUTPUT_DIR/tmp" \
+            --memory=32g \
+            --shm-size=8g \
             {params.cactus_docker} \
             bash -c "
             export HOME=/data/$TOIL_HOME_DIR
@@ -217,21 +219,25 @@ rule build_pangenome:
                 --vcf \
                 --gbz \
                 --maxCores {threads} \
+                --maxMemory 32Gi \
+                --maxDisk 1000Gi \
                 --logLevel INFO
             " 2>> {log}
         
-        # Check if Cactus output was created
-        if [ ! -f {params.output_dir}/cactus_output/pangenome.gfa ]; then
-            echo "ERROR: Cactus GFA file was not created" >> {log}
+        # Check if Cactus output was created (handle both compressed and uncompressed GFA)
+        if [ -f {params.output_dir}/cactus_output/pangenome.gfa.gz ]; then
+            echo "Found compressed GFA file, decompressing..." >> {log}
+            gunzip -c {params.output_dir}/cactus_output/pangenome.gfa.gz > {output.gfa}
+        elif [ -f {params.output_dir}/cactus_output/pangenome.gfa ]; then
+            echo "Found uncompressed GFA file, copying..." >> {log}
+            cp {params.output_dir}/cactus_output/pangenome.gfa {output.gfa}
+        else
+            echo "ERROR: No GFA file found (compressed or uncompressed)" >> {log}
             echo "Contents of cactus_output directory:" >> {log}
             ls -la {params.output_dir}/cactus_output/ >> {log} 2>&1 || echo "cactus_output directory does not exist" >> {log}
             cat {log}
             exit 1
         fi
-        
-        # Copy GFA to expected location
-        echo "Copying GFA output..." >> {log}
-        cp {params.output_dir}/cactus_output/pangenome.gfa {output.gfa}
         
         # Convert GFA to VG format using vg
         echo "Converting GFA to VG format..." >> {log}
