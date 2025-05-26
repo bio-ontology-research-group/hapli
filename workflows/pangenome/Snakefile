@@ -37,11 +37,14 @@ rule create_seqfile:
         combined=os.path.join(OUTPUT_DIR, "all_sequences.fa")
     log:
         os.path.join(OUTPUT_DIR, "logs", "create_seqfile.log")
+    params:
+        mount_dir=MOUNT_DIR
     run:
         # Create logs directory
         Path(str(log)).parent.mkdir(parents=True, exist_ok=True)
         
         # Create seqFile for Cactus (tab-separated: name<tab>path)
+        # Paths must be relative to Docker mount point (/data)
         with open(str(output.seqfile), 'w') as seqfile:
             # Add reference - use first chromosome as reference
             ref_name = None
@@ -54,15 +57,19 @@ rule create_seqfile:
             if not ref_name:
                 raise ValueError("Could not find reference chromosome name")
             
-            seqfile.write(f"{ref_name}\t{input.ref}\n")
-            print(f"Reference: {ref_name} -> {input.ref}", file=open(str(log), 'w'))
+            # Convert absolute path to Docker container path
+            ref_docker_path = "/data/" + os.path.relpath(str(input.ref), params.mount_dir)
+            seqfile.write(f"{ref_name}\t{ref_docker_path}\n")
+            print(f"Reference: {ref_name} -> {ref_docker_path} (host: {input.ref})", file=open(str(log), 'w'))
             
             # Add each haplotype
             sorted_haplotypes = sorted(input.haplotypes)
             for var_path in sorted_haplotypes:
                 haplotype_name = Path(var_path).stem
-                seqfile.write(f"{haplotype_name}\t{var_path}\n")
-                print(f"Haplotype: {haplotype_name} -> {var_path}", file=open(str(log), 'a'))
+                # Convert absolute path to Docker container path
+                hap_docker_path = "/data/" + os.path.relpath(var_path, params.mount_dir)
+                seqfile.write(f"{haplotype_name}\t{hap_docker_path}\n")
+                print(f"Haplotype: {haplotype_name} -> {hap_docker_path} (host: {var_path})", file=open(str(log), 'a'))
         
         # Also create combined FASTA for alignment stats
         with open(str(output.combined), 'w') as out:
@@ -138,6 +145,10 @@ rule build_pangenome:
         echo "Mount dir: {params.mount_dir}" >> {log}
         echo "SeqFile: {input.seqfile} -> $REL_SEQFILE" >> {log}
         echo "Output dir: {params.output_dir} -> $REL_OUTPUT_DIR" >> {log}
+        
+        # Show seqFile contents for debugging
+        echo "SeqFile contents:" >> {log}
+        cat {input.seqfile} >> {log}
         
         # Get reference name from seqFile (first entry)
         REF_NAME=$(head -n1 {input.seqfile} | cut -f1)
