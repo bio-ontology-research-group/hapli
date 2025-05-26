@@ -8,6 +8,7 @@ configfile: "config.yaml"
 REFERENCE = config["reference"]
 HAPLOTYPE_FASTAS = config["haplotype_fastas"]
 OUTPUT_DIR = config["output_dir"]
+CACTUS_DOCKER = config.get("cactus_docker", "quay.io/comparative-genomics-toolkit/cactus:v2.9.8")
 VG_DOCKER = config.get("vg_docker", "quay.io/vgteam/vg:v1.65.0")
 THREADS = config.get("threads", 4)
 MOUNT_DIR = config["mount_dir"]
@@ -26,48 +27,69 @@ rule all:
         os.path.join(OUTPUT_DIR, "pangenome_stats.txt"),
         os.path.join(OUTPUT_DIR, "sample_alignments.paf")
 
-# Create combined FASTA with all sequences
-rule combine_sequences:
+# Create seqFile for Cactus
+rule create_seqfile:
     input:
         ref=REFERENCE,
         haplotypes=HAPLOTYPE_FASTAS
     output:
+        seqfile=os.path.join(OUTPUT_DIR, "seqFile.txt"),
         combined=os.path.join(OUTPUT_DIR, "all_sequences.fa")
     log:
-        os.path.join(OUTPUT_DIR, "logs", "combine_sequences.log")
+        os.path.join(OUTPUT_DIR, "logs", "create_seqfile.log")
     run:
         # Create logs directory
         Path(str(log)).parent.mkdir(parents=True, exist_ok=True)
         
-        with open(str(output.combined), 'w') as out:
-            # Add reference sequences, preserving original chromosome names
-            print(f"Adding reference: {input.ref}", file=open(str(log), 'w'))
+        # Create seqFile for Cactus (tab-separated: name<tab>path)
+        with open(str(output.seqfile), 'w') as seqfile:
+            # Add reference - use first chromosome as reference
+            ref_name = None
             with open(str(input.ref)) as f:
                 for line in f:
                     if line.startswith('>'):
-                        # Extract chromosome name from header (everything after > until first space)
-                        chrom_name = line[1:].split()[0]
-                        out.write(f'>{chrom_name}\n')
-                        print(f"  Added chromosome: {chrom_name}", file=open(str(log), 'a'))
-                    else:
-                        out.write(line)
+                        ref_name = line[1:].split()[0]
+                        break
+            
+            if not ref_name:
+                raise ValueError("Could not find reference chromosome name")
+            
+            seqfile.write(f"{ref_name}\t{input.ref}\n")
+            print(f"Reference: {ref_name} -> {input.ref}", file=open(str(log), 'w'))
             
             # Add each haplotype
             sorted_haplotypes = sorted(input.haplotypes)
             for var_path in sorted_haplotypes:
+                haplotype_name = Path(var_path).stem
+                seqfile.write(f"{haplotype_name}\t{var_path}\n")
+                print(f"Haplotype: {haplotype_name} -> {var_path}", file=open(str(log), 'a'))
+        
+        # Also create combined FASTA for alignment stats
+        with open(str(output.combined), 'w') as out:
+            # Add reference sequences, preserving original chromosome names
+            print(f"Creating combined FASTA...", file=open(str(log), 'a'))
+            with open(str(input.ref)) as f:
+                for line in f:
+                    if line.startswith('>'):
+                        # Extract chromosome name from header
+                        chrom_name = line[1:].split()[0]
+                        out.write(f'>{chrom_name}\n')
+                    else:
+                        out.write(line)
+            
+            # Add each haplotype
+            for var_path in sorted_haplotypes:
                 haplotype_name = Path(var_path).stem 
-                print(f"Adding haplotype {haplotype_name}: {var_path}", file=open(str(log), 'a'))
                 with open(var_path) as f:
                     for line in f:
                         if line.startswith('>'):
                             # Extract chromosome name and append haplotype suffix
                             chrom_name = line[1:].split()[0]
                             out.write(f'>{chrom_name}#{haplotype_name}\n')
-                            print(f"  Added haplotype sequence: {chrom_name}#{haplotype_name}", file=open(str(log), 'a'))
                         else:
                             out.write(line)
 
-# Create all-vs-all alignment
+# Create all-vs-all alignment for stats
 rule align_all:
     input:
         seqs=os.path.join(OUTPUT_DIR, "all_sequences.fa")
@@ -84,70 +106,91 @@ rule align_all:
         wc -l {output.paf} >> {log}
         """
 
-# Build pangenome using vg msga but with path preservation
+# Build pangenome using Cactus
 rule build_pangenome:
     input:
-        seqs=os.path.join(OUTPUT_DIR, "all_sequences.fa")
+        seqfile=os.path.join(OUTPUT_DIR, "seqFile.txt")
     output:
-        vg=os.path.join(OUTPUT_DIR, "pangenome.vg"),
-        gfa=os.path.join(OUTPUT_DIR, "pangenome.gfa")
+        gfa=os.path.join(OUTPUT_DIR, "pangenome.gfa"),
+        vg=os.path.join(OUTPUT_DIR, "pangenome.vg")
     threads: THREADS
     log:
         os.path.join(OUTPUT_DIR, "logs", "build_pangenome.log")
     params:
         mount_dir=MOUNT_DIR,
-        docker_image=VG_DOCKER,
+        cactus_docker=CACTUS_DOCKER,
+        vg_docker=VG_DOCKER,
         user_id=USER_ID,
-        group_id=GROUP_ID
+        group_id=GROUP_ID,
+        output_dir=OUTPUT_DIR
     shell:
         """
         mkdir -p $(dirname {log})
         
-        # Build graph using vg msga with path preservation
-        echo "Building pangenome graph with vg msga..." > {log}
+        # Build pangenome using Cactus
+        echo "Building pangenome graph with Cactus..." > {log}
         echo "Running as user {params.user_id}:{params.group_id}" >> {log}
         
         # Create relative paths for Docker (relative to mount point)
-        REL_SEQS=$(realpath --relative-to={params.mount_dir} {input.seqs})
-        REL_VG=$(realpath --relative-to={params.mount_dir} {output.vg})
-        REL_GFA=$(realpath --relative-to={params.mount_dir} {output.gfa})
+        REL_SEQFILE=$(realpath --relative-to={params.mount_dir} {input.seqfile})
+        REL_OUTPUT_DIR=$(realpath --relative-to={params.mount_dir} {params.output_dir})
         
         echo "Mount dir: {params.mount_dir}" >> {log}
-        echo "Input sequences: {input.seqs} -> $REL_SEQS" >> {log}
-        echo "Output VG: {output.vg} -> $REL_VG" >> {log}
-        echo "Output GFA: {output.gfa} -> $REL_GFA" >> {log}
+        echo "SeqFile: {input.seqfile} -> $REL_SEQFILE" >> {log}
+        echo "Output dir: {params.output_dir} -> $REL_OUTPUT_DIR" >> {log}
         
-        # Ensure output directory exists in container
-        OUTPUT_REL_DIR=$(dirname "$REL_VG")
+        # Get reference name from seqFile (first entry)
+        REF_NAME=$(head -n1 {input.seqfile} | cut -f1)
+        echo "Reference name: $REF_NAME" >> {log}
         
-        # Run vg msga with sequence names preserved as paths
-        echo "Running vg msga..." >> {log}
+        # Create Cactus work directory
+        CACTUS_WORK_DIR="$REL_OUTPUT_DIR/cactus_work"
+        
+        # Run Cactus pangenome construction
+        echo "Running cactus-pangenome..." >> {log}
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
-            {params.docker_image} \
-            bash -c "mkdir -p '$OUTPUT_REL_DIR' && vg msga -f '$REL_SEQS' -k 32 -X 2 -E 4 -Q 22 -t {threads} --include-full-paths" > {output.vg} 2>> {log}
+            {params.cactus_docker} \
+            cactus-pangenome \
+            "$CACTUS_WORK_DIR" \
+            "$REL_SEQFILE" \
+            --outDir "$REL_OUTPUT_DIR/cactus_output" \
+            --outName pangenome \
+            --reference "$REF_NAME" \
+            --gfa \
+            --vcf \
+            --gbz \
+            --maxCores {threads} \
+            --logLevel INFO 2>> {log}
         
-        # Check if VG file was created
-        if [ ! -f {output.vg} ]; then
-            echo "ERROR: VG file was not created" >> {log}
+        # Check if Cactus output was created
+        if [ ! -f {params.output_dir}/cactus_output/pangenome.gfa ]; then
+            echo "ERROR: Cactus GFA file was not created" >> {log}
             cat {log}
             exit 1
         fi
         
-        # Convert to GFA
-        echo "Converting to GFA..." >> {log}
+        # Copy GFA to expected location
+        echo "Copying GFA output..." >> {log}
+        cp {params.output_dir}/cactus_output/pangenome.gfa {output.gfa}
+        
+        # Convert GFA to VG format using vg
+        echo "Converting GFA to VG format..." >> {log}
+        REL_GFA=$(realpath --relative-to={params.mount_dir} {output.gfa})
+        REL_VG=$(realpath --relative-to={params.mount_dir} {output.vg})
+        
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
-            {params.docker_image} \
-            vg view -g "$REL_VG" > {output.gfa} 2>> {log}
+            {params.vg_docker} \
+            vg convert -g "$REL_GFA" -v > "$REL_VG" 2>> {log}
         
-        # Check if GFA file was created
-        if [ ! -f {output.gfa} ]; then
-            echo "ERROR: GFA file was not created" >> {log}
+        # Check if VG file was created
+        if [ ! -f {output.vg} ]; then
+            echo "ERROR: VG file was not created" >> {log}
             cat {log}
             exit 1
         fi
@@ -165,7 +208,7 @@ rule graph_stats:
         stats=os.path.join(OUTPUT_DIR, "pangenome_stats.txt")
     params:
         mount_dir=MOUNT_DIR,
-        docker_image=VG_DOCKER,
+        vg_docker=VG_DOCKER,
         user_id=USER_ID,
         group_id=GROUP_ID
     shell:
@@ -179,7 +222,7 @@ rule graph_stats:
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
-            {params.docker_image} \
+            {params.vg_docker} \
             vg stats -z "$REL_VG" >> {output.stats}
         
         echo -e "\nPaths in graph:" >> {output.stats}
@@ -187,7 +230,7 @@ rule graph_stats:
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
-            {params.docker_image} \
+            {params.vg_docker} \
             vg paths -v "$REL_VG" -L >> {output.stats} 2>/dev/null || echo "No paths found" >> {output.stats}
         
         echo -e "\nGFA summary:" >> {output.stats}

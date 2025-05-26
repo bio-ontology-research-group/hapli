@@ -3,7 +3,7 @@
 Pangenome construction wrapper script.
 
 This script provides a command-line interface for building pangenomes
-from haplotype FASTA files using Snakemake and vg tools.
+from haplotype FASTA files using Snakemake and Cactus tools.
 """
 
 import argparse
@@ -122,6 +122,7 @@ def create_config(args: argparse.Namespace) -> Dict[str, Any]:
         "output_dir": output_dir,
         "mount_dir": mount_dir,
         "threads": args.threads,
+        "cactus_docker": args.cactus_docker,
         "vg_docker": args.vg_docker
     }
     
@@ -176,7 +177,7 @@ def run_snakemake(workflow_dir: str, config_path: str, args: argparse.Namespace)
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Build pangenomes from haplotype FASTA files",
+        description="Build pangenomes from haplotype FASTA files using Cactus",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -189,8 +190,8 @@ Examples:
   # Dry run to see what would be executed
   %(prog)s -r reference.fa -s sample_* -o output --dry-run
 
-  # Use more cores and custom Docker image
-  %(prog)s -r reference.fa -s sample_* -o output --cores 8 --vg-docker custom/vg:latest
+  # Use more cores and custom Docker images
+  %(prog)s -r reference.fa -s sample_* -o output --cores 8 --cactus-docker custom/cactus:latest
         """
     )
     
@@ -240,6 +241,12 @@ Examples:
         type=int,
         default=4,
         help="Number of threads for individual tools (default: 4)"
+    )
+    
+    parser.add_argument(
+        "--cactus-docker",
+        default="quay.io/comparative-genomics-toolkit/cactus:v2.9.8",
+        help="Docker image for Cactus tools (default: quay.io/comparative-genomics-toolkit/cactus:v2.9.8)"
     )
     
     parser.add_argument(
