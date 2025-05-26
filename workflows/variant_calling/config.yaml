@@ -1,6 +1,6 @@
 pangenome_vg: /home/leechuck/Public/software/hapli-nairobi/data/test/pangenome/pangenome.vg
 reference: /home/leechuck/Public/software/hapli-nairobi/data/test/reference.fa
-output_dir: /home/leechuck/Public/software/hapli-nairobi/data/test/vcf_calls
+output_dir: /home/leechuck/Public/software/hapli-nairobi/data/test/vcf_output
 mount_dir: /home/leechuck/Public/software/hapli-nairobi/data/test
 sample_names:
 - sample_000
