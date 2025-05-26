@@ -147,30 +147,45 @@ rule build_pangenome:
         CACTUS_WORK_DIR="$REL_OUTPUT_DIR/cactus_work"
         TOIL_HOME_DIR="$REL_OUTPUT_DIR/toil_home"
         
-        # Run Cactus pangenome construction
+        # Pre-create directories with proper permissions
+        mkdir -p {params.output_dir}/toil_home {params.output_dir}/tmp {params.output_dir}/cactus_work {params.output_dir}/cactus_output
+        chmod 755 {params.output_dir}/toil_home {params.output_dir}/tmp {params.output_dir}/cactus_work {params.output_dir}/cactus_output
+        
+        # Run Cactus pangenome construction with proper environment setup
         echo "Running cactus-pangenome..." >> {log}
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
+            -e HOME="/data/$TOIL_HOME_DIR" \
             -e TOIL_HOME="/data/$TOIL_HOME_DIR" \
             -e TMPDIR="/data/$REL_OUTPUT_DIR/tmp" \
+            -e XDG_RUNTIME_DIR="/data/$REL_OUTPUT_DIR/tmp" \
             {params.cactus_docker} \
-            bash -c "mkdir -p /data/$TOIL_HOME_DIR /data/$REL_OUTPUT_DIR/tmp && cactus-pangenome \
-            /data/$CACTUS_WORK_DIR \
-            /data/$REL_SEQFILE \
-            --outDir /data/$REL_OUTPUT_DIR/cactus_output \
-            --outName pangenome \
-            --reference $REF_NAME \
-            --gfa \
-            --vcf \
-            --gbz \
-            --maxCores {threads} \
-            --logLevel INFO" 2>> {log}
+            bash -c "
+            export HOME=/data/$TOIL_HOME_DIR
+            export TOIL_HOME=/data/$TOIL_HOME_DIR
+            export TMPDIR=/data/$REL_OUTPUT_DIR/tmp
+            export XDG_RUNTIME_DIR=/data/$REL_OUTPUT_DIR/tmp
+            mkdir -p \$HOME \$TOIL_HOME \$TMPDIR \$XDG_RUNTIME_DIR
+            cactus-pangenome \
+                /data/$CACTUS_WORK_DIR \
+                /data/$REL_SEQFILE \
+                --outDir /data/$REL_OUTPUT_DIR/cactus_output \
+                --outName pangenome \
+                --reference $REF_NAME \
+                --gfa \
+                --vcf \
+                --gbz \
+                --maxCores {threads} \
+                --logLevel INFO
+            " 2>> {log}
         
         # Check if Cactus output was created
         if [ ! -f {params.output_dir}/cactus_output/pangenome.gfa ]; then
             echo "ERROR: Cactus GFA file was not created" >> {log}
+            echo "Contents of cactus_output directory:" >> {log}
+            ls -la {params.output_dir}/cactus_output/ >> {log} 2>&1 || echo "cactus_output directory does not exist" >> {log}
             cat {log}
             exit 1
         fi
