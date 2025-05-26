@@ -84,7 +84,7 @@ rule align_all:
         wc -l {output.paf} >> {log}
         """
 
-# Build pangenome using vg construct instead of msga
+# Build pangenome using vg construct with MSA mode
 rule build_pangenome:
     input:
         seqs=os.path.join(OUTPUT_DIR, "all_sequences.fa")
@@ -103,8 +103,8 @@ rule build_pangenome:
         """
         mkdir -p $(dirname {log})
         
-        # Build graph using vg construct with Docker
-        echo "Building pangenome graph with vg construct..." > {log}
+        # Build graph using vg construct with MSA mode
+        echo "Building pangenome graph with vg construct (MSA mode)..." > {log}
         echo "Running as user {params.user_id}:{params.group_id}" >> {log}
         
         # Create relative paths for Docker (relative to mount point)
@@ -120,14 +120,14 @@ rule build_pangenome:
         # Ensure output directory exists in container
         OUTPUT_REL_DIR=$(dirname "$REL_VG")
         
-        # Run vg construct in Docker - this preserves sequence names as paths
-        echo "Running vg construct..." >> {log}
+        # Run vg construct with MSA mode - this treats the FASTA as multiple sequences
+        echo "Running vg construct with MSA mode..." >> {log}
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
-            bash -c "mkdir -p '$OUTPUT_REL_DIR' && vg construct -r '$REL_SEQS' -t {threads}" > {output.vg} 2>> {log}
+            bash -c "mkdir -p '$OUTPUT_REL_DIR' && vg construct -M '$REL_SEQS' -t {threads}" > {output.vg} 2>> {log}
         
         # Check if VG file was created
         if [ ! -f {output.vg} ]; then
