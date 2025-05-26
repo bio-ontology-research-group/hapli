@@ -147,6 +147,10 @@ rule build_pangenome:
         CACTUS_WORK_DIR="$REL_OUTPUT_DIR/cactus_work"
         TOIL_HOME_DIR="$REL_OUTPUT_DIR/toil_home"
         
+        # Clean up any existing work directories to avoid job store conflicts
+        echo "Cleaning up existing work directories..." >> {log}
+        rm -rf {params.output_dir}/cactus_work {params.output_dir}/toil_home {params.output_dir}/tmp {params.output_dir}/cactus_output
+        
         # Pre-create directories with proper permissions
         mkdir -p {params.output_dir}/toil_home {params.output_dir}/tmp {params.output_dir}/cactus_work {params.output_dir}/cactus_output
         chmod 755 {params.output_dir}/toil_home {params.output_dir}/tmp {params.output_dir}/cactus_work {params.output_dir}/cactus_output
