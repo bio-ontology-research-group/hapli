@@ -50,12 +50,14 @@ rule index_pangenome:
         group_id=GROUP_ID
     shell:
         """
+        set +e  # Disable strict error handling for this rule
+        
         mkdir -p $(dirname {log})
         
         echo "Indexing pangenome graph..." > {log}
         echo "Running as user {params.user_id}:{params.group_id}" >> {log}
         echo "Available memory:" >> {log}
-        free -h >> {log}
+        free -h >> {log} 2>/dev/null || echo "Memory info not available" >> {log}
         echo "" >> {log}
         
         # Create relative paths for Docker
@@ -76,7 +78,7 @@ rule index_pangenome:
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
-            vg index -x "$REL_XG" "$REL_VG" -t {threads} 2>> {log}
+            vg index -x "$REL_XG" "$REL_VG" -t {threads} >> {log} 2>&1
         
         if [ ! -f {output.xg} ]; then
             echo "ERROR: XG index creation failed" >> {log}
@@ -84,7 +86,7 @@ rule index_pangenome:
         fi
         
         echo "XG index created successfully" >> {log}
-        ls -lh {output.xg} >> {log}
+        ls -lh {output.xg} >> {log} 2>/dev/null || echo "Could not list XG file" >> {log}
         echo "" >> {log}
         
         echo "Creating GCSA index..." >> {log}
@@ -95,7 +97,7 @@ rule index_pangenome:
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
-            vg index -g "$REL_GCSA" -k 16 -X 2 -Z 1000 "$REL_VG" -t {threads} 2>> {log}
+            vg index -g "$REL_GCSA" -k 16 -X 2 -Z 1000 "$REL_VG" -t {threads} >> {log} 2>&1
         
         if [ ! -f {output.gcsa} ] || [ ! -f {output.gcsa_lcp} ]; then
             echo "GCSA index creation failed, trying with smaller parameters..." >> {log}
@@ -106,7 +108,7 @@ rule index_pangenome:
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
-                vg index -g "$REL_GCSA" -k 11 -X 1 -Z 256 "$REL_VG" -t {threads} 2>> {log}
+                vg index -g "$REL_GCSA" -k 11 -X 1 -Z 256 "$REL_VG" -t {threads} >> {log} 2>&1
         fi
         
         if [ ! -f {output.gcsa} ] || [ ! -f {output.gcsa_lcp} ]; then
@@ -115,7 +117,7 @@ rule index_pangenome:
         fi
         
         echo "GCSA index created successfully" >> {log}
-        ls -lh {output.gcsa}* >> {log}
+        ls -lh {output.gcsa}* >> {log} 2>/dev/null || echo "Could not list GCSA files" >> {log}
         echo "Indexing completed successfully" >> {log}
         """
 
@@ -136,6 +138,8 @@ rule call_all_variants:
         group_id=GROUP_ID
     shell:
         """
+        set +e  # Disable strict error handling
+        
         mkdir -p $(dirname {log})
         
         echo "Calling variants for all samples using vg deconstruct..." > {log}
@@ -152,6 +156,10 @@ rule call_all_variants:
         echo "  Output VCF: {output.multi_vcf}" >> {log}
         echo "" >> {log}
         
+        # Create a temporary directory for this job
+        TEMP_DIR=$(mktemp -d)
+        echo "Using temporary directory: $TEMP_DIR" >> {log}
+        
         # Get available paths in the graph
         echo "Checking available paths in graph..." >> {log}
         docker run --rm \
@@ -160,21 +168,27 @@ rule call_all_variants:
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
-            vg paths -v "$REL_VG" -L > /tmp/all_paths.txt 2>> {log}
+            vg paths -v "$REL_VG" -L > "$TEMP_DIR/all_paths.txt" 2>> {log}
+        
+        if [ ! -f "$TEMP_DIR/all_paths.txt" ]; then
+            echo "ERROR: Could not extract paths from VG file" >> {log}
+            rm -rf "$TEMP_DIR"
+            exit 1
+        fi
         
         echo "Available paths:" >> {log}
-        cat /tmp/all_paths.txt >> {log}
+        cat "$TEMP_DIR/all_paths.txt" >> {log}
         echo "" >> {log}
         
         # Find reference paths (those that match chr*#0#chr* pattern and don't start with sample_)
         echo "Finding reference paths..." >> {log}
-        REF_PATHS=$(grep -E '^chr[^#]*#0#chr' /tmp/all_paths.txt | grep -v '^sample_' || echo "")
+        grep -E '^chr[^#]*#0#chr' "$TEMP_DIR/all_paths.txt" | grep -v '^sample_' > "$TEMP_DIR/ref_paths.txt" || echo "" > "$TEMP_DIR/ref_paths.txt"
         
         echo "Reference paths found:" >> {log}
-        echo "$REF_PATHS" >> {log}
+        cat "$TEMP_DIR/ref_paths.txt" >> {log}
         echo "" >> {log}
         
-        if [ -n "$REF_PATHS" ]; then
+        if [ -s "$TEMP_DIR/ref_paths.txt" ]; then
             # Create temporary VCF files for each reference path
             echo "Calling variants for each reference path..." >> {log}
             TEMP_VCFS=""
@@ -182,7 +196,9 @@ rule call_all_variants:
             while IFS= read -r ref_path; do
                 if [ -n "$ref_path" ]; then
                     echo "Processing reference path: $ref_path" >> {log}
-                    TEMP_VCF="/tmp/variants_${{ref_path//[^a-zA-Z0-9]/_}}.vcf"
+                    # Create safe filename
+                    SAFE_NAME=$(echo "$ref_path" | sed 's/[^a-zA-Z0-9]/_/g')
+                    TEMP_VCF="$TEMP_DIR/variants_$SAFE_NAME.vcf"
                     TEMP_VCFS="$TEMP_VCFS $TEMP_VCF"
                     
                     echo "Running: vg deconstruct -P $ref_path -H '!' -a -t {threads} $REL_VG" >> {log}
@@ -195,17 +211,30 @@ rule call_all_variants:
                         {params.docker_image} \
                         vg deconstruct -P "$ref_path" -H '!' -a -t {threads} "$REL_VG" > "$TEMP_VCF" 2>> {log}
                     
-                    echo "Variants called for $ref_path: $(grep -v '^#' "$TEMP_VCF" | wc -l)" >> {log}
+                    if [ -f "$TEMP_VCF" ]; then
+                        VARIANT_COUNT=$(grep -v '^#' "$TEMP_VCF" | wc -l || echo "0")
+                        echo "Variants called for $ref_path: $VARIANT_COUNT" >> {log}
+                    else
+                        echo "WARNING: No VCF created for $ref_path" >> {log}
+                    fi
                 fi
-            done <<< "$REF_PATHS"
+            done < "$TEMP_DIR/ref_paths.txt"
             
             # Merge all VCF files
             echo "Merging VCF files..." >> {log}
             echo "Temporary VCF files: $TEMP_VCFS" >> {log}
             
-            # Get header from first VCF
-            FIRST_VCF=$(echo $TEMP_VCFS | cut -d' ' -f1)
-            if [ -f "$FIRST_VCF" ]; then
+            # Get header from first VCF that exists
+            FIRST_VCF=""
+            for temp_vcf in $TEMP_VCFS; do
+                if [ -f "$temp_vcf" ]; then
+                    FIRST_VCF="$temp_vcf"
+                    break
+                fi
+            done
+            
+            if [ -n "$FIRST_VCF" ] && [ -f "$FIRST_VCF" ]; then
+                echo "Using header from: $FIRST_VCF" >> {log}
                 grep '^#' "$FIRST_VCF" > {output.multi_vcf}
                 
                 # Append variants from all VCFs, converting chromosome names
@@ -213,14 +242,12 @@ rule call_all_variants:
                     if [ -f "$temp_vcf" ]; then
                         echo "Processing variants from $temp_vcf..." >> {log}
                         # Convert chromosome names from path format to simple chromosome names
-                        grep -v '^#' "$temp_vcf" | sed 's/^chr[^#]*#0#//' >> {output.multi_vcf}
+                        grep -v '^#' "$temp_vcf" | sed 's/^chr[^#]*#0#//' >> {output.multi_vcf} || true
                     fi
                 done
-                
-                # Clean up temporary files
-                rm -f $TEMP_VCFS
             else
-                echo "ERROR: No temporary VCF files were created" >> {log}
+                echo "ERROR: No temporary VCF files were created successfully" >> {log}
+                rm -rf "$TEMP_DIR"
                 exit 1
             fi
         else
@@ -229,7 +256,7 @@ rule call_all_variants:
             echo "##fileformat=VCFv4.2" > {output.multi_vcf}
             echo "##source=vg_deconstruct" >> {output.multi_vcf}
             echo "##reference=file://$REL_REF" >> {output.multi_vcf}
-            echo "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">" >> {output.multi_vcf}
+            echo '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">' >> {output.multi_vcf}
             
             # Get reference chromosome names and add contig lines
             docker run --rm \
@@ -238,27 +265,31 @@ rule call_all_variants:
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
-                sh -c "grep '^>' '$REL_REF' | sed 's/^>//' | cut -d' ' -f1" | while read -r chr; do
-                chr_len=$(docker run --rm \
-                    --user {params.user_id}:{params.group_id} \
-                    --memory=1g \
-                    -v {params.mount_dir}:/data \
-                    -w /data \
-                    {params.docker_image} \
-                    sh -c "grep -A 999999 '^>$chr' '$REL_REF' | grep -v '^>' | tr -d '\n' | wc -c" 2>/dev/null || echo "0")
-                echo "##contig=<ID=$chr,length=$chr_len>" >> {output.multi_vcf}
-            done
+                sh -c "grep '^>' '$REL_REF' | sed 's/^>//' | cut -d' ' -f1" > "$TEMP_DIR/chroms.txt" 2>> {log}
+            
+            while read -r chr; do
+                if [ -n "$chr" ]; then
+                    chr_len=$(docker run --rm \
+                        --user {params.user_id}:{params.group_id} \
+                        --memory=1g \
+                        -v {params.mount_dir}:/data \
+                        -w /data \
+                        {params.docker_image} \
+                        sh -c "grep -A 999999 '^>$chr' '$REL_REF' | grep -v '^>' | tr -d '\n' | wc -c" 2>/dev/null || echo "0")
+                    echo "##contig=<ID=$chr,length=$chr_len>" >> {output.multi_vcf}
+                fi
+            done < "$TEMP_DIR/chroms.txt"
             
             # Create header with sample names
-            HEADER="#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT"
+            HEADER="#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT"
             for sample in {SAMPLE_NAMES}; do
-                HEADER="$HEADER	$sample"
+                HEADER="$HEADER\t$sample"
             done
-            echo "$HEADER" >> {output.multi_vcf}
+            echo -e "$HEADER" >> {output.multi_vcf}
         fi
         
         # Clean up
-        rm -f /tmp/all_paths.txt
+        rm -rf "$TEMP_DIR"
         
         # Check if VCF was created
         if [ ! -f {output.multi_vcf} ]; then
@@ -268,13 +299,16 @@ rule call_all_variants:
         
         echo "Multi-sample variant calling completed" >> {log}
         echo "Output VCF info:" >> {log}
-        ls -lh {output.multi_vcf} >> {log}
-        echo "Number of variants:" >> {log}
-        grep -v '^#' {output.multi_vcf} | wc -l >> {log}
+        ls -lh {output.multi_vcf} >> {log} 2>/dev/null || echo "Could not list output file" >> {log}
+        
+        VARIANT_COUNT=$(grep -v '^#' {output.multi_vcf} | wc -l || echo "0")
+        echo "Number of variants: $VARIANT_COUNT" >> {log}
+        
         echo "Chromosome distribution:" >> {log}
-        grep -v '^#' {output.multi_vcf} | cut -f1 | sort | uniq -c >> {log}
+        grep -v '^#' {output.multi_vcf} | cut -f1 | sort | uniq -c >> {log} 2>/dev/null || echo "No variants to analyze" >> {log}
+        
         echo "First few variants:" >> {log}
-        grep -v '^#' {output.multi_vcf} | head -5 >> {log}
+        grep -v '^#' {output.multi_vcf} | head -5 >> {log} 2>/dev/null || echo "No variants to show" >> {log}
         """
 
 # Extract individual sample VCF from multi-sample VCF and make it phased
@@ -298,6 +332,8 @@ rule extract_sample_vcf:
         script_path=os.path.join(WORKFLOW_DIR, "convert_haplotypes.py")
     shell:
         """
+        set +e  # Disable strict error handling
+        
         mkdir -p $(dirname {log})
         
         echo "Extracting and phasing variants for sample {params.sample}..." > {log}
@@ -306,14 +342,17 @@ rule extract_sample_vcf:
         # Create relative paths for Docker
         REL_REF=$(realpath --relative-to={params.mount_dir} {input.reference})
         
+        # Create temporary directory
+        TEMP_DIR=$(mktemp -d)
+        
         # Check if the multi-sample VCF has content
         if [ ! -s {input.multi_vcf} ]; then
             echo "WARNING: Multi-sample VCF is empty, creating empty sample VCF" >> {log}
             # Create minimal VCF for this sample
-            echo "##fileformat=VCFv4.2" > /tmp/{params.sample}.vcf
-            echo "##source=vg_deconstruct" >> /tmp/{params.sample}.vcf
-            echo "##reference=file://$REL_REF" >> /tmp/{params.sample}.vcf
-            echo "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">" >> /tmp/{params.sample}.vcf
+            echo "##fileformat=VCFv4.2" > "$TEMP_DIR/{params.sample}.vcf"
+            echo "##source=vg_deconstruct" >> "$TEMP_DIR/{params.sample}.vcf"
+            echo "##reference=file://$REL_REF" >> "$TEMP_DIR/{params.sample}.vcf"
+            echo '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">' >> "$TEMP_DIR/{params.sample}.vcf"
             
             # Get all reference chromosome names
             docker run --rm \
@@ -322,27 +361,32 @@ rule extract_sample_vcf:
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
-                sh -c "grep '^>' '$REL_REF' | sed 's/^>//' | cut -d' ' -f1" | while read -r chr; do
-                chr_len=$(docker run --rm \
-                    --user {params.user_id}:{params.group_id} \
-                    --memory=1g \
-                    -v {params.mount_dir}:/data \
-                    -w /data \
-                    {params.docker_image} \
-                    sh -c "grep -A 999999 '^>$chr' '$REL_REF' | grep -v '^>' | tr -d '\n' | wc -c" 2>/dev/null || echo "0")
-                echo "##contig=<ID=$chr,length=$chr_len>" >> /tmp/{params.sample}.vcf
-            done
+                sh -c "grep '^>' '$REL_REF' | sed 's/^>//' | cut -d' ' -f1" > "$TEMP_DIR/chroms.txt" 2>> {log}
             
-            echo "#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	{params.sample}" >> /tmp/{params.sample}.vcf
+            while read -r chr; do
+                if [ -n "$chr" ]; then
+                    chr_len=$(docker run --rm \
+                        --user {params.user_id}:{params.group_id} \
+                        --memory=1g \
+                        -v {params.mount_dir}:/data \
+                        -w /data \
+                        {params.docker_image} \
+                        sh -c "grep -A 999999 '^>$chr' '$REL_REF' | grep -v '^>' | tr -d '\n' | wc -c" 2>/dev/null || echo "0")
+                    echo "##contig=<ID=$chr,length=$chr_len>" >> "$TEMP_DIR/{params.sample}.vcf"
+                fi
+            done < "$TEMP_DIR/chroms.txt"
+            
+            echo -e "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t{params.sample}" >> "$TEMP_DIR/{params.sample}.vcf"
             
             # Compress and index
-            bgzip /tmp/{params.sample}.vcf
-            mv /tmp/{params.sample}.vcf.gz {output.vcf}
+            bgzip "$TEMP_DIR/{params.sample}.vcf"
+            mv "$TEMP_DIR/{params.sample}.vcf.gz" {output.vcf}
+            rm -rf "$TEMP_DIR"
             exit 0
         fi
         
         # Get header line to find sample columns
-        HEADER_LINE=$(grep '^#CHROM' {input.multi_vcf})
+        HEADER_LINE=$(grep '^#CHROM' {input.multi_vcf} || echo "")
         echo "Header line: $HEADER_LINE" >> {log}
         
         # Look for haplotype columns for this sample
@@ -355,8 +399,12 @@ rule extract_sample_vcf:
         echo "" >> {log}
         
         # Find column positions for the haplotypes
-        HAP1_POS=$(echo "$HEADER_LINE" | tr '\t' '\n' | grep -n "^$HAP1_COL$" | cut -d: -f1)
-        HAP2_POS=$(echo "$HEADER_LINE" | tr '\t' '\n' | grep -n "^$HAP2_COL$" | cut -d: -f1)
+        HAP1_POS=""
+        HAP2_POS=""
+        if [ -n "$HEADER_LINE" ]; then
+            HAP1_POS=$(echo "$HEADER_LINE" | tr '\t' '\n' | grep -n "^$HAP1_COL$" | cut -d: -f1 || echo "")
+            HAP2_POS=$(echo "$HEADER_LINE" | tr '\t' '\n' | grep -n "^$HAP2_COL$" | cut -d: -f1 || echo "")
+        fi
         
         echo "Column positions:" >> {log}
         echo "  $HAP1_COL: $HAP1_POS" >> {log}
@@ -366,13 +414,13 @@ rule extract_sample_vcf:
         if [ -z "$HAP1_POS" ] && [ -z "$HAP2_POS" ]; then
             echo "WARNING: No haplotype columns found for {params.sample}" >> {log}
             echo "Available columns:" >> {log}
-            echo "$HEADER_LINE" | tr '\t' '\n' | nl >> {log}
+            echo "$HEADER_LINE" | tr '\t' '\n' | nl >> {log} 2>/dev/null || echo "Could not parse header" >> {log}
             
             # Create empty VCF
-            echo "##fileformat=VCFv4.2" > /tmp/{params.sample}.vcf
-            echo "##source=vg_deconstruct" >> /tmp/{params.sample}.vcf
-            echo "##reference=file://$REL_REF" >> /tmp/{params.sample}.vcf
-            echo "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">" >> /tmp/{params.sample}.vcf
+            echo "##fileformat=VCFv4.2" > "$TEMP_DIR/{params.sample}.vcf"
+            echo "##source=vg_deconstruct" >> "$TEMP_DIR/{params.sample}.vcf"
+            echo "##reference=file://$REL_REF" >> "$TEMP_DIR/{params.sample}.vcf"
+            echo '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">' >> "$TEMP_DIR/{params.sample}.vcf"
             
             # Get all reference chromosome names
             docker run --rm \
@@ -381,33 +429,47 @@ rule extract_sample_vcf:
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
-                sh -c "grep '^>' '$REL_REF' | sed 's/^>//' | cut -d' ' -f1" | while read -r chr; do
-                chr_len=$(docker run --rm \
-                    --user {params.user_id}:{params.group_id} \
-                    --memory=1g \
-                    -v {params.mount_dir}:/data \
-                    -w /data \
-                    {params.docker_image} \
-                    sh -c "grep -A 999999 '^>$chr' '$REL_REF' | grep -v '^>' | tr -d '\n' | wc -c" 2>/dev/null || echo "0")
-                echo "##contig=<ID=$chr,length=$chr_len>" >> /tmp/{params.sample}.vcf
-            done
+                sh -c "grep '^>' '$REL_REF' | sed 's/^>//' | cut -d' ' -f1" > "$TEMP_DIR/chroms.txt" 2>> {log}
             
-            echo "#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	{params.sample}" >> /tmp/{params.sample}.vcf
+            while read -r chr; do
+                if [ -n "$chr" ]; then
+                    chr_len=$(docker run --rm \
+                        --user {params.user_id}:{params.group_id} \
+                        --memory=1g \
+                        -v {params.mount_dir}:/data \
+                        -w /data \
+                        {params.docker_image} \
+                        sh -c "grep -A 999999 '^>$chr' '$REL_REF' | grep -v '^>' | tr -d '\n' | wc -c" 2>/dev/null || echo "0")
+                    echo "##contig=<ID=$chr,length=$chr_len>" >> "$TEMP_DIR/{params.sample}.vcf"
+                fi
+            done < "$TEMP_DIR/chroms.txt"
+            
+            echo -e "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t{params.sample}" >> "$TEMP_DIR/{params.sample}.vcf"
             
             # Compress and index
-            bgzip /tmp/{params.sample}.vcf
-            mv /tmp/{params.sample}.vcf.gz {output.vcf}
+            bgzip "$TEMP_DIR/{params.sample}.vcf"
+            mv "$TEMP_DIR/{params.sample}.vcf.gz" {output.vcf}
+            rm -rf "$TEMP_DIR"
             exit 0
         fi
         
         # Run the conversion using the separate Python script
         echo "Running conversion script..." >> {log}
-        echo "Command: python {params.script_path} {input.multi_vcf} /tmp/{params.sample}.vcf {params.sample} $HAP1_POS $HAP2_POS" >> {log}
-        python {params.script_path} {input.multi_vcf} /tmp/{params.sample}.vcf {params.sample} "$HAP1_POS" "$HAP2_POS" 2>> {log}
+        echo "Command: python {params.script_path} {input.multi_vcf} $TEMP_DIR/{params.sample}.vcf {params.sample} $HAP1_POS $HAP2_POS" >> {log}
+        python {params.script_path} {input.multi_vcf} "$TEMP_DIR/{params.sample}.vcf" {params.sample} "$HAP1_POS" "$HAP2_POS" >> {log} 2>&1
         
         # Compress the VCF
-        bgzip /tmp/{params.sample}.vcf
-        mv /tmp/{params.sample}.vcf.gz {output.vcf}
+        if [ -f "$TEMP_DIR/{params.sample}.vcf" ]; then
+            bgzip "$TEMP_DIR/{params.sample}.vcf"
+            mv "$TEMP_DIR/{params.sample}.vcf.gz" {output.vcf}
+        else
+            echo "ERROR: Conversion script did not create VCF file" >> {log}
+            rm -rf "$TEMP_DIR"
+            exit 1
+        fi
+        
+        # Clean up
+        rm -rf "$TEMP_DIR"
         
         # Validate output
         if [ ! -f {output.vcf} ]; then
@@ -417,13 +479,16 @@ rule extract_sample_vcf:
         
         echo "Sample variant extraction completed for {params.sample}" >> {log}
         echo "Output VCF info:" >> {log}
-        ls -lh {output.vcf} >> {log}
-        echo "Number of variants:" >> {log}
-        zcat {output.vcf} | grep -v '^#' | wc -l >> {log}
+        ls -lh {output.vcf} >> {log} 2>/dev/null || echo "Could not list output file" >> {log}
+        
+        VARIANT_COUNT=$(zcat {output.vcf} | grep -v '^#' | wc -l || echo "0")
+        echo "Number of variants: $VARIANT_COUNT" >> {log}
+        
         echo "Chromosome distribution:" >> {log}
-        zcat {output.vcf} | grep -v '^#' | cut -f1 | sort | uniq -c >> {log}
+        zcat {output.vcf} | grep -v '^#' | cut -f1 | sort | uniq -c >> {log} 2>/dev/null || echo "No variants to analyze" >> {log}
+        
         echo "First few variants:" >> {log}
-        zcat {output.vcf} | grep -v '^#' | head -5 >> {log}
+        zcat {output.vcf} | grep -v '^#' | head -5 >> {log} 2>/dev/null || echo "No variants to show" >> {log}
         """
 
 # Index individual sample VCFs
@@ -441,6 +506,8 @@ rule index_sample_vcf:
         group_id=GROUP_ID
     shell:
         """
+        set +e  # Disable strict error handling
+        
         mkdir -p $(dirname {log})
         
         echo "Indexing VCF for {wildcards.sample}..." > {log}
@@ -453,7 +520,7 @@ rule index_sample_vcf:
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
-            tabix -p vcf "$REL_VCF" 2>> {log}
+            tabix -p vcf "$REL_VCF" >> {log} 2>&1
         
         echo "VCF indexing completed for {wildcards.sample}" >> {log}
         """
@@ -477,6 +544,8 @@ rule create_multi_sample_vcf:
         script_path=os.path.join(WORKFLOW_DIR, "convert_multi_sample_haplotypes.py")
     shell:
         """
+        set +e  # Disable strict error handling
+        
         mkdir -p $(dirname {log})
         
         echo "Creating multi-sample phased VCF..." > {log}
@@ -486,14 +555,17 @@ rule create_multi_sample_vcf:
         # Create relative paths for Docker
         REL_REF=$(realpath --relative-to={params.mount_dir} {input.reference})
         
+        # Create temporary directory
+        TEMP_DIR=$(mktemp -d)
+        
         # Check if the multi-sample VCF has content
         if [ ! -s {input.multi_vcf} ]; then
             echo "WARNING: Multi-sample VCF is empty, creating empty multi-sample phased VCF" >> {log}
             # Create minimal VCF header
-            echo "##fileformat=VCFv4.2" > /tmp/all_samples.vcf
-            echo "##source=vg_deconstruct" >> /tmp/all_samples.vcf
-            echo "##reference=file://$REL_REF" >> /tmp/all_samples.vcf
-            echo "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">" >> /tmp/all_samples.vcf
+            echo "##fileformat=VCFv4.2" > "$TEMP_DIR/all_samples.vcf"
+            echo "##source=vg_deconstruct" >> "$TEMP_DIR/all_samples.vcf"
+            echo "##reference=file://$REL_REF" >> "$TEMP_DIR/all_samples.vcf"
+            echo '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">' >> "$TEMP_DIR/all_samples.vcf"
             
             # Get all reference chromosome names
             docker run --rm \
@@ -502,38 +574,52 @@ rule create_multi_sample_vcf:
                 -v {params.mount_dir}:/data \
                 -w /data \
                 {params.docker_image} \
-                sh -c "grep '^>' '$REL_REF' | sed 's/^>//' | cut -d' ' -f1" | while read -r chr; do
-                chr_len=$(docker run --rm \
-                    --user {params.user_id}:{params.group_id} \
-                    --memory=1g \
-                    -v {params.mount_dir}:/data \
-                    -w /data \
-                    {params.docker_image} \
-                    sh -c "grep -A 999999 '^>$chr' '$REL_REF' | grep -v '^>' | tr -d '\n' | wc -c" 2>/dev/null || echo "0")
-                echo "##contig=<ID=$chr,length=$chr_len>" >> /tmp/all_samples.vcf
-            done
+                sh -c "grep '^>' '$REL_REF' | sed 's/^>//' | cut -d' ' -f1" > "$TEMP_DIR/chroms.txt" 2>> {log}
+            
+            while read -r chr; do
+                if [ -n "$chr" ]; then
+                    chr_len=$(docker run --rm \
+                        --user {params.user_id}:{params.group_id} \
+                        --memory=1g \
+                        -v {params.mount_dir}:/data \
+                        -w /data \
+                        {params.docker_image} \
+                        sh -c "grep -A 999999 '^>$chr' '$REL_REF' | grep -v '^>' | tr -d '\n' | wc -c" 2>/dev/null || echo "0")
+                    echo "##contig=<ID=$chr,length=$chr_len>" >> "$TEMP_DIR/all_samples.vcf"
+                fi
+            done < "$TEMP_DIR/chroms.txt"
             
             # Create header with all sample names
-            HEADER="#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT"
+            HEADER="#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT"
             for sample in {params.sample_names}; do
-                HEADER="$HEADER	$sample"
+                HEADER="$HEADER\t$sample"
             done
-            echo "$HEADER" >> /tmp/all_samples.vcf
+            echo -e "$HEADER" >> "$TEMP_DIR/all_samples.vcf"
             
             # Compress
-            bgzip /tmp/all_samples.vcf
-            mv /tmp/all_samples.vcf.gz {output.all_vcf}
+            bgzip "$TEMP_DIR/all_samples.vcf"
+            mv "$TEMP_DIR/all_samples.vcf.gz" {output.all_vcf}
+            rm -rf "$TEMP_DIR"
             exit 0
         fi
         
         # Run the conversion using the separate Python script
         echo "Running multi-sample conversion script..." >> {log}
-        echo "Command: python {params.script_path} {input.multi_vcf} /tmp/all_samples.vcf {params.sample_names}" >> {log}
-        python {params.script_path} {input.multi_vcf} /tmp/all_samples.vcf {params.sample_names} 2>> {log}
+        echo "Command: python {params.script_path} {input.multi_vcf} $TEMP_DIR/all_samples.vcf {params.sample_names}" >> {log}
+        python {params.script_path} {input.multi_vcf} "$TEMP_DIR/all_samples.vcf" {params.sample_names} >> {log} 2>&1
         
         # Compress the VCF
-        bgzip /tmp/all_samples.vcf
-        mv /tmp/all_samples.vcf.gz {output.all_vcf}
+        if [ -f "$TEMP_DIR/all_samples.vcf" ]; then
+            bgzip "$TEMP_DIR/all_samples.vcf"
+            mv "$TEMP_DIR/all_samples.vcf.gz" {output.all_vcf}
+        else
+            echo "ERROR: Multi-sample conversion script did not create VCF file" >> {log}
+            rm -rf "$TEMP_DIR"
+            exit 1
+        fi
+        
+        # Clean up
+        rm -rf "$TEMP_DIR"
         
         # Validate output
         if [ ! -f {output.all_vcf} ]; then
@@ -543,13 +629,16 @@ rule create_multi_sample_vcf:
         
         echo "Multi-sample phased VCF creation completed" >> {log}
         echo "Output VCF info:" >> {log}
-        ls -lh {output.all_vcf} >> {log}
-        echo "Number of variants:" >> {log}
-        zcat {output.all_vcf} | grep -v '^#' | wc -l >> {log}
+        ls -lh {output.all_vcf} >> {log} 2>/dev/null || echo "Could not list output file" >> {log}
+        
+        VARIANT_COUNT=$(zcat {output.all_vcf} | grep -v '^#' | wc -l || echo "0")
+        echo "Number of variants: $VARIANT_COUNT" >> {log}
+        
         echo "Chromosome distribution:" >> {log}
-        zcat {output.all_vcf} | grep -v '^#' | cut -f1 | sort | uniq -c >> {log}
+        zcat {output.all_vcf} | grep -v '^#' | cut -f1 | sort | uniq -c >> {log} 2>/dev/null || echo "No variants to analyze" >> {log}
+        
         echo "First few variants:" >> {log}
-        zcat {output.all_vcf} | grep -v '^#' | head -5 >> {log}
+        zcat {output.all_vcf} | grep -v '^#' | head -5 >> {log} 2>/dev/null || echo "No variants to show" >> {log}
         """
 
 # Index multi-sample VCF
@@ -567,6 +656,8 @@ rule index_multi_sample_vcf:
         group_id=GROUP_ID
     shell:
         """
+        set +e  # Disable strict error handling
+        
         mkdir -p $(dirname {log})
         
         echo "Indexing multi-sample VCF..." > {log}
@@ -579,7 +670,7 @@ rule index_multi_sample_vcf:
             -v {params.mount_dir}:/data \
             -w /data \
             {params.docker_image} \
-            tabix -p vcf "$REL_VCF" 2>> {log}
+            tabix -p vcf "$REL_VCF" >> {log} 2>&1
         
         echo "Multi-sample VCF indexing completed" >> {log}
         """
@@ -595,6 +686,8 @@ rule calling_stats:
         os.path.join(OUTPUT_DIR, "logs", "calling_stats.log")
     shell:
         """
+        set +e  # Disable strict error handling
+        
         mkdir -p $(dirname {log})
         
         echo "Generating calling statistics..." > {log}
@@ -605,7 +698,7 @@ rule calling_stats:
         echo "Sample-wise variant counts:" >> {output.stats}
         for vcf in {input.vcfs}; do
             sample=$(basename "$vcf" .vcf.gz)
-            count=$(zcat "$vcf" | grep -v '^#' | wc -l)
+            count=$(zcat "$vcf" | grep -v '^#' | wc -l || echo "0")
             phased_count=$(zcat "$vcf" | grep -v '^#' | grep -c '|' || echo "0")
             echo "$sample: $count variants ($phased_count phased)" >> {output.stats}
             echo "  $sample: $count variants ($phased_count phased)" >> {log}
@@ -613,7 +706,7 @@ rule calling_stats:
         
         echo "" >> {output.stats}
         echo "Multi-sample VCF:" >> {output.stats}
-        all_count=$(zcat {input.all_vcf} | grep -v '^#' | wc -l)
+        all_count=$(zcat {input.all_vcf} | grep -v '^#' | wc -l || echo "0")
         all_phased=$(zcat {input.all_vcf} | grep -v '^#' | grep -c '|' || echo "0")
         echo "All samples: $all_count variants ($all_phased phased)" >> {output.stats}
         echo "  All samples: $all_count variants ($all_phased phased)" >> {log}
@@ -621,11 +714,11 @@ rule calling_stats:
         echo "" >> {output.stats}
         echo "Chromosome-wise variant distribution:" >> {output.stats}
         echo "Multi-sample VCF:" >> {output.stats}
-        zcat {input.all_vcf} | grep -v '^#' | cut -f1 | sort | uniq -c >> {output.stats} || echo "No variants found" >> {output.stats}
+        zcat {input.all_vcf} | grep -v '^#' | cut -f1 | sort | uniq -c >> {output.stats} 2>/dev/null || echo "No variants found" >> {output.stats}
         
         echo "" >> {output.stats}
         echo "Total variants across all samples:" >> {output.stats}
-        total_variants=$(zcat {input.vcfs} | grep -v '^#' | wc -l)
+        total_variants=$(zcat {input.vcfs} | grep -v '^#' | wc -l || echo "0")
         echo "Total: $total_variants" >> {output.stats}
         echo "Total: $total_variants" >> {log}
         
@@ -635,7 +728,7 @@ rule calling_stats:
             sample=$(basename "$vcf" .vcf.gz)
             echo "=== $sample ===" >> {output.stats}
             echo "Chromosomes in VCF:" >> {output.stats}
-            zcat "$vcf" | grep -v '^#' | cut -f1 | sort | uniq -c >> {output.stats} || echo "No variants" >> {output.stats}
+            zcat "$vcf" | grep -v '^#' | cut -f1 | sort | uniq -c >> {output.stats} 2>/dev/null || echo "No variants" >> {output.stats}
             echo "" >> {output.stats}
         done
         
