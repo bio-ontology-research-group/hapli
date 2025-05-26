@@ -244,16 +244,21 @@ rule build_pangenome:
         REL_GFA=$(realpath --relative-to={params.mount_dir} {output.gfa})
         REL_VG=$(realpath --relative-to={params.mount_dir} {output.vg})
         
+        echo "GFA path for Docker: /data/$REL_GFA" >> {log}
+        echo "VG path for Docker: /data/$REL_VG" >> {log}
+        
         docker run --rm \
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
             {params.vg_docker} \
-            vg convert -g "/data/$REL_GFA" -v > "/data/$REL_VG" 2>> {log}
+            bash -c "vg convert -g '/data/$REL_GFA' -v > '/data/$REL_VG'" 2>> {log}
         
         # Check if VG file was created
         if [ ! -f {output.vg} ]; then
             echo "ERROR: VG file was not created" >> {log}
+            echo "Expected VG file: {output.vg}" >> {log}
+            echo "Docker VG path: /data/$REL_VG" >> {log}
             cat {log}
             exit 1
         fi
