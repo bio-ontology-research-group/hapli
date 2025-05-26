@@ -143,8 +143,9 @@ rule build_pangenome:
         REF_NAME=$(head -n1 {input.seqfile} | cut -f1)
         echo "Reference name: $REF_NAME" >> {log}
         
-        # Create Cactus work directory
+        # Create Cactus work directory and toil home
         CACTUS_WORK_DIR="$REL_OUTPUT_DIR/cactus_work"
+        TOIL_HOME_DIR="$REL_OUTPUT_DIR/toil_home"
         
         # Run Cactus pangenome construction
         echo "Running cactus-pangenome..." >> {log}
@@ -152,18 +153,20 @@ rule build_pangenome:
             --user {params.user_id}:{params.group_id} \
             -v {params.mount_dir}:/data \
             -w /data \
+            -e TOIL_HOME="/data/$TOIL_HOME_DIR" \
+            -e TMPDIR="/data/$REL_OUTPUT_DIR/tmp" \
             {params.cactus_docker} \
-            cactus-pangenome \
-            "$CACTUS_WORK_DIR" \
-            "$REL_SEQFILE" \
-            --outDir "$REL_OUTPUT_DIR/cactus_output" \
+            bash -c "mkdir -p /data/$TOIL_HOME_DIR /data/$REL_OUTPUT_DIR/tmp && cactus-pangenome \
+            /data/$CACTUS_WORK_DIR \
+            /data/$REL_SEQFILE \
+            --outDir /data/$REL_OUTPUT_DIR/cactus_output \
             --outName pangenome \
-            --reference "$REF_NAME" \
+            --reference $REF_NAME \
             --gfa \
             --vcf \
             --gbz \
             --maxCores {threads} \
-            --logLevel INFO 2>> {log}
+            --logLevel INFO" 2>> {log}
         
         # Check if Cactus output was created
         if [ ! -f {params.output_dir}/cactus_output/pangenome.gfa ]; then
@@ -186,7 +189,7 @@ rule build_pangenome:
             -v {params.mount_dir}:/data \
             -w /data \
             {params.vg_docker} \
-            vg convert -g "$REL_GFA" -v > "$REL_VG" 2>> {log}
+            vg convert -g "/data/$REL_GFA" -v > "/data/$REL_VG" 2>> {log}
         
         # Check if VG file was created
         if [ ! -f {output.vg} ]; then
@@ -223,7 +226,7 @@ rule graph_stats:
             -v {params.mount_dir}:/data \
             -w /data \
             {params.vg_docker} \
-            vg stats -z "$REL_VG" >> {output.stats}
+            vg stats -z "/data/$REL_VG" >> {output.stats}
         
         echo -e "\nPaths in graph:" >> {output.stats}
         docker run --rm \
@@ -231,7 +234,7 @@ rule graph_stats:
             -v {params.mount_dir}:/data \
             -w /data \
             {params.vg_docker} \
-            vg paths -v "$REL_VG" -L >> {output.stats} 2>/dev/null || echo "No paths found" >> {output.stats}
+            vg paths -v "/data/$REL_VG" -L >> {output.stats} 2>/dev/null || echo "No paths found" >> {output.stats}
         
         echo -e "\nGFA summary:" >> {output.stats}
         echo -n "Nodes: " >> {output.stats}
