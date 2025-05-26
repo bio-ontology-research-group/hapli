@@ -378,7 +378,7 @@ def main():
     parser.add_argument('--reference', type=Path, required=True, help='Input reference FASTA file')
     parser.add_argument('--num-samples', type=int, default=1, help='Number of diploid samples to generate')
     parser.add_argument('--variants-per-haplotype', type=int, default=10, help='Number of variants per haplotype')
-    parser.add_argument('--output-dir', type=Path, default='data/test/variants/', help='Output directory')
+    parser.add_argument('--output-dir', type=Path, default='data/test/samples/', help='Output directory')
     parser.add_argument('--variant-types', default='snv,insertion,deletion', 
                        help='Comma-separated list of variant types to generate (snv,insertion,deletion)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
