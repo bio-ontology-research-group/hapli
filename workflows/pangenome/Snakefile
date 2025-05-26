@@ -62,7 +62,7 @@ rule create_seqfile:
             seqfile.write(f"{ref_name}\t{ref_docker_path}\n")
             print(f"Reference: {ref_name} -> {ref_docker_path} (host: {input.ref})", file=open(str(log), 'w'))
             
-            # Add each haplotype
+            # Add each haplotype with unique names to avoid duplicates
             sorted_haplotypes = sorted(input.haplotypes)
             for var_path in sorted_haplotypes:
                 haplotype_name = Path(var_path).stem
@@ -239,7 +239,7 @@ rule build_pangenome:
             exit 1
         fi
         
-        # Convert GFA to VG format using vg
+        # Convert GFA to VG format using vg (use -p instead of deprecated -v)
         echo "Converting GFA to VG format..." >> {log}
         REL_GFA=$(realpath --relative-to={params.mount_dir} {output.gfa})
         REL_VG=$(realpath --relative-to={params.mount_dir} {output.vg})
@@ -252,7 +252,7 @@ rule build_pangenome:
             -v {params.mount_dir}:/data \
             -w /data \
             {params.vg_docker} \
-            bash -c "vg convert -g '/data/$REL_GFA' -v > '/data/$REL_VG'" 2>> {log}
+            bash -c "vg convert -g '/data/$REL_GFA' -p > '/data/$REL_VG'" 2>> {log}
         
         # Check if VG file was created
         if [ ! -f {output.vg} ]; then
