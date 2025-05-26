@@ -152,8 +152,32 @@ rule build_pangenome:
         rm -rf {params.output_dir}/cactus_work {params.output_dir}/toil_home {params.output_dir}/tmp {params.output_dir}/cactus_output
         
         # Pre-create directories with proper permissions
-        mkdir -p {params.output_dir}/toil_home {params.output_dir}/tmp {params.output_dir}/cactus_work {params.output_dir}/cactus_output
-        chmod 755 {params.output_dir}/toil_home {params.output_dir}/tmp {params.output_dir}/cactus_work {params.output_dir}/cactus_output
+        mkdir -p {params.output_dir}/toil_home {params.output_dir}/tmp {params.output_dir}/cactus_output
+        chmod 755 {params.output_dir}/toil_home {params.output_dir}/tmp {params.output_dir}/cactus_output
+        
+        # Clean up any existing job store using toil clean (in case of previous failed runs)
+        echo "Cleaning up any existing job stores..." >> {log}
+        docker run --rm \
+            --user {params.user_id}:{params.group_id} \
+            -v {params.mount_dir}:/data \
+            -w /data \
+            -e HOME="/data/$TOIL_HOME_DIR" \
+            -e TOIL_HOME="/data/$TOIL_HOME_DIR" \
+            -e TMPDIR="/data/$REL_OUTPUT_DIR/tmp" \
+            -e XDG_RUNTIME_DIR="/data/$REL_OUTPUT_DIR/tmp" \
+            {params.cactus_docker} \
+            bash -c "
+            export HOME=/data/$TOIL_HOME_DIR
+            export TOIL_HOME=/data/$TOIL_HOME_DIR
+            export TMPDIR=/data/$REL_OUTPUT_DIR/tmp
+            export XDG_RUNTIME_DIR=/data/$REL_OUTPUT_DIR/tmp
+            mkdir -p \$HOME \$TOIL_HOME \$TMPDIR \$XDG_RUNTIME_DIR
+            if [ -d '/data/$CACTUS_WORK_DIR' ]; then
+                echo 'Cleaning existing job store...'
+                toil clean file:/data/$CACTUS_WORK_DIR || true
+                rm -rf /data/$CACTUS_WORK_DIR || true
+            fi
+            " 2>> {log}
         
         # Run Cactus pangenome construction with proper environment setup
         echo "Running cactus-pangenome..." >> {log}
