@@ -47,9 +47,12 @@ class GFFAligner:
         
         try:
             # Try to load existing database
-            self.db = gffutils.FeatureDB(db_path)
-            logging.info("Loaded existing GFF3 database")
-        except (gffutils.exceptions.FeatureDBError, ValueError):
+            if Path(db_path).exists():
+                self.db = gffutils.FeatureDB(db_path)
+                logging.info("Loaded existing GFF3 database")
+            else:
+                raise FileNotFoundError("Database file does not exist")
+        except (gffutils.exceptions.FeatureDBError, ValueError, FileNotFoundError):
             # Create new database
             logging.info("Creating new GFF3 database")
             self.db = gffutils.create_db(
