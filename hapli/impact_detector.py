@@ -191,11 +191,52 @@ class ImpactDetector:
     how structural variations affect feature integrity.
     """
     
-    IMPACT_TYPES = {
+    # General impact types
+    GENERAL_IMPACT_TYPES = {
         'INTACT': 'Feature is completely preserved',
         'TRUNCATED': 'Feature is partially missing at ends',
         'SPLIT': 'Feature is broken into multiple fragments',
         'MISSING': 'Feature is completely absent or unmappable'
+    }
+    
+    # Feature-specific consequences
+    CDS_CONSEQUENCES = {
+        'FRAMESHIFT': 'Reading frame is disrupted by indel not divisible by 3',
+        'START_LOST': 'Start codon is missing or disrupted',
+        'STOP_LOST': 'Stop codon is missing or disrupted', 
+        'INFRAME_INDEL': 'In-frame insertion or deletion (divisible by 3)',
+        'SYNONYMOUS': 'No amino acid change expected',
+        'NONSENSE': 'Premature stop codon introduced'
+    }
+    
+    PROMOTER_CONSEQUENCES = {
+        'COMPLETE': 'Promoter region is fully preserved',
+        'PARTIAL': 'Promoter region is partially preserved',
+        'MISSING': 'Promoter region is completely missing',
+        'CORE_DISRUPTED': 'Core promoter elements are disrupted',
+        'TSS_SHIFTED': 'Transcription start site position is altered'
+    }
+    
+    SPLICE_SITE_CONSEQUENCES = {
+        'EXACT': 'Splice site sequence exactly preserved',
+        'SHIFTED': 'Splice site position shifted but potentially functional',
+        'LOST': 'Splice site sequence completely lost',
+        'WEAKENED': 'Splice site sequence altered, reducing efficiency',
+        'CRYPTIC_CREATED': 'New cryptic splice site created nearby'
+    }
+    
+    UTR_CONSEQUENCES = {
+        'COMPLETE': 'UTR is fully preserved',
+        'PARTIAL': 'UTR is partially preserved',
+        'MISSING': 'UTR is completely missing',
+        'REGULATORY_LOST': 'Regulatory elements within UTR are disrupted'
+    }
+    
+    EXON_CONSEQUENCES = {
+        'COMPLETE': 'Exon is fully preserved',
+        'PARTIAL': 'Exon is partially preserved',
+        'MISSING': 'Exon is completely missing',
+        'SKIPPED': 'Exon appears to be skipped in splicing'
     }
     
     def __init__(self, gfa_file: Path, min_alignment_coverage: float = 0.8,
@@ -241,7 +282,7 @@ class ImpactDetector:
             gam_data: Parsed GAM data from GAMParser.group_alignments_by_sample_haplotype()
             
         Returns:
-            Impact analysis: {sample: {haplotype: {feature: {'impact': type, 'details': {...}}}}}
+            Impact analysis: {sample: {haplotype: {feature: {'type': type, 'consequence': consequence, 'details': {...}}}}}
         """
         logger.info("Analyzing feature impacts...")
         
@@ -266,7 +307,7 @@ class ImpactDetector:
     def _analyze_single_feature_impact(self, feature: Dict[str, Any], 
                                      sample: str, haplotype: str) -> Dict[str, Any]:
         """
-        Analyze impact for a single feature.
+        Analyze impact for a single feature with feature-type specific analysis.
         
         Args:
             feature: Feature alignment data
@@ -274,17 +315,20 @@ class ImpactDetector:
             haplotype: Haplotype identifier
             
         Returns:
-            Impact analysis for the feature
+            Impact analysis for the feature with type and consequence
         """
         feature_name = feature['read_name']
+        feature_type = feature.get('feature_type', 'unknown')
         sequence_length = len(feature['sequence'])
         identity = feature.get('identity', 0.0)
         score = feature.get('score', 0)
         
-        # Initialize impact analysis
+        # Initialize impact analysis with new structure
         impact_analysis = {
-            'impact': 'MISSING',
+            'type': 'MISSING',
+            'consequence': 'MISSING',
             'details': {
+                'feature_type': feature_type,
                 'sequence_length': sequence_length,
                 'identity': identity,
                 'score': score,
@@ -330,17 +374,180 @@ class ImpactDetector:
         fragments = self._analyze_fragments(aligned_nodes, sequence_length)
         impact_analysis['details']['fragments'] = fragments
         
-        # Determine impact type
-        impact_type = self._determine_impact_type(coverage, fragments, components_spanned)
-        impact_analysis['impact'] = impact_type
+        # Determine general impact type
+        general_impact = self._determine_general_impact_type(coverage, fragments, components_spanned)
+        impact_analysis['type'] = general_impact
         
         # Set flags based on impact type
-        if impact_type == 'SPLIT':
+        if general_impact == 'SPLIT':
             impact_analysis['details']['is_split'] = True
-        elif impact_type == 'TRUNCATED':
+        elif general_impact == 'TRUNCATED':
             impact_analysis['details']['is_truncated'] = True
         
+        # Dispatch to feature-specific analysis
+        consequence = self._analyze_feature_specific_impact(
+            feature, general_impact, coverage, fragments, components_spanned
+        )
+        impact_analysis['consequence'] = consequence
+        
         return impact_analysis
+    
+    def _analyze_feature_specific_impact(self, feature: Dict[str, Any], 
+                                       general_impact: str, coverage: float,
+                                       fragments: List[Dict[str, Any]], 
+                                       components_spanned: List[int]) -> str:
+        """
+        Analyze feature-specific consequences based on feature type.
+        
+        Args:
+            feature: Feature data
+            general_impact: General impact type (INTACT, TRUNCATED, SPLIT, MISSING)
+            coverage: Alignment coverage
+            fragments: Fragment analysis
+            components_spanned: Components spanned by alignment
+            
+        Returns:
+            Feature-specific consequence
+        """
+        feature_type = feature.get('feature_type', '').lower()
+        
+        # Dispatch to appropriate analyzer
+        if feature_type == 'cds':
+            return self._analyze_cds_impact(feature, general_impact, coverage, fragments)
+        elif feature_type in ['promoter', 'regulatory']:
+            return self._analyze_promoter_impact(feature, general_impact, coverage, fragments)
+        elif 'splice' in feature_type or feature_type == 'splice_site':
+            return self._analyze_splice_site_impact(feature, general_impact, coverage, fragments)
+        elif 'utr' in feature_type or feature_type in ['5_prime_utr', '3_prime_utr']:
+            return self._analyze_utr_impact(feature, general_impact, coverage, fragments)
+        elif feature_type == 'exon':
+            return self._analyze_exon_impact(feature, general_impact, coverage, fragments)
+        else:
+            # Default to general impact for unknown feature types
+            return general_impact
+    
+    def _analyze_cds_impact(self, feature: Dict[str, Any], general_impact: str,
+                          coverage: float, fragments: List[Dict[str, Any]]) -> str:
+        """Analyze CDS-specific impact."""
+        sequence = feature.get('sequence', '')
+        sequence_length = len(sequence)
+        
+        if general_impact == 'MISSING':
+            return 'MISSING'
+        
+        # Check for frameshift based on fragment analysis
+        if len(fragments) > 1:
+            # Multiple fragments suggest potential frameshift
+            total_gap_length = 0
+            for i in range(len(fragments) - 1):
+                # Estimate gap between fragments (simplified)
+                gap_estimate = abs(len(fragments[i]['nodes']) - len(fragments[i+1]['nodes']))
+                total_gap_length += gap_estimate
+            
+            if total_gap_length % 3 != 0:
+                return 'FRAMESHIFT'
+            else:
+                return 'INFRAME_INDEL'
+        
+        # Check for start/stop codon loss based on coverage at ends
+        if coverage < self.min_alignment_coverage:
+            if coverage < 0.5:
+                # Low coverage might indicate start or stop loss
+                # This is simplified - in reality we'd need position information
+                if len(sequence) >= 3:
+                    # Check if likely start codon region affected
+                    if 'ATG' in sequence[:9]:  # Start region
+                        return 'START_LOST'
+                    # Check if likely stop codon region affected  
+                    elif any(stop in sequence[-9:] for stop in ['TAA', 'TAG', 'TGA']):
+                        return 'STOP_LOST'
+            
+            return 'TRUNCATED'
+        
+        # High coverage, likely intact or synonymous
+        if coverage >= 0.95:
+            return 'SYNONYMOUS'
+        else:
+            return 'INFRAME_INDEL'
+    
+    def _analyze_promoter_impact(self, feature: Dict[str, Any], general_impact: str,
+                               coverage: float, fragments: List[Dict[str, Any]]) -> str:
+        """Analyze promoter/regulatory element impact."""
+        if general_impact == 'MISSING':
+            return 'MISSING'
+        
+        if coverage >= 0.9:
+            return 'COMPLETE'
+        elif coverage >= 0.5:
+            # Check if core promoter region likely affected
+            if len(fragments) > 1:
+                return 'CORE_DISRUPTED'
+            else:
+                return 'PARTIAL'
+        elif coverage >= 0.2:
+            return 'TSS_SHIFTED'
+        else:
+            return 'MISSING'
+    
+    def _analyze_splice_site_impact(self, feature: Dict[str, Any], general_impact: str,
+                                  coverage: float, fragments: List[Dict[str, Any]]) -> str:
+        """Analyze splice site impact."""
+        if general_impact == 'MISSING':
+            return 'LOST'
+        
+        sequence = feature.get('sequence', '')
+        
+        # Check for canonical splice site sequences
+        has_gt_ag = 'GT' in sequence and 'AG' in sequence
+        has_gc_ag = 'GC' in sequence and 'AG' in sequence
+        
+        if coverage >= 0.95:
+            if has_gt_ag or has_gc_ag:
+                return 'EXACT'
+            else:
+                return 'WEAKENED'
+        elif coverage >= 0.7:
+            return 'SHIFTED'
+        elif coverage >= 0.3:
+            if has_gt_ag or has_gc_ag:
+                return 'WEAKENED'
+            else:
+                return 'CRYPTIC_CREATED'
+        else:
+            return 'LOST'
+    
+    def _analyze_utr_impact(self, feature: Dict[str, Any], general_impact: str,
+                          coverage: float, fragments: List[Dict[str, Any]]) -> str:
+        """Analyze UTR impact."""
+        if general_impact == 'MISSING':
+            return 'MISSING'
+        
+        if coverage >= 0.9:
+            return 'COMPLETE'
+        elif coverage >= 0.5:
+            # Check if regulatory elements likely affected
+            if len(fragments) > 1:
+                return 'REGULATORY_LOST'
+            else:
+                return 'PARTIAL'
+        else:
+            return 'MISSING'
+    
+    def _analyze_exon_impact(self, feature: Dict[str, Any], general_impact: str,
+                           coverage: float, fragments: List[Dict[str, Any]]) -> str:
+        """Analyze exon impact."""
+        if general_impact == 'MISSING':
+            return 'MISSING'
+        
+        if coverage >= 0.9:
+            return 'COMPLETE'
+        elif coverage >= 0.3:
+            if len(fragments) > 1:
+                return 'SKIPPED'
+            else:
+                return 'PARTIAL'
+        else:
+            return 'MISSING'
     
     def _extract_aligned_nodes(self, path_positions: List[Dict[str, Any]]) -> List[str]:
         """Extract list of aligned node IDs from path positions."""
@@ -413,9 +620,9 @@ class ImpactDetector:
         
         return fragments
     
-    def _determine_impact_type(self, coverage: float, fragments: List[Dict[str, Any]], 
-                             components_spanned: List[int]) -> str:
-        """Determine the impact type based on analysis results."""
+    def _determine_general_impact_type(self, coverage: float, fragments: List[Dict[str, Any]], 
+                                     components_spanned: List[int]) -> str:
+        """Determine the general impact type based on analysis results."""
         # Missing: very low coverage or no fragments
         if coverage < 0.1 or not fragments:
             return 'MISSING'
@@ -447,7 +654,13 @@ class ImpactDetector:
         """
         summary = {
             'total_features': 0,
-            'impact_counts': {impact_type: 0 for impact_type in self.IMPACT_TYPES},
+            'impact_type_counts': {impact_type: 0 for impact_type in self.GENERAL_IMPACT_TYPES},
+            'consequence_counts': defaultdict(int),
+            'feature_type_analysis': defaultdict(lambda: {
+                'total': 0,
+                'impact_types': {impact_type: 0 for impact_type in self.GENERAL_IMPACT_TYPES},
+                'consequences': defaultdict(int)
+            }),
             'structural_variations_detected': 0,
             'features_spanning_multiple_components': 0,
             'avg_coverage': 0.0,
@@ -463,7 +676,8 @@ class ImpactDetector:
             sample_summary = {
                 'haplotypes': len(impact_results[sample]),
                 'total_features': 0,
-                'impact_counts': {impact_type: 0 for impact_type in self.IMPACT_TYPES}
+                'impact_type_counts': {impact_type: 0 for impact_type in self.GENERAL_IMPACT_TYPES},
+                'consequence_counts': defaultdict(int)
             }
             
             for haplotype in impact_results[sample]:
@@ -471,9 +685,22 @@ class ImpactDetector:
                     summary['total_features'] += 1
                     sample_summary['total_features'] += 1
                     
-                    impact_type = analysis['impact']
-                    summary['impact_counts'][impact_type] += 1
-                    sample_summary['impact_counts'][impact_type] += 1
+                    impact_type = analysis['type']
+                    consequence = analysis['consequence']
+                    feature_type = analysis['details'].get('feature_type', 'unknown')
+                    
+                    # Count impact types
+                    summary['impact_type_counts'][impact_type] += 1
+                    sample_summary['impact_type_counts'][impact_type] += 1
+                    
+                    # Count consequences
+                    summary['consequence_counts'][consequence] += 1
+                    sample_summary['consequence_counts'][consequence] += 1
+                    
+                    # Feature type specific analysis
+                    summary['feature_type_analysis'][feature_type]['total'] += 1
+                    summary['feature_type_analysis'][feature_type]['impact_types'][impact_type] += 1
+                    summary['feature_type_analysis'][feature_type]['consequences'][consequence] += 1
                     
                     details = analysis['details']
                     total_coverage += details.get('coverage', 0.0)
@@ -485,12 +712,25 @@ class ImpactDetector:
                     if len(details.get('components_spanned', [])) > 1:
                         summary['features_spanning_multiple_components'] += 1
             
+            # Convert defaultdicts to regular dicts for JSON serialization
+            sample_summary['consequence_counts'] = dict(sample_summary['consequence_counts'])
             summary['sample_summaries'][sample] = sample_summary
         
         # Calculate averages
         if summary['total_features'] > 0:
             summary['avg_coverage'] = total_coverage / summary['total_features']
             summary['avg_identity'] = total_identity / summary['total_features']
+        
+        # Convert defaultdicts to regular dicts for JSON serialization
+        summary['consequence_counts'] = dict(summary['consequence_counts'])
+        summary['feature_type_analysis'] = {
+            ft: {
+                'total': data['total'],
+                'impact_types': data['impact_types'],
+                'consequences': dict(data['consequences'])
+            }
+            for ft, data in summary['feature_type_analysis'].items()
+        }
         
         return summary
     
@@ -511,7 +751,14 @@ class ImpactDetector:
                 'min_identity_threshold': self.min_identity_threshold,
                 'gfa_file': str(self.gfa_file)
             },
-            'impact_type_descriptions': self.IMPACT_TYPES
+            'impact_type_descriptions': {
+                'general_types': self.GENERAL_IMPACT_TYPES,
+                'cds_consequences': self.CDS_CONSEQUENCES,
+                'promoter_consequences': self.PROMOTER_CONSEQUENCES,
+                'splice_site_consequences': self.SPLICE_SITE_CONSEQUENCES,
+                'utr_consequences': self.UTR_CONSEQUENCES,
+                'exon_consequences': self.EXON_CONSEQUENCES
+            }
         }
         
         with open(output_file, 'w') as f:
@@ -564,11 +811,19 @@ def main():
     summary = detector.get_impact_summary(impact_results)
     print(f"\nImpact Analysis Summary:")
     print(f"Total features analyzed: {summary['total_features']}")
-    print(f"Impact distribution:")
-    for impact_type, count in summary['impact_counts'].items():
+    print(f"Impact type distribution:")
+    for impact_type, count in summary['impact_type_counts'].items():
         percentage = (count / summary['total_features'] * 100) if summary['total_features'] > 0 else 0
         print(f"  {impact_type}: {count} ({percentage:.1f}%)")
-    print(f"Structural variations detected: {summary['structural_variations_detected']}")
+    
+    print(f"\nTop consequences:")
+    sorted_consequences = sorted(summary['consequence_counts'].items(), 
+                               key=lambda x: x[1], reverse=True)[:10]
+    for consequence, count in sorted_consequences:
+        percentage = (count / summary['total_features'] * 100) if summary['total_features'] > 0 else 0
+        print(f"  {consequence}: {count} ({percentage:.1f}%)")
+    
+    print(f"\nStructural variations detected: {summary['structural_variations_detected']}")
     print(f"Features spanning multiple components: {summary['features_spanning_multiple_components']}")
     print(f"Average coverage: {summary['avg_coverage']:.3f}")
     print(f"Average identity: {summary['avg_identity']:.3f}")
