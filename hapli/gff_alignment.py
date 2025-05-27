@@ -50,19 +50,20 @@ class GFFAligner:
             if Path(db_path).exists():
                 self.db = gffutils.FeatureDB(db_path)
                 logging.info("Loaded existing GFF3 database")
-            else:
-                raise FileNotFoundError("Database file does not exist")
-        except (gffutils.exceptions.FeatureDBError, ValueError, FileNotFoundError):
-            # Create new database
-            logging.info("Creating new GFF3 database")
-            self.db = gffutils.create_db(
-                str(self.gff_path),
-                db_path,
-                force=True,
-                keep_order=True,
-                merge_strategy='merge',
-                sort_attribute_values=True
-            )
+                return self.db
+        except (gffutils.exceptions.FeatureDBError, ValueError) as e:
+            logging.debug(f"Could not load existing database: {e}")
+        
+        # Create new database
+        logging.info("Creating new GFF3 database")
+        self.db = gffutils.create_db(
+            str(self.gff_path),
+            db_path,
+            force=True,
+            keep_order=True,
+            merge_strategy='merge',
+            sort_attribute_values=True
+        )
         
         return self.db
     
