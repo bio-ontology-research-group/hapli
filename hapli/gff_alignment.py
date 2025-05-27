@@ -6,15 +6,28 @@ This module provides core functionality to:
 1. Topologically sort GFF3 features by hierarchy and size
 2. Extract corresponding sequences from reference genome
 3. Align features to GFA paths using minimap2
+4. Handle hierarchical constraints for sub-feature alignment
 """
 
 import logging
+import json
+import subprocess
+import tempfile
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Set
+from typing import Dict, List, Tuple, Optional, Set, NamedTuple, Union
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 import gffutils
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
+
+try:
+    import mappy
+    MAPPY_AVAILABLE = True
+except ImportError:
+    MAPPY_AVAILABLE = False
+    logging.warning("mappy not available, falling back to minimap2 subprocess")
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -27,16 +40,192 @@ def setup_logging(verbose: bool = False) -> None:
     )
 
 
+@dataclass
+class FeatureAlignment:
+    """Represents an alignment of a GFF3 feature to a genome graph path."""
+    feature_id: str
+    feature_type: str
+    path_name: str
+    path_start: int
+    path_end: int
+    feature_start: int
+    feature_end: int
+    strand: str
+    mapq: int
+    alignment_score: int
+    sequence_identity: float
+    feature_sequence: str
+    parent_feature_id: Optional[str] = None
+    hierarchy_level: int = 0
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'feature_id': self.feature_id,
+            'feature_type': self.feature_type,
+            'path_name': self.path_name,
+            'path_start': self.path_start,
+            'path_end': self.path_end,
+            'feature_start': self.feature_start,
+            'feature_end': self.feature_end,
+            'strand': self.strand,
+            'mapq': self.mapq,
+            'alignment_score': self.alignment_score,
+            'sequence_identity': self.sequence_identity,
+            'feature_sequence': self.feature_sequence,
+            'parent_feature_id': self.parent_feature_id,
+            'hierarchy_level': self.hierarchy_level
+        }
+
+
+class GenomeGraphPathExtractor:
+    """Extract paths from genome graph files (GFA/VG/XG)."""
+    
+    def __init__(self, graph_file: Path, reference_path_name: Optional[str] = None):
+        """Initialize with genome graph file."""
+        self.graph_file = graph_file
+        self.reference_path_name = reference_path_name
+        self.file_type = self._detect_file_type()
+    
+    def _detect_file_type(self) -> str:
+        """Detect the type of genome graph file."""
+        suffix = self.graph_file.suffix.lower()
+        if suffix == '.gfa':
+            return 'gfa'
+        elif suffix == '.vg':
+            return 'vg'
+        elif suffix == '.xg':
+            return 'xg'
+        else:
+            # Try to detect from content
+            try:
+                with open(self.graph_file, 'r') as f:
+                    first_line = f.readline().strip()
+                    if first_line.startswith('H\t'):
+                        return 'gfa'
+            except UnicodeDecodeError:
+                # Binary file, likely VG or XG
+                pass
+            
+            logging.warning(f"Could not detect file type for {self.graph_file}, assuming VG")
+            return 'vg'
+    
+    def extract_paths(self) -> Dict[str, str]:
+        """Extract all paths from the genome graph."""
+        if self.file_type == 'gfa':
+            return self._extract_gfa_paths()
+        elif self.file_type in ['vg', 'xg']:
+            return self._extract_vg_paths()
+        else:
+            raise ValueError(f"Unsupported file type: {self.file_type}")
+    
+    def _extract_gfa_paths(self) -> Dict[str, str]:
+        """Extract paths from GFA file."""
+        logging.info(f"Extracting paths from GFA file: {self.graph_file}")
+        
+        # Parse GFA to extract segments and paths
+        segments = {}
+        paths = {}
+        
+        with open(self.graph_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                fields = line.split('\t')
+                if fields[0] == 'S':  # Segment
+                    seg_id = fields[1]
+                    sequence = fields[2]
+                    segments[seg_id] = sequence
+                
+                elif fields[0] == 'P':  # Path
+                    path_name = fields[1]
+                    path_segments = fields[2].split(',')
+                    
+                    # Reconstruct sequence from segments
+                    path_sequence = ""
+                    for seg in path_segments:
+                        # Handle orientation
+                        if seg.endswith('+'):
+                            seg_id = seg[:-1]
+                            if seg_id in segments:
+                                path_sequence += segments[seg_id]
+                        elif seg.endswith('-'):
+                            seg_id = seg[:-1]
+                            if seg_id in segments:
+                                # Reverse complement
+                                from Bio.Seq import Seq
+                                path_sequence += str(Seq(segments[seg_id]).reverse_complement())
+                        else:
+                            # No orientation specified, assume forward
+                            if seg in segments:
+                                path_sequence += segments[seg]
+                    
+                    paths[path_name] = path_sequence
+        
+        logging.info(f"Extracted {len(paths)} paths from GFA")
+        return paths
+    
+    def _extract_vg_paths(self) -> Dict[str, str]:
+        """Extract paths from VG/XG file using vg commands."""
+        logging.info(f"Extracting paths from VG/XG file: {self.graph_file}")
+        
+        try:
+            # Get list of paths
+            cmd = ['vg', 'paths', '-L', str(self.graph_file)]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            path_names = [line.strip() for line in result.stdout.split('\n') if line.strip()]
+            
+            logging.info(f"Found {len(path_names)} paths in graph")
+            
+            # Extract sequences for each path
+            paths = {}
+            for path_name in path_names:
+                try:
+                    cmd = ['vg', 'find', '-p', path_name, '-x', str(self.graph_file)]
+                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    
+                    # Parse FASTA output
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.fa', delete=False) as tmp:
+                        tmp.write(result.stdout)
+                        tmp_path = tmp.name
+                    
+                    try:
+                        with open(tmp_path, 'r') as f:
+                            for record in SeqIO.parse(f, 'fasta'):
+                                paths[path_name] = str(record.seq)
+                                break  # Take first sequence
+                    finally:
+                        Path(tmp_path).unlink(missing_ok=True)
+                        
+                except subprocess.CalledProcessError as e:
+                    logging.warning(f"Could not extract path {path_name}: {e}")
+                    continue
+            
+            return paths
+            
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Failed to extract paths from VG file: {e}")
+            return {}
+
+
 class GFFAligner:
     """Handle GFF3 topological sorting and sequence alignment."""
     
-    def __init__(self, gff_path: Path, reference_path: Path):
+    def __init__(self, gff_path: Path, reference_path: Path, graph_file: Optional[Path] = None, 
+                 reference_path_name: Optional[str] = None):
         """Initialize with GFF3 and reference files."""
         self.gff_path = gff_path
         self.reference_path = reference_path
+        self.graph_file = graph_file
+        self.reference_path_name = reference_path_name
         self.db = None
         self.reference_genome = {}
         self.sorted_features = []
+        self.graph_paths = {}
+        self.feature_parent_map = {}
+        self.parent_alignments = {}  # Store alignments of parent features
         
     def load_gff_database(self) -> gffutils.FeatureDB:
         """Load GFF3 file into gffutils database."""
@@ -79,6 +268,35 @@ class GFFAligner:
         logging.info(f"Loaded {len(genome)} chromosomes")
         self.reference_genome = genome
         return genome
+    
+    def load_graph_paths(self) -> Dict[str, str]:
+        """Load paths from genome graph file."""
+        if not self.graph_file:
+            return {}
+        
+        extractor = GenomeGraphPathExtractor(self.graph_file, self.reference_path_name)
+        self.graph_paths = extractor.extract_paths()
+        
+        logging.info(f"Loaded {len(self.graph_paths)} graph paths")
+        return self.graph_paths
+    
+    def build_feature_parent_map(self) -> Dict[str, str]:
+        """Build mapping from feature ID to parent feature ID."""
+        if not self.db:
+            raise ValueError("GFF3 database not loaded")
+        
+        parent_map = {}
+        
+        for feature in self.db.all_features():
+            try:
+                parents = list(self.db.parents(feature))
+                if parents:
+                    parent_map[feature.id] = parents[0].id
+            except (gffutils.exceptions.FeatureNotFoundError, StopIteration):
+                continue
+        
+        self.feature_parent_map = parent_map
+        return parent_map
     
     def get_feature_hierarchy_level(self, feature: gffutils.Feature) -> int:
         """Determine hierarchy level of a feature (0=top level, higher=nested)."""
@@ -200,6 +418,241 @@ class GFFAligner:
         logging.info(f"Successfully extracted {len(feature_sequences)} sequences")
         return feature_sequences
     
+    def align_sequence_to_path(self, sequence: str, path_sequence: str, path_name: str) -> List[FeatureAlignment]:
+        """Align a feature sequence to a graph path using minimap2/mappy."""
+        alignments = []
+        
+        if MAPPY_AVAILABLE:
+            # Use mappy for alignment
+            try:
+                # Create aligner
+                aligner = mappy.Aligner(seq=path_sequence, preset="map-ont")
+                
+                # Perform alignment
+                for hit in aligner.map(sequence):
+                    alignment = FeatureAlignment(
+                        feature_id="",  # Will be filled by caller
+                        feature_type="",  # Will be filled by caller
+                        path_name=path_name,
+                        path_start=hit.r_st,
+                        path_end=hit.r_en,
+                        feature_start=hit.q_st,
+                        feature_end=hit.q_en,
+                        strand="+" if hit.strand == 1 else "-",
+                        mapq=hit.mapq,
+                        alignment_score=hit.score if hasattr(hit, 'score') else 0,
+                        sequence_identity=hit.mlen / max(hit.blen, 1),
+                        feature_sequence=sequence
+                    )
+                    alignments.append(alignment)
+                    
+            except Exception as e:
+                logging.warning(f"mappy alignment failed for path {path_name}: {e}")
+        
+        else:
+            # Fall back to minimap2 subprocess
+            try:
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.fa', delete=False) as path_tmp:
+                    path_tmp.write(f">{path_name}\n{path_sequence}\n")
+                    path_tmp_path = path_tmp.name
+                
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.fa', delete=False) as query_tmp:
+                    query_tmp.write(f">query\n{sequence}\n")
+                    query_tmp_path = query_tmp.name
+                
+                try:
+                    # Run minimap2
+                    cmd = ['minimap2', '-a', path_tmp_path, query_tmp_path]
+                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    
+                    # Parse SAM output
+                    for line in result.stdout.split('\n'):
+                        if line.strip() and not line.startswith('@'):
+                            fields = line.split('\t')
+                            if len(fields) >= 11 and fields[2] != '*':  # Valid alignment
+                                alignment = FeatureAlignment(
+                                    feature_id="",  # Will be filled by caller
+                                    feature_type="",  # Will be filled by caller
+                                    path_name=path_name,
+                                    path_start=int(fields[3]) - 1,  # Convert to 0-based
+                                    path_end=int(fields[3]) - 1 + len(sequence),  # Approximate
+                                    feature_start=0,
+                                    feature_end=len(sequence),
+                                    strand="+" if int(fields[1]) & 16 == 0 else "-",
+                                    mapq=int(fields[4]),
+                                    alignment_score=0,  # Not easily available from SAM
+                                    sequence_identity=1.0,  # Approximate
+                                    feature_sequence=sequence
+                                )
+                                alignments.append(alignment)
+                
+                finally:
+                    Path(path_tmp_path).unlink(missing_ok=True)
+                    Path(query_tmp_path).unlink(missing_ok=True)
+                    
+            except Exception as e:
+                logging.warning(f"minimap2 alignment failed for path {path_name}: {e}")
+        
+        return alignments
+    
+    def get_parent_constraint_regions(self, feature: gffutils.Feature) -> Dict[str, List[Tuple[int, int]]]:
+        """Get allowed regions for this feature based on parent alignments."""
+        if feature.id not in self.feature_parent_map:
+            return {}  # No parent, no constraints
+        
+        parent_id = self.feature_parent_map[feature.id]
+        if parent_id not in self.parent_alignments:
+            return {}  # Parent not aligned yet
+        
+        # Get allowed regions from parent alignments
+        constraint_regions = defaultdict(list)
+        
+        for alignment in self.parent_alignments[parent_id]:
+            path_name = alignment.path_name
+            # Add some buffer around parent region
+            buffer = 100
+            start = max(0, alignment.path_start - buffer)
+            end = alignment.path_end + buffer
+            constraint_regions[path_name].append((start, end))
+        
+        return constraint_regions
+    
+    def is_alignment_within_constraints(self, alignment: FeatureAlignment, 
+                                      constraint_regions: Dict[str, List[Tuple[int, int]]]) -> bool:
+        """Check if alignment falls within constraint regions."""
+        if not constraint_regions:
+            return True  # No constraints
+        
+        path_name = alignment.path_name
+        if path_name not in constraint_regions:
+            return False  # Path not allowed
+        
+        # Check if alignment overlaps with any allowed region
+        for start, end in constraint_regions[path_name]:
+            if alignment.path_start < end and alignment.path_end > start:
+                return True
+        
+        return False
+    
+    def align_feature_to_all_paths(self, feature: gffutils.Feature, sequence: str) -> List[FeatureAlignment]:
+        """Align a feature to all graph paths with hierarchical constraints."""
+        if not self.graph_paths:
+            return []
+        
+        all_alignments = []
+        
+        # Get parent constraints
+        constraint_regions = self.get_parent_constraint_regions(feature)
+        hierarchy_level = self.get_feature_hierarchy_level(feature)
+        parent_id = self.feature_parent_map.get(feature.id)
+        
+        # Align to each path
+        for path_name, path_sequence in self.graph_paths.items():
+            try:
+                alignments = self.align_sequence_to_path(sequence, path_sequence, path_name)
+                
+                for alignment in alignments:
+                    # Fill in feature information
+                    alignment.feature_id = feature.id
+                    alignment.feature_type = feature.featuretype
+                    alignment.hierarchy_level = hierarchy_level
+                    alignment.parent_feature_id = parent_id
+                    
+                    # Check constraints
+                    if self.is_alignment_within_constraints(alignment, constraint_regions):
+                        all_alignments.append(alignment)
+                
+            except Exception as e:
+                logging.warning(f"Failed to align feature {feature.id} to path {path_name}: {e}")
+                continue
+        
+        # Store alignments for this feature (for use as constraints by children)
+        if all_alignments and hierarchy_level == 0:  # Top-level features
+            self.parent_alignments[feature.id] = all_alignments
+        
+        return all_alignments
+    
+    def align_features_parallel(self, max_workers: int = 4) -> List[FeatureAlignment]:
+        """Align all features to graph paths in parallel, respecting hierarchy."""
+        if not self.sorted_features:
+            raise ValueError("Features not sorted. Run topological_sort_features() first.")
+        
+        if not self.graph_paths:
+            raise ValueError("Graph paths not loaded. Run load_graph_paths() first.")
+        
+        logging.info(f"Aligning {len(self.sorted_features)} features using {max_workers} workers")
+        
+        all_alignments = []
+        
+        # Group features by hierarchy level to maintain ordering constraints
+        features_by_level = defaultdict(list)
+        for feature in self.sorted_features:
+            level = self.get_feature_hierarchy_level(feature)
+            features_by_level[level].append(feature)
+        
+        # Process each level sequentially (but features within level in parallel)
+        for level in sorted(features_by_level.keys()):
+            level_features = features_by_level[level]
+            logging.info(f"Processing hierarchy level {level}: {len(level_features)} features")
+            
+            # Extract sequences for this level
+            level_feature_sequences = []
+            for feature in level_features:
+                try:
+                    sequence = self.extract_feature_sequence(feature)
+                    level_feature_sequences.append((feature, sequence))
+                except Exception as e:
+                    logging.warning(f"Could not extract sequence for feature {feature.id}: {e}")
+                    continue
+            
+            # Process features at this level in parallel
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit alignment tasks
+                future_to_feature = {}
+                for feature, sequence in level_feature_sequences:
+                    future = executor.submit(self.align_feature_to_all_paths, feature, sequence)
+                    future_to_feature[future] = feature
+                
+                # Collect results
+                for future in as_completed(future_to_feature):
+                    feature = future_to_feature[future]
+                    try:
+                        feature_alignments = future.result()
+                        all_alignments.extend(feature_alignments)
+                        
+                        # Update parent alignments for next level
+                        if feature.id not in self.parent_alignments and feature_alignments:
+                            self.parent_alignments[feature.id] = feature_alignments
+                        
+                        logging.debug(f"Feature {feature.id}: {len(feature_alignments)} alignments")
+                        
+                    except Exception as e:
+                        logging.error(f"Error aligning feature {feature.id}: {e}")
+                        continue
+        
+        logging.info(f"Alignment complete: {len(all_alignments)} total alignments")
+        return all_alignments
+    
+    def write_alignments(self, alignments: List[FeatureAlignment], output_path: Path) -> None:
+        """Write alignments to JSON file."""
+        logging.info(f"Writing {len(alignments)} alignments to {output_path}")
+        
+        # Convert to serializable format
+        alignment_data = {
+            'alignments': [alignment.to_dict() for alignment in alignments],
+            'summary': {
+                'total_alignments': len(alignments),
+                'features_aligned': len(set(a.feature_id for a in alignments)),
+                'paths_used': len(set(a.path_name for a in alignments)),
+                'hierarchy_levels': len(set(a.hierarchy_level for a in alignments))
+            }
+        }
+        
+        with open(output_path, 'w') as f:
+            json.dump(alignment_data, f, indent=2)
+        
+        logging.info(f"Alignments written to {output_path}")
+    
     def print_feature_sequences(self, max_features: int = None, max_seq_length: int = 100) -> None:
         """
         Print topologically sorted features and their sequences.
@@ -266,3 +719,33 @@ class GFFAligner:
             features_to_process = features_to_process[:max_features]
         
         return self.get_feature_sequences(features_to_process)
+    
+    def process_graph_alignment(self, output_path: Path, max_workers: int = 4) -> List[FeatureAlignment]:
+        """
+        Complete workflow: load data, sort features, align to graph paths.
+        
+        Args:
+            output_path: Path to write alignment results
+            max_workers: Number of parallel workers
+            
+        Returns:
+            List of feature alignments
+        """
+        # Load all data
+        self.load_gff_database()
+        self.load_reference_genome()
+        self.load_graph_paths()
+        
+        # Build feature hierarchy
+        self.build_feature_parent_map()
+        
+        # Sort features topologically
+        self.topological_sort_features()
+        
+        # Perform alignments
+        alignments = self.align_features_parallel(max_workers=max_workers)
+        
+        # Write results
+        self.write_alignments(alignments, output_path)
+        
+        return alignments
