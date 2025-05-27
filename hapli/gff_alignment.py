@@ -78,6 +78,20 @@ class FeatureAlignment:
         }
 
 
+@dataclass
+class FeatureInfo:
+    """Pre-computed information about a feature for thread-safe processing."""
+    feature_id: str
+    feature_type: str
+    sequence: str
+    hierarchy_level: int
+    parent_feature_id: Optional[str]
+    seqid: str
+    start: int
+    end: int
+    strand: str
+
+
 class GenomeGraphPathExtractor:
     """Extract paths from genome graph files (GFA/VG/XG)."""
     
@@ -505,6 +519,53 @@ class GFFAligner:
         logging.info(f"Successfully extracted {len(feature_sequences)} sequences")
         return feature_sequences
     
+    def prepare_feature_info(self, features: List[gffutils.Feature]) -> List[FeatureInfo]:
+        """
+        Pre-compute all necessary feature information for thread-safe processing.
+        
+        Args:
+            features: List of features to process
+            
+        Returns:
+            List of FeatureInfo objects with pre-computed data
+        """
+        logging.info(f"Preparing feature information for {len(features)} features")
+        
+        feature_infos = []
+        
+        for feature in features:
+            try:
+                # Extract sequence
+                sequence = self.extract_feature_sequence(feature)
+                
+                # Get hierarchy level
+                hierarchy_level = self.get_feature_hierarchy_level(feature)
+                
+                # Get parent ID
+                parent_id = self.feature_parent_map.get(feature.id)
+                
+                # Create FeatureInfo object
+                feature_info = FeatureInfo(
+                    feature_id=feature.id,
+                    feature_type=feature.featuretype,
+                    sequence=sequence,
+                    hierarchy_level=hierarchy_level,
+                    parent_feature_id=parent_id,
+                    seqid=feature.seqid,
+                    start=feature.start,
+                    end=feature.end,
+                    strand=feature.strand
+                )
+                
+                feature_infos.append(feature_info)
+                
+            except Exception as e:
+                logging.warning(f"Could not prepare info for feature {feature.id}: {e}")
+                continue
+        
+        logging.info(f"Successfully prepared {len(feature_infos)} feature infos")
+        return feature_infos
+    
     def align_sequence_to_path(self, sequence: str, path_sequence: str, path_name: str) -> List[FeatureAlignment]:
         """Align a feature sequence to a graph path using minimap2/mappy."""
         alignments = []
@@ -582,12 +643,12 @@ class GFFAligner:
         
         return alignments
     
-    def get_parent_constraint_regions(self, feature: gffutils.Feature) -> Dict[str, List[Tuple[int, int]]]:
+    def get_parent_constraint_regions(self, feature_info: FeatureInfo) -> Dict[str, List[Tuple[int, int]]]:
         """Get allowed regions for this feature based on parent alignments."""
-        if feature.id not in self.feature_parent_map:
+        if not feature_info.parent_feature_id:
             return {}  # No parent, no constraints
         
-        parent_id = self.feature_parent_map[feature.id]
+        parent_id = feature_info.parent_feature_id
         if parent_id not in self.parent_alignments:
             return {}  # Parent not aligned yet
         
@@ -621,41 +682,33 @@ class GFFAligner:
         
         return False
     
-    def align_feature_to_all_paths(self, feature: gffutils.Feature, sequence: str) -> List[FeatureAlignment]:
-        """Align a feature to all graph paths with hierarchical constraints."""
-        if not self.graph_paths:
+    def align_feature_to_all_paths(self, feature_info: FeatureInfo, graph_paths: Dict[str, str], 
+                                  constraint_regions: Dict[str, List[Tuple[int, int]]]) -> List[FeatureAlignment]:
+        """Align a feature to all graph paths with hierarchical constraints (thread-safe)."""
+        if not graph_paths:
             return []
         
         all_alignments = []
         
-        # Get parent constraints
-        constraint_regions = self.get_parent_constraint_regions(feature)
-        hierarchy_level = self.get_feature_hierarchy_level(feature)
-        parent_id = self.feature_parent_map.get(feature.id)
-        
         # Align to each path
-        for path_name, path_sequence in self.graph_paths.items():
+        for path_name, path_sequence in graph_paths.items():
             try:
-                alignments = self.align_sequence_to_path(sequence, path_sequence, path_name)
+                alignments = self.align_sequence_to_path(feature_info.sequence, path_sequence, path_name)
                 
                 for alignment in alignments:
                     # Fill in feature information
-                    alignment.feature_id = feature.id
-                    alignment.feature_type = feature.featuretype
-                    alignment.hierarchy_level = hierarchy_level
-                    alignment.parent_feature_id = parent_id
+                    alignment.feature_id = feature_info.feature_id
+                    alignment.feature_type = feature_info.feature_type
+                    alignment.hierarchy_level = feature_info.hierarchy_level
+                    alignment.parent_feature_id = feature_info.parent_feature_id
                     
                     # Check constraints
                     if self.is_alignment_within_constraints(alignment, constraint_regions):
                         all_alignments.append(alignment)
                 
             except Exception as e:
-                logging.warning(f"Failed to align feature {feature.id} to path {path_name}: {e}")
+                logging.warning(f"Failed to align feature {feature_info.feature_id} to path {path_name}: {e}")
                 continue
-        
-        # Store alignments for this feature (for use as constraints by children)
-        if all_alignments and hierarchy_level == 0:  # Top-level features
-            self.parent_alignments[feature.id] = all_alignments
         
         return all_alignments
     
@@ -682,39 +735,41 @@ class GFFAligner:
             level_features = features_by_level[level]
             logging.info(f"Processing hierarchy level {level}: {len(level_features)} features")
             
-            # Extract sequences for this level
-            level_feature_sequences = []
-            for feature in level_features:
-                try:
-                    sequence = self.extract_feature_sequence(feature)
-                    level_feature_sequences.append((feature, sequence))
-                except Exception as e:
-                    logging.warning(f"Could not extract sequence for feature {feature.id}: {e}")
-                    continue
+            # Pre-compute all feature information for this level (thread-safe)
+            level_feature_infos = self.prepare_feature_info(level_features)
             
             # Process features at this level in parallel
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # Submit alignment tasks
-                future_to_feature = {}
-                for feature, sequence in level_feature_sequences:
-                    future = executor.submit(self.align_feature_to_all_paths, feature, sequence)
-                    future_to_feature[future] = feature
+                future_to_feature_info = {}
+                for feature_info in level_feature_infos:
+                    # Get parent constraint regions
+                    constraint_regions = self.get_parent_constraint_regions(feature_info)
+                    
+                    # Submit task with all necessary data
+                    future = executor.submit(
+                        self.align_feature_to_all_paths, 
+                        feature_info, 
+                        self.graph_paths, 
+                        constraint_regions
+                    )
+                    future_to_feature_info[future] = feature_info
                 
                 # Collect results
-                for future in as_completed(future_to_feature):
-                    feature = future_to_feature[future]
+                for future in as_completed(future_to_feature_info):
+                    feature_info = future_to_feature_info[future]
                     try:
                         feature_alignments = future.result()
                         all_alignments.extend(feature_alignments)
                         
                         # Update parent alignments for next level
-                        if feature.id not in self.parent_alignments and feature_alignments:
-                            self.parent_alignments[feature.id] = feature_alignments
+                        if feature_info.feature_id not in self.parent_alignments and feature_alignments:
+                            self.parent_alignments[feature_info.feature_id] = feature_alignments
                         
-                        logging.debug(f"Feature {feature.id}: {len(feature_alignments)} alignments")
+                        logging.debug(f"Feature {feature_info.feature_id}: {len(feature_alignments)} alignments")
                         
                     except Exception as e:
-                        logging.error(f"Error aligning feature {feature.id}: {e}")
+                        logging.error(f"Error aligning feature {feature_info.feature_id}: {e}")
                         continue
         
         logging.info(f"Alignment complete: {len(all_alignments)} total alignments")
