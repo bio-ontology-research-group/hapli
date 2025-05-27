@@ -8,7 +8,7 @@ the impact of structural variations on genomic features.
 
 import logging
 import re
-from collections import defaultdict, deque
+from collections import defaultdict, deque, Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Any, Union
 import json
@@ -181,6 +181,16 @@ class GFAParser:
             return []
         
         return [node_id for node_id, _ in self.paths[path_name]]
+    
+    def are_nodes_adjacent(self, node1: str, node2: str) -> bool:
+        """Check if two nodes are adjacent in the graph."""
+        if node1 not in self.links:
+            return False
+        
+        for neighbor, _ in self.links[node1]:
+            if neighbor == node2:
+                return True
+        return False
 
 
 class ImpactDetector:
@@ -197,6 +207,16 @@ class ImpactDetector:
         'TRUNCATED': 'Feature is partially missing at ends',
         'SPLIT': 'Feature is broken into multiple fragments',
         'MISSING': 'Feature is completely absent or unmappable'
+    }
+    
+    # Structural impact types
+    STRUCTURAL_IMPACT_TYPES = {
+        'INVERSION': 'Feature sequence is reversed in orientation',
+        'DUPLICATION': 'Feature appears multiple times in the path',
+        'DELETION': 'Feature is missing from the expected path location',
+        'TRANSLOCATION': 'Feature is split across non-adjacent graph nodes',
+        'COPY_NUMBER_CHANGE': 'Feature copy count differs from reference',
+        'COMPLEX_REARRANGEMENT': 'Combination of multiple structural variations'
     }
     
     # Feature-specific consequences
@@ -282,7 +302,7 @@ class ImpactDetector:
             gam_data: Parsed GAM data from GAMParser.group_alignments_by_sample_haplotype()
             
         Returns:
-            Impact analysis: {sample: {haplotype: {feature: {'type': type, 'consequence': consequence, 'details': {...}}}}}
+            Impact analysis: {sample: {haplotype: {feature: {'type': type, 'consequence': consequence, 'structural_impacts': [...], 'details': {...}}}}}
         """
         logger.info("Analyzing feature impacts...")
         
@@ -315,7 +335,7 @@ class ImpactDetector:
             haplotype: Haplotype identifier
             
         Returns:
-            Impact analysis for the feature with type and consequence
+            Impact analysis for the feature with type, consequence, and structural impacts
         """
         feature_name = feature['read_name']
         feature_type = feature.get('feature_type', 'unknown')
@@ -327,6 +347,7 @@ class ImpactDetector:
         impact_analysis = {
             'type': 'MISSING',
             'consequence': 'MISSING',
+            'structural_impacts': [],
             'details': {
                 'feature_type': feature_type,
                 'sequence_length': sequence_length,
@@ -337,7 +358,13 @@ class ImpactDetector:
                 'is_split': False,
                 'is_truncated': False,
                 'fragments': [],
-                'structural_variation_detected': False
+                'structural_variation_detected': False,
+                'orientation_changes': [],
+                'path_discontinuities': [],
+                'copy_number': 0,
+                'expected_copy_number': 1,
+                'is_inverted': False,
+                'translocation_detected': False
             }
         }
         
@@ -374,6 +401,15 @@ class ImpactDetector:
         fragments = self._analyze_fragments(aligned_nodes, sequence_length)
         impact_analysis['details']['fragments'] = fragments
         
+        # Analyze structural impacts
+        structural_impacts = self._detect_structural_impacts(feature, aligned_nodes, path_positions)
+        impact_analysis['structural_impacts'] = structural_impacts
+        
+        # Update details with structural analysis
+        impact_analysis['details'].update(self._analyze_structural_details(
+            aligned_nodes, path_positions, fragments
+        ))
+        
         # Determine general impact type
         general_impact = self._determine_general_impact_type(coverage, fragments, components_spanned)
         impact_analysis['type'] = general_impact
@@ -391,6 +427,211 @@ class ImpactDetector:
         impact_analysis['consequence'] = consequence
         
         return impact_analysis
+    
+    def _detect_structural_impacts(self, feature: Dict[str, Any], 
+                                 aligned_nodes: List[str], 
+                                 path_positions: List[Dict[str, Any]]) -> List[str]:
+        """
+        Detect structural impacts affecting the feature.
+        
+        Args:
+            feature: Feature data
+            aligned_nodes: List of aligned node IDs
+            path_positions: Path position information
+            
+        Returns:
+            List of detected structural impact types
+        """
+        structural_impacts = []
+        
+        # Check for inversion
+        if self._detect_inversion(path_positions):
+            structural_impacts.append('INVERSION')
+        
+        # Check for duplication
+        if self._detect_duplication(aligned_nodes):
+            structural_impacts.append('DUPLICATION')
+        
+        # Check for deletion
+        if self._detect_deletion(feature, aligned_nodes):
+            structural_impacts.append('DELETION')
+        
+        # Check for translocation
+        if self._detect_translocation(aligned_nodes):
+            structural_impacts.append('TRANSLOCATION')
+        
+        # Check for copy number change
+        if self._detect_copy_number_change(feature, aligned_nodes):
+            structural_impacts.append('COPY_NUMBER_CHANGE')
+        
+        # Check for complex rearrangement
+        if len(structural_impacts) >= 2:
+            structural_impacts.append('COMPLEX_REARRANGEMENT')
+        
+        return structural_impacts
+    
+    def _detect_inversion(self, path_positions: List[Dict[str, Any]]) -> bool:
+        """Detect if feature sequence is inverted."""
+        if len(path_positions) < 2:
+            return False
+        
+        # Count reverse orientations
+        reverse_count = sum(1 for pos in path_positions 
+                          if pos.get('is_reverse', False))
+        total_positions = len(path_positions)
+        
+        # If majority of positions are reverse, it's likely inverted
+        return reverse_count > total_positions * 0.6
+    
+    def _detect_duplication(self, aligned_nodes: List[str]) -> bool:
+        """Detect if feature appears multiple times (duplication)."""
+        if not aligned_nodes:
+            return False
+        
+        # Count node occurrences
+        node_counts = Counter(aligned_nodes)
+        
+        # If any node appears more than twice, likely duplication
+        return any(count > 2 for count in node_counts.values())
+    
+    def _detect_deletion(self, feature: Dict[str, Any], aligned_nodes: List[str]) -> bool:
+        """Detect if feature is deleted (missing expected alignment)."""
+        sequence_length = len(feature.get('sequence', ''))
+        
+        # If we have very few aligned nodes for a long sequence, it's likely deleted
+        if sequence_length > 100 and len(aligned_nodes) < 3:
+            return True
+        
+        # If coverage is very low, it might be deleted
+        coverage = self._calculate_coverage(aligned_nodes, sequence_length)
+        return coverage < 0.2
+    
+    def _detect_translocation(self, aligned_nodes: List[str]) -> bool:
+        """Detect if feature is split across non-adjacent nodes."""
+        if len(aligned_nodes) < 2:
+            return False
+        
+        # Check if consecutive nodes in alignment are adjacent in graph
+        non_adjacent_count = 0
+        for i in range(len(aligned_nodes) - 1):
+            node1 = aligned_nodes[i]
+            node2 = aligned_nodes[i + 1]
+            
+            if not self.gfa_parser.are_nodes_adjacent(node1, node2):
+                non_adjacent_count += 1
+        
+        # If more than 30% of consecutive pairs are non-adjacent, it's translocation
+        return non_adjacent_count > len(aligned_nodes) * 0.3
+    
+    def _detect_copy_number_change(self, feature: Dict[str, Any], 
+                                 aligned_nodes: List[str]) -> bool:
+        """Detect if feature copy number differs from expected."""
+        # This is a simplified heuristic - in practice, would need reference comparison
+        node_counts = Counter(aligned_nodes)
+        
+        # If we have significantly more alignments than expected, it's copy number change
+        total_alignments = sum(node_counts.values())
+        expected_alignments = len(feature.get('sequence', '')) // 50  # Rough estimate
+        
+        return total_alignments > expected_alignments * 1.5
+    
+    def _analyze_structural_details(self, aligned_nodes: List[str], 
+                                  path_positions: List[Dict[str, Any]],
+                                  fragments: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Analyze detailed structural information.
+        
+        Args:
+            aligned_nodes: List of aligned node IDs
+            path_positions: Path position information
+            fragments: Fragment analysis
+            
+        Returns:
+            Dictionary with structural analysis details
+        """
+        details = {}
+        
+        # Analyze orientation changes
+        details['orientation_changes'] = self._analyze_orientation_changes(path_positions)
+        
+        # Analyze path discontinuities
+        details['path_discontinuities'] = self._analyze_path_discontinuities(aligned_nodes)
+        
+        # Calculate copy number
+        details['copy_number'] = self._calculate_copy_number(aligned_nodes)
+        details['expected_copy_number'] = 1  # Default assumption
+        
+        # Check if inverted
+        details['is_inverted'] = self._detect_inversion(path_positions)
+        
+        # Check for translocation
+        details['translocation_detected'] = self._detect_translocation(aligned_nodes)
+        
+        return details
+    
+    def _analyze_orientation_changes(self, path_positions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Analyze orientation changes in the alignment."""
+        changes = []
+        
+        if len(path_positions) < 2:
+            return changes
+        
+        current_orientation = path_positions[0].get('is_reverse', False)
+        
+        for i, pos in enumerate(path_positions[1:], 1):
+            pos_orientation = pos.get('is_reverse', False)
+            
+            if pos_orientation != current_orientation:
+                changes.append({
+                    'position': i,
+                    'from_orientation': '+' if not current_orientation else '-',
+                    'to_orientation': '+' if not pos_orientation else '-',
+                    'node_id': pos.get('node_id', 'unknown')
+                })
+                current_orientation = pos_orientation
+        
+        return changes
+    
+    def _analyze_path_discontinuities(self, aligned_nodes: List[str]) -> List[Dict[str, Any]]:
+        """Analyze discontinuities in the alignment path."""
+        discontinuities = []
+        
+        if len(aligned_nodes) < 2:
+            return discontinuities
+        
+        for i in range(len(aligned_nodes) - 1):
+            node1 = aligned_nodes[i]
+            node2 = aligned_nodes[i + 1]
+            
+            if not self.gfa_parser.are_nodes_adjacent(node1, node2):
+                # Calculate component difference
+                comp1 = self.node_to_component.get(node1, -1)
+                comp2 = self.node_to_component.get(node2, -1)
+                
+                discontinuities.append({
+                    'position': i,
+                    'from_node': node1,
+                    'to_node': node2,
+                    'from_component': comp1,
+                    'to_component': comp2,
+                    'cross_component': comp1 != comp2
+                })
+        
+        return discontinuities
+    
+    def _calculate_copy_number(self, aligned_nodes: List[str]) -> int:
+        """Calculate estimated copy number based on alignment patterns."""
+        if not aligned_nodes:
+            return 0
+        
+        # Simple heuristic: count unique alignment patterns
+        # In practice, this would be more sophisticated
+        node_counts = Counter(aligned_nodes)
+        
+        # Average count of nodes (rough estimate of copy number)
+        avg_count = sum(node_counts.values()) / len(node_counts) if node_counts else 0
+        
+        return max(1, int(round(avg_count)))
     
     def _analyze_feature_specific_impact(self, feature: Dict[str, Any], 
                                        general_impact: str, coverage: float,
@@ -655,14 +896,18 @@ class ImpactDetector:
         summary = {
             'total_features': 0,
             'impact_type_counts': {impact_type: 0 for impact_type in self.GENERAL_IMPACT_TYPES},
+            'structural_impact_counts': {impact_type: 0 for impact_type in self.STRUCTURAL_IMPACT_TYPES},
             'consequence_counts': defaultdict(int),
             'feature_type_analysis': defaultdict(lambda: {
                 'total': 0,
                 'impact_types': {impact_type: 0 for impact_type in self.GENERAL_IMPACT_TYPES},
+                'structural_impacts': {impact_type: 0 for impact_type in self.STRUCTURAL_IMPACT_TYPES},
                 'consequences': defaultdict(int)
             }),
             'structural_variations_detected': 0,
             'features_spanning_multiple_components': 0,
+            'orientation_changes_detected': 0,
+            'path_discontinuities_detected': 0,
             'avg_coverage': 0.0,
             'avg_identity': 0.0,
             'samples_analyzed': len(impact_results),
@@ -677,6 +922,7 @@ class ImpactDetector:
                 'haplotypes': len(impact_results[sample]),
                 'total_features': 0,
                 'impact_type_counts': {impact_type: 0 for impact_type in self.GENERAL_IMPACT_TYPES},
+                'structural_impact_counts': {impact_type: 0 for impact_type in self.STRUCTURAL_IMPACT_TYPES},
                 'consequence_counts': defaultdict(int)
             }
             
@@ -687,11 +933,18 @@ class ImpactDetector:
                     
                     impact_type = analysis['type']
                     consequence = analysis['consequence']
+                    structural_impacts = analysis.get('structural_impacts', [])
                     feature_type = analysis['details'].get('feature_type', 'unknown')
                     
                     # Count impact types
                     summary['impact_type_counts'][impact_type] += 1
                     sample_summary['impact_type_counts'][impact_type] += 1
+                    
+                    # Count structural impacts
+                    for struct_impact in structural_impacts:
+                        if struct_impact in self.STRUCTURAL_IMPACT_TYPES:
+                            summary['structural_impact_counts'][struct_impact] += 1
+                            sample_summary['structural_impact_counts'][struct_impact] += 1
                     
                     # Count consequences
                     summary['consequence_counts'][consequence] += 1
@@ -702,6 +955,10 @@ class ImpactDetector:
                     summary['feature_type_analysis'][feature_type]['impact_types'][impact_type] += 1
                     summary['feature_type_analysis'][feature_type]['consequences'][consequence] += 1
                     
+                    for struct_impact in structural_impacts:
+                        if struct_impact in self.STRUCTURAL_IMPACT_TYPES:
+                            summary['feature_type_analysis'][feature_type]['structural_impacts'][struct_impact] += 1
+                    
                     details = analysis['details']
                     total_coverage += details.get('coverage', 0.0)
                     total_identity += details.get('identity', 0.0)
@@ -711,6 +968,12 @@ class ImpactDetector:
                     
                     if len(details.get('components_spanned', [])) > 1:
                         summary['features_spanning_multiple_components'] += 1
+                    
+                    if details.get('orientation_changes', []):
+                        summary['orientation_changes_detected'] += 1
+                    
+                    if details.get('path_discontinuities', []):
+                        summary['path_discontinuities_detected'] += 1
             
             # Convert defaultdicts to regular dicts for JSON serialization
             sample_summary['consequence_counts'] = dict(sample_summary['consequence_counts'])
@@ -727,6 +990,7 @@ class ImpactDetector:
             ft: {
                 'total': data['total'],
                 'impact_types': data['impact_types'],
+                'structural_impacts': data['structural_impacts'],
                 'consequences': dict(data['consequences'])
             }
             for ft, data in summary['feature_type_analysis'].items()
@@ -753,6 +1017,7 @@ class ImpactDetector:
             },
             'impact_type_descriptions': {
                 'general_types': self.GENERAL_IMPACT_TYPES,
+                'structural_types': self.STRUCTURAL_IMPACT_TYPES,
                 'cds_consequences': self.CDS_CONSEQUENCES,
                 'promoter_consequences': self.PROMOTER_CONSEQUENCES,
                 'splice_site_consequences': self.SPLICE_SITE_CONSEQUENCES,
@@ -816,6 +1081,11 @@ def main():
         percentage = (count / summary['total_features'] * 100) if summary['total_features'] > 0 else 0
         print(f"  {impact_type}: {count} ({percentage:.1f}%)")
     
+    print(f"\nStructural impact distribution:")
+    for impact_type, count in summary['structural_impact_counts'].items():
+        percentage = (count / summary['total_features'] * 100) if summary['total_features'] > 0 else 0
+        print(f"  {impact_type}: {count} ({percentage:.1f}%)")
+    
     print(f"\nTop consequences:")
     sorted_consequences = sorted(summary['consequence_counts'].items(), 
                                key=lambda x: x[1], reverse=True)[:10]
@@ -825,6 +1095,8 @@ def main():
     
     print(f"\nStructural variations detected: {summary['structural_variations_detected']}")
     print(f"Features spanning multiple components: {summary['features_spanning_multiple_components']}")
+    print(f"Orientation changes detected: {summary['orientation_changes_detected']}")
+    print(f"Path discontinuities detected: {summary['path_discontinuities_detected']}")
     print(f"Average coverage: {summary['avg_coverage']:.3f}")
     print(f"Average identity: {summary['avg_identity']:.3f}")
 
