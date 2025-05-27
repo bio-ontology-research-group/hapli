@@ -47,7 +47,7 @@ def main():
     parser.add_argument(
         "output_file",
         type=Path,
-        help="Path to output alignment file (JSON format)"
+        help="Path to output alignment file"
     )
     
     # Optional arguments
@@ -55,6 +55,13 @@ def main():
         "--reference-path-name",
         type=str,
         help="Name of reference path in graph (for GFA files)"
+    )
+    
+    parser.add_argument(
+        "--output-format",
+        choices=["json", "gam", "bam"],
+        default="json",
+        help="Output format for alignments"
     )
     
     parser.add_argument(
@@ -94,6 +101,14 @@ def main():
         logging.error(f"Graph file not found: {args.graph_file}")
         sys.exit(1)
     
+    # Validate output format and file extension
+    if args.output_format == "gam" and not str(args.output_file).endswith('.gam'):
+        logging.warning(f"GAM format specified but output file doesn't end with .gam: {args.output_file}")
+    elif args.output_format == "bam" and not str(args.output_file).endswith('.bam'):
+        logging.warning(f"BAM format specified but output file doesn't end with .bam: {args.output_file}")
+    elif args.output_format == "json" and not str(args.output_file).endswith('.json'):
+        logging.warning(f"JSON format specified but output file doesn't end with .json: {args.output_file}")
+    
     # Create output directory if needed
     args.output_file.parent.mkdir(parents=True, exist_ok=True)
     
@@ -111,6 +126,7 @@ def main():
         logging.info("Starting graph alignment process")
         alignments = aligner.process_graph_alignment(
             output_path=args.output_file,
+            output_format=args.output_format,
             max_workers=args.max_workers
         )
         
@@ -127,6 +143,7 @@ def main():
         print(f"Total graph paths: {total_paths}")
         print(f"Paths with alignments: {used_paths}")
         print(f"Total alignments: {len(alignments)}")
+        print(f"Output format: {args.output_format.upper()}")
         print(f"Output file: {args.output_file}")
         
         # Feature type breakdown
@@ -149,6 +166,14 @@ def main():
             print(f"\nAlignments by hierarchy level:")
             for level, count in sorted(hierarchy_levels.items()):
                 print(f"  Level {level}: {count}")
+        
+        # Additional info for BAM output
+        if args.output_format == "bam":
+            output_dir = args.output_file.parent
+            bam_files = list(output_dir.glob("*.bam"))
+            print(f"\nBAM files created: {len(bam_files)}")
+            for bam_file in sorted(bam_files):
+                print(f"  {bam_file}")
         
         logging.info("Graph alignment completed successfully")
         

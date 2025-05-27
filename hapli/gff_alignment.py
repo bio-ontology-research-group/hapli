@@ -13,6 +13,7 @@ import logging
 import json
 import subprocess
 import tempfile
+import os
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Set, NamedTuple, Union
 from collections import defaultdict, deque
@@ -28,6 +29,13 @@ try:
 except ImportError:
     MAPPY_AVAILABLE = False
     logging.warning("mappy not available, falling back to minimap2 subprocess")
+
+try:
+    import pysam
+    PYSAM_AVAILABLE = True
+except ImportError:
+    PYSAM_AVAILABLE = False
+    logging.warning("pysam not available, BAM output will use samtools subprocess")
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -76,6 +84,38 @@ class FeatureAlignment:
             'parent_feature_id': self.parent_feature_id,
             'hierarchy_level': self.hierarchy_level
         }
+    
+    def to_sam_line(self, reference_length: int) -> str:
+        """Convert alignment to SAM format line."""
+        # SAM fields: QNAME FLAG RNAME POS MAPQ CIGAR RNEXT PNEXT TLEN SEQ QUAL
+        qname = self.feature_id
+        flag = 16 if self.strand == '-' else 0  # 16 = reverse strand
+        rname = self.path_name
+        pos = self.path_start + 1  # SAM uses 1-based coordinates
+        mapq = self.mapq
+        
+        # Simple CIGAR - assume match for now (could be improved with actual alignment)
+        cigar = f"{len(self.feature_sequence)}M"
+        
+        rnext = "*"
+        pnext = 0
+        tlen = 0
+        seq = self.feature_sequence
+        qual = "*"  # No quality scores available
+        
+        # Add optional tags
+        optional_tags = [
+            f"AS:i:{self.alignment_score}",
+            f"NM:i:0",  # Edit distance (simplified)
+            f"XS:f:{self.sequence_identity}",  # Sequence identity
+            f"XL:i:{self.hierarchy_level}",  # Hierarchy level (custom tag)
+        ]
+        
+        if self.parent_feature_id:
+            optional_tags.append(f"XP:Z:{self.parent_feature_id}")  # Parent feature ID
+        
+        sam_line = f"{qname}\t{flag}\t{rname}\t{pos}\t{mapq}\t{cigar}\t{rnext}\t{pnext}\t{tlen}\t{seq}\t{qual}\t" + "\t".join(optional_tags)
+        return sam_line
 
 
 @dataclass
@@ -775,9 +815,9 @@ class GFFAligner:
         logging.info(f"Alignment complete: {len(all_alignments)} total alignments")
         return all_alignments
     
-    def write_alignments(self, alignments: List[FeatureAlignment], output_path: Path) -> None:
+    def write_alignments_json(self, alignments: List[FeatureAlignment], output_path: Path) -> None:
         """Write alignments to JSON file."""
-        logging.info(f"Writing {len(alignments)} alignments to {output_path}")
+        logging.info(f"Writing {len(alignments)} alignments to JSON: {output_path}")
         
         # Convert to serializable format
         alignment_data = {
@@ -793,7 +833,196 @@ class GFFAligner:
         with open(output_path, 'w') as f:
             json.dump(alignment_data, f, indent=2)
         
-        logging.info(f"Alignments written to {output_path}")
+        logging.info(f"JSON alignments written to {output_path}")
+    
+    def write_alignments_gam(self, alignments: List[FeatureAlignment], output_path: Path) -> None:
+        """Write alignments to GAM file using vg tools."""
+        logging.info(f"Writing {len(alignments)} alignments to GAM: {output_path}")
+        
+        if not self.graph_file:
+            raise ValueError("Graph file required for GAM output")
+        
+        # Create temporary SAM file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.sam', delete=False) as sam_tmp:
+            sam_tmp_path = sam_tmp.name
+            
+            # Write SAM header
+            sam_tmp.write("@HD\tVN:1.0\tSO:unsorted\n")
+            
+            # Write reference sequences (paths)
+            for path_name, path_sequence in self.graph_paths.items():
+                sam_tmp.write(f"@SQ\tSN:{path_name}\tLN:{len(path_sequence)}\n")
+            
+            # Write alignments
+            for alignment in alignments:
+                path_sequence = self.graph_paths.get(alignment.path_name, "")
+                reference_length = len(path_sequence)
+                sam_line = alignment.to_sam_line(reference_length)
+                sam_tmp.write(sam_line + "\n")
+        
+        try:
+            # Convert SAM to GAM using vg
+            cmd = ['vg', 'view', '-a', '-G', str(self.graph_file), sam_tmp_path]
+            
+            with open(output_path, 'wb') as gam_out:
+                result = subprocess.run(cmd, stdout=gam_out, stderr=subprocess.PIPE, check=True)
+            
+            logging.info(f"GAM alignments written to {output_path}")
+            
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Failed to create GAM file: {e}")
+            logging.error(f"stderr: {e.stderr.decode() if e.stderr else 'No stderr'}")
+            raise
+        
+        finally:
+            # Clean up temporary file
+            Path(sam_tmp_path).unlink(missing_ok=True)
+    
+    def write_alignments_bam(self, alignments: List[FeatureAlignment], output_path: Path) -> None:
+        """Write alignments to separate BAM files for each path."""
+        logging.info(f"Writing {len(alignments)} alignments to BAM files")
+        
+        # Group alignments by path
+        alignments_by_path = defaultdict(list)
+        for alignment in alignments:
+            alignments_by_path[alignment.path_name].append(alignment)
+        
+        output_dir = output_path.parent
+        output_base = output_path.stem
+        
+        bam_files_created = []
+        
+        for path_name, path_alignments in alignments_by_path.items():
+            # Sanitize path name for filename
+            safe_path_name = path_name.replace('/', '_').replace('#', '_').replace(':', '_')
+            bam_file = output_dir / f"{output_base}_{safe_path_name}.bam"
+            
+            try:
+                self._write_single_bam(path_alignments, bam_file, path_name)
+                bam_files_created.append(bam_file)
+                
+            except Exception as e:
+                logging.error(f"Failed to create BAM file for path {path_name}: {e}")
+                continue
+        
+        logging.info(f"Created {len(bam_files_created)} BAM files in {output_dir}")
+        
+        # Create index files for BAM files
+        for bam_file in bam_files_created:
+            try:
+                self._index_bam_file(bam_file)
+            except Exception as e:
+                logging.warning(f"Failed to index BAM file {bam_file}: {e}")
+    
+    def _write_single_bam(self, alignments: List[FeatureAlignment], bam_file: Path, path_name: str) -> None:
+        """Write alignments for a single path to BAM file."""
+        if not alignments:
+            return
+        
+        path_sequence = self.graph_paths.get(path_name, "")
+        reference_length = len(path_sequence)
+        
+        if PYSAM_AVAILABLE:
+            # Use pysam to write BAM
+            try:
+                # Create header
+                header = {
+                    'HD': {'VN': '1.0', 'SO': 'unsorted'},
+                    'SQ': [{'LN': reference_length, 'SN': path_name}]
+                }
+                
+                with pysam.AlignmentFile(str(bam_file), "wb", header=header) as bam_out:
+                    for alignment in alignments:
+                        # Create pysam AlignedSegment
+                        read = pysam.AlignedSegment()
+                        read.query_name = alignment.feature_id
+                        read.query_sequence = alignment.feature_sequence
+                        read.flag = 16 if alignment.strand == '-' else 0
+                        read.reference_id = 0  # First (and only) reference
+                        read.reference_start = alignment.path_start
+                        read.mapping_quality = alignment.mapq
+                        read.cigar = [(0, len(alignment.feature_sequence))]  # Match
+                        read.next_reference_id = -1
+                        read.next_reference_start = -1
+                        read.template_length = 0
+                        read.query_qualities = None
+                        
+                        # Add tags
+                        read.set_tag('AS', alignment.alignment_score, 'i')
+                        read.set_tag('XS', alignment.sequence_identity, 'f')
+                        read.set_tag('XL', alignment.hierarchy_level, 'i')
+                        if alignment.parent_feature_id:
+                            read.set_tag('XP', alignment.parent_feature_id, 'Z')
+                        
+                        bam_out.write(read)
+                
+                logging.debug(f"Created BAM file {bam_file} with {len(alignments)} alignments")
+                
+            except Exception as e:
+                logging.error(f"pysam failed to write BAM file {bam_file}: {e}")
+                # Fall back to samtools
+                self._write_bam_with_samtools(alignments, bam_file, path_name, reference_length)
+        
+        else:
+            # Fall back to samtools
+            self._write_bam_with_samtools(alignments, bam_file, path_name, reference_length)
+    
+    def _write_bam_with_samtools(self, alignments: List[FeatureAlignment], bam_file: Path, 
+                                path_name: str, reference_length: int) -> None:
+        """Write BAM file using samtools subprocess."""
+        # Create temporary SAM file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.sam', delete=False) as sam_tmp:
+            sam_tmp_path = sam_tmp.name
+            
+            # Write SAM header
+            sam_tmp.write("@HD\tVN:1.0\tSO:unsorted\n")
+            sam_tmp.write(f"@SQ\tSN:{path_name}\tLN:{reference_length}\n")
+            
+            # Write alignments
+            for alignment in alignments:
+                sam_line = alignment.to_sam_line(reference_length)
+                sam_tmp.write(sam_line + "\n")
+        
+        try:
+            # Convert SAM to BAM using samtools
+            cmd = ['samtools', 'view', '-b', '-o', str(bam_file), sam_tmp_path]
+            subprocess.run(cmd, check=True, capture_output=True)
+            
+            logging.debug(f"Created BAM file {bam_file} with {len(alignments)} alignments using samtools")
+            
+        except subprocess.CalledProcessError as e:
+            logging.error(f"samtools failed to create BAM file {bam_file}: {e}")
+            raise
+        
+        finally:
+            # Clean up temporary file
+            Path(sam_tmp_path).unlink(missing_ok=True)
+    
+    def _index_bam_file(self, bam_file: Path) -> None:
+        """Create index for BAM file."""
+        try:
+            if PYSAM_AVAILABLE:
+                pysam.index(str(bam_file))
+            else:
+                cmd = ['samtools', 'index', str(bam_file)]
+                subprocess.run(cmd, check=True, capture_output=True)
+            
+            logging.debug(f"Created index for {bam_file}")
+            
+        except Exception as e:
+            logging.warning(f"Failed to index {bam_file}: {e}")
+    
+    def write_alignments(self, alignments: List[FeatureAlignment], output_path: Path, 
+                        output_format: str = "json") -> None:
+        """Write alignments in the specified format."""
+        if output_format == "json":
+            self.write_alignments_json(alignments, output_path)
+        elif output_format == "gam":
+            self.write_alignments_gam(alignments, output_path)
+        elif output_format == "bam":
+            self.write_alignments_bam(alignments, output_path)
+        else:
+            raise ValueError(f"Unsupported output format: {output_format}")
     
     def print_feature_sequences(self, max_features: int = None, max_seq_length: int = 100) -> None:
         """
@@ -862,12 +1091,14 @@ class GFFAligner:
         
         return self.get_feature_sequences(features_to_process)
     
-    def process_graph_alignment(self, output_path: Path, max_workers: int = 4) -> List[FeatureAlignment]:
+    def process_graph_alignment(self, output_path: Path, output_format: str = "json", 
+                               max_workers: int = 4) -> List[FeatureAlignment]:
         """
         Complete workflow: load data, sort features, align to graph paths.
         
         Args:
             output_path: Path to write alignment results
+            output_format: Output format ("json", "gam", "bam")
             max_workers: Number of parallel workers
             
         Returns:
@@ -888,6 +1119,6 @@ class GFFAligner:
         alignments = self.align_features_parallel(max_workers=max_workers)
         
         # Write results
-        self.write_alignments(alignments, output_path)
+        self.write_alignments(alignments, output_path, output_format)
         
         return alignments
