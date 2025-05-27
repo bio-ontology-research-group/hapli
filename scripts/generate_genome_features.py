@@ -10,11 +10,13 @@ import argparse
 import logging
 import random
 import sys
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Tuple, Set
 from dataclasses import dataclass
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
+import gffutils
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -27,25 +29,6 @@ def setup_logging(verbose: bool = False) -> None:
     )
 
 
-@dataclass
-class Feature:
-    """Represents a genome feature."""
-    seqid: str
-    source: str
-    type: str
-    start: int
-    end: int
-    score: str
-    strand: str
-    phase: str
-    attributes: Dict[str, str]
-    
-    def to_gff3_line(self) -> str:
-        """Convert feature to GFF3 format line."""
-        attr_str = ';'.join([f"{k}={v}" for k, v in self.attributes.items()])
-        return f"{self.seqid}\t{self.source}\t{self.type}\t{self.start}\t{self.end}\t{self.score}\t{self.strand}\t{self.phase}\t{attr_str}"
-
-
 class GenomeFeatureGenerator:
     """Generate genome features for a reference genome."""
     
@@ -55,6 +38,7 @@ class GenomeFeatureGenerator:
             random.seed(seed)
         self.features = []
         self.used_regions = {}  # chromosome -> list of (start, end) tuples
+        self.genome = {}
         
     def load_reference_genome(self, fasta_path: Path) -> Dict[str, SeqRecord]:
         """Load reference genome from FASTA file."""
@@ -65,6 +49,7 @@ class GenomeFeatureGenerator:
                 genome[record.id] = record
                 self.used_regions[record.id] = []
         logging.info(f"Loaded {len(genome)} chromosomes")
+        self.genome = genome
         return genome
     
     def is_region_available(self, chromosome: str, start: int, end: int, buffer: int = 100) -> bool:
@@ -94,7 +79,22 @@ class GenomeFeatureGenerator:
         
         raise ValueError(f"Could not find available region of length {length} on {chromosome}")
     
-    def generate_gene_structure(self, chromosome: str, gene_id: str, gene_start: int, gene_end: int, strand: str) -> List[Feature]:
+    def create_feature(self, seqid: str, source: str, feature_type: str, start: int, end: int,
+                      score: str = '.', strand: str = '.', phase: str = '.', 
+                      attributes: Dict[str, str] = None) -> gffutils.Feature:
+        """Create a gffutils Feature object."""
+        if attributes is None:
+            attributes = {}
+        
+        # Convert attributes to the format expected by gffutils
+        attr_string = ';'.join([f"{k}={v}" for k, v in attributes.items()])
+        
+        # Create feature using gffutils format
+        feature_line = f"{seqid}\t{source}\t{feature_type}\t{start}\t{end}\t{score}\t{strand}\t{phase}\t{attr_string}"
+        
+        return gffutils.feature.feature_from_line(feature_line)
+    
+    def generate_gene_structure(self, chromosome: str, gene_id: str, gene_start: int, gene_end: int, strand: str) -> List[gffutils.Feature]:
         """Generate a complete gene structure with exons and introns."""
         features = []
         
@@ -104,15 +104,13 @@ class GenomeFeatureGenerator:
             'Name': f"gene_{gene_id}",
             'biotype': 'protein_coding'
         }
-        gene_feature = Feature(
+        gene_feature = self.create_feature(
             seqid=chromosome,
             source='synthetic',
-            type='gene',
+            feature_type='gene',
             start=gene_start,
             end=gene_end,
-            score='.',
             strand=strand,
-            phase='.',
             attributes=gene_attrs
         )
         features.append(gene_feature)
@@ -124,15 +122,13 @@ class GenomeFeatureGenerator:
             'Parent': gene_id,
             'Name': f"transcript_{mrna_id}"
         }
-        mrna_feature = Feature(
+        mrna_feature = self.create_feature(
             seqid=chromosome,
             source='synthetic',
-            type='mRNA',
+            feature_type='mRNA',
             start=gene_start,
             end=gene_end,
-            score='.',
             strand=strand,
-            phase='.',
             attributes=mrna_attrs
         )
         features.append(mrna_feature)
@@ -180,13 +176,12 @@ class GenomeFeatureGenerator:
                 'Parent': mrna_id,
                 'exon_number': str(i + 1)
             }
-            exon_feature = Feature(
+            exon_feature = self.create_feature(
                 seqid=chromosome,
                 source='synthetic',
-                type='exon',
+                feature_type='exon',
                 start=exon_start,
                 end=exon_end,
-                score='.',
                 strand=strand,
                 phase='.' if i > 0 else '0',  # First exon starts at phase 0
                 attributes=exon_attrs
@@ -199,13 +194,12 @@ class GenomeFeatureGenerator:
                 'ID': cds_id,
                 'Parent': mrna_id
             }
-            cds_feature = Feature(
+            cds_feature = self.create_feature(
                 seqid=chromosome,
                 source='synthetic',
-                type='CDS',
+                feature_type='CDS',
                 start=exon_start,
                 end=exon_end,
-                score='.',
                 strand=strand,
                 phase='.' if i > 0 else '0',
                 attributes=cds_attrs
@@ -224,15 +218,13 @@ class GenomeFeatureGenerator:
                     'Parent': mrna_id,
                     'intron_number': str(i + 1)
                 }
-                intron_feature = Feature(
+                intron_feature = self.create_feature(
                     seqid=chromosome,
                     source='synthetic',
-                    type='intron',
+                    feature_type='intron',
                     start=intron_start,
                     end=intron_end,
-                    score='.',
                     strand=strand,
-                    phase='.',
                     attributes=intron_attrs
                 )
                 features.append(intron_feature)
@@ -245,15 +237,13 @@ class GenomeFeatureGenerator:
                         'Parent': intron_id,
                         'splice_type': 'donor'
                     }
-                    donor_feature = Feature(
+                    donor_feature = self.create_feature(
                         seqid=chromosome,
                         source='synthetic',
-                        type='splice_donor_site',
+                        feature_type='splice_donor_site',
                         start=intron_start,
                         end=intron_start + 1,
-                        score='.',
                         strand=strand,
-                        phase='.',
                         attributes=donor_attrs
                     )
                     features.append(donor_feature)
@@ -264,15 +254,13 @@ class GenomeFeatureGenerator:
                         'Parent': intron_id,
                         'splice_type': 'acceptor'
                     }
-                    acceptor_feature = Feature(
+                    acceptor_feature = self.create_feature(
                         seqid=chromosome,
                         source='synthetic',
-                        type='splice_acceptor_site',
+                        feature_type='splice_acceptor_site',
                         start=intron_end - 1,
                         end=intron_end,
-                        score='.',
                         strand=strand,
-                        phase='.',
                         attributes=acceptor_attrs
                     )
                     features.append(acceptor_feature)
@@ -283,15 +271,13 @@ class GenomeFeatureGenerator:
                         'Parent': intron_id,
                         'splice_type': 'acceptor'
                     }
-                    acceptor_feature = Feature(
+                    acceptor_feature = self.create_feature(
                         seqid=chromosome,
                         source='synthetic',
-                        type='splice_acceptor_site',
+                        feature_type='splice_acceptor_site',
                         start=intron_start,
                         end=intron_start + 1,
-                        score='.',
                         strand=strand,
-                        phase='.',
                         attributes=acceptor_attrs
                     )
                     features.append(acceptor_feature)
@@ -302,22 +288,20 @@ class GenomeFeatureGenerator:
                         'Parent': intron_id,
                         'splice_type': 'donor'
                     }
-                    donor_feature = Feature(
+                    donor_feature = self.create_feature(
                         seqid=chromosome,
                         source='synthetic',
-                        type='splice_donor_site',
+                        feature_type='splice_donor_site',
                         start=intron_end - 1,
                         end=intron_end,
-                        score='.',
                         strand=strand,
-                        phase='.',
                         attributes=donor_attrs
                     )
                     features.append(donor_feature)
         
         return features
     
-    def generate_features_for_chromosome(self, chromosome: str, num_genes: int) -> List[Feature]:
+    def generate_features_for_chromosome(self, chromosome: str, num_genes: int) -> List[gffutils.Feature]:
         """Generate features for a single chromosome."""
         logging.info(f"Generating {num_genes} genes for chromosome {chromosome}")
         features = []
@@ -347,10 +331,10 @@ class GenomeFeatureGenerator:
                 logging.warning(f"Could not place gene {gene_num + 1} on {chromosome}: {e}")
                 continue
         
-        logging.info(f"Generated {len([f for f in features if f.type == 'gene'])} genes on {chromosome}")
+        logging.info(f"Generated {len([f for f in features if f.featuretype == 'gene'])} genes on {chromosome}")
         return features
     
-    def generate_all_features(self, genome: Dict[str, SeqRecord], genes_per_mb: float = 20.0) -> List[Feature]:
+    def generate_all_features(self, genome: Dict[str, SeqRecord], genes_per_mb: float = 20.0) -> List[gffutils.Feature]:
         """Generate features for all chromosomes."""
         logging.info("Generating genome features")
         self.genome = genome
@@ -369,21 +353,79 @@ class GenomeFeatureGenerator:
         logging.info(f"Generated {len(all_features)} total features")
         return all_features
     
-    def write_gff3(self, features: List[Feature], output_path: Path) -> None:
-        """Write features to GFF3 file."""
+    def write_gff3(self, features: List[gffutils.Feature], output_path: Path) -> None:
+        """Write features to GFF3 file using gffutils."""
         logging.info(f"Writing GFF3 file to {output_path}")
         
-        with open(output_path, 'w') as f:
+        # Create a temporary file to write features first
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.gff3', delete=False) as temp_file:
+            temp_path = temp_file.name
+            
             # Write GFF3 header
-            f.write("##gff-version 3\n")
+            temp_file.write("##gff-version 3\n")
             
             # Write sequence regions
             for chromosome, record in self.genome.items():
-                f.write(f"##sequence-region {chromosome} 1 {len(record.seq)}\n")
+                temp_file.write(f"##sequence-region {chromosome} 1 {len(record.seq)}\n")
             
             # Write features
             for feature in features:
-                f.write(feature.to_gff3_line() + "\n")
+                temp_file.write(str(feature) + "\n")
+        
+        # Create a gffutils database to validate and then export
+        try:
+            # Create database from the temporary file
+            db_path = str(output_path) + '.db'
+            db = gffutils.create_db(
+                temp_path,
+                db_path,
+                force=True,
+                keep_order=True,
+                merge_strategy='merge',
+                sort_attribute_values=True
+            )
+            
+            # Export the database back to GFF3 format
+            with open(output_path, 'w') as out_file:
+                # Write header
+                out_file.write("##gff-version 3\n")
+                
+                # Write sequence regions
+                for chromosome, record in self.genome.items():
+                    out_file.write(f"##sequence-region {chromosome} 1 {len(record.seq)}\n")
+                
+                # Write features in hierarchical order
+                for gene in db.features_of_type('gene', order_by='start'):
+                    out_file.write(str(gene) + "\n")
+                    
+                    # Write mRNAs for this gene
+                    for mrna in db.children(gene, featuretype='mRNA'):
+                        out_file.write(str(mrna) + "\n")
+                        
+                        # Write exons for this mRNA
+                        for exon in db.children(mrna, featuretype='exon', order_by='start'):
+                            out_file.write(str(exon) + "\n")
+                        
+                        # Write CDS for this mRNA
+                        for cds in db.children(mrna, featuretype='CDS', order_by='start'):
+                            out_file.write(str(cds) + "\n")
+                        
+                        # Write introns for this mRNA
+                        for intron in db.children(mrna, featuretype='intron', order_by='start'):
+                            out_file.write(str(intron) + "\n")
+                            
+                            # Write splice sites for this intron
+                            for splice_site in db.children(intron, order_by='start'):
+                                out_file.write(str(splice_site) + "\n")
+            
+            # Clean up temporary files
+            Path(temp_path).unlink()
+            Path(db_path).unlink()
+            
+        except Exception as e:
+            # Fallback: just copy the temp file if database creation fails
+            logging.warning(f"Database creation failed ({e}), using simple output")
+            Path(temp_path).rename(output_path)
         
         logging.info(f"Wrote {len(features)} features to {output_path}")
 
