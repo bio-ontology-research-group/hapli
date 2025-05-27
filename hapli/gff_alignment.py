@@ -862,20 +862,43 @@ class GFFAligner:
         
         try:
             # Convert SAM to GAM using vg
-            cmd = ['vg', 'view', '-a', '-G', str(self.graph_file), sam_tmp_path]
+            # For GFA files, we need to convert GFA to VG first, then use VG for GAM conversion
+            if self.graph_file.suffix.lower() == '.gfa':
+                # Create temporary VG file from GFA
+                with tempfile.NamedTemporaryFile(suffix='.vg', delete=False) as vg_tmp:
+                    vg_tmp_path = vg_tmp.name
+                
+                try:
+                    # Convert GFA to VG
+                    cmd_gfa_to_vg = ['vg', 'view', '-Fv', str(self.graph_file)]
+                    with open(vg_tmp_path, 'wb') as vg_out:
+                        result = subprocess.run(cmd_gfa_to_vg, stdout=vg_out, stderr=subprocess.PIPE, check=True)
+                    
+                    # Convert SAM to GAM using VG file
+                    cmd = ['vg', 'view', '-b', '-S', vg_tmp_path, sam_tmp_path]
+                    with open(output_path, 'wb') as gam_out:
+                        result = subprocess.run(cmd, stdout=gam_out, stderr=subprocess.PIPE, check=True)
+                    
+                finally:
+                    # Clean up temporary VG file
+                    Path(vg_tmp_path).unlink(missing_ok=True)
             
-            with open(output_path, 'wb') as gam_out:
-                result = subprocess.run(cmd, stdout=gam_out, stderr=subprocess.PIPE, check=True)
+            else:
+                # For VG/XG files, use directly
+                cmd = ['vg', 'view', '-b', '-S', str(self.graph_file), sam_tmp_path]
+                with open(output_path, 'wb') as gam_out:
+                    result = subprocess.run(cmd, stdout=gam_out, stderr=subprocess.PIPE, check=True)
             
             logging.info(f"GAM alignments written to {output_path}")
             
         except subprocess.CalledProcessError as e:
             logging.error(f"Failed to create GAM file: {e}")
-            logging.error(f"stderr: {e.stderr.decode() if e.stderr else 'No stderr'}")
+            if e.stderr:
+                logging.error(f"stderr: {e.stderr.decode()}")
             raise
         
         finally:
-            # Clean up temporary file
+            # Clean up temporary SAM file
             Path(sam_tmp_path).unlink(missing_ok=True)
     
     def write_alignments_bam(self, alignments: List[FeatureAlignment], output_path: Path) -> None:
