@@ -251,7 +251,9 @@ def get_impact_explanation(feature_name: str, feature_type: str, impact_type: st
     if 'COPY_NUMBER_CHANGE' in structural_impacts:
         copy_number = details.get('copy_number', 1)
         expected = details.get('expected_copy_number', 1)
-        explanations.append(f"copy number changed ({copy_number} vs {expected} expected)")
+        # Only show copy number change if there's actually a difference
+        if copy_number != expected:
+            explanations.append(f"copy number changed ({copy_number} vs {expected} expected)")
     if 'COMPLEX_REARRANGEMENT' in structural_impacts:
         explanations.append("complex rearrangement detected")
     

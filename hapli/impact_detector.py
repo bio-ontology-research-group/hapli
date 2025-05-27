@@ -526,14 +526,21 @@ class ImpactDetector:
     def _detect_copy_number_change(self, feature: Dict[str, Any], 
                                  aligned_nodes: List[str]) -> bool:
         """Detect if feature copy number differs from expected."""
-        # This is a simplified heuristic - in practice, would need reference comparison
+        if not aligned_nodes:
+            return False
+        
+        # Count unique nodes vs duplicated nodes
         node_counts = Counter(aligned_nodes)
+        unique_nodes = len(node_counts)
+        total_occurrences = sum(node_counts.values())
         
-        # If we have significantly more alignments than expected, it's copy number change
-        total_alignments = sum(node_counts.values())
-        expected_alignments = len(feature.get('sequence', '')) // 50  # Rough estimate
+        # If we have significantly more occurrences than unique nodes, 
+        # it suggests duplication/copy number change
+        duplication_ratio = total_occurrences / unique_nodes if unique_nodes > 0 else 1
         
-        return total_alignments > expected_alignments * 1.5
+        # Only consider it copy number change if ratio is significantly > 1
+        # and we have enough nodes to make a meaningful assessment
+        return duplication_ratio > 1.8 and unique_nodes >= 2
     
     def _analyze_structural_details(self, aligned_nodes: List[str], 
                                   path_positions: List[Dict[str, Any]],
@@ -624,14 +631,12 @@ class ImpactDetector:
         if not aligned_nodes:
             return 0
         
-        # Simple heuristic: count unique alignment patterns
-        # In practice, this would be more sophisticated
-        node_counts = Counter(aligned_nodes)
+        # Count unique nodes
+        unique_nodes = len(set(aligned_nodes))
         
-        # Average count of nodes (rough estimate of copy number)
-        avg_count = sum(node_counts.values()) / len(node_counts) if node_counts else 0
-        
-        return max(1, int(round(avg_count)))
+        # For simple cases, copy number is just the number of unique nodes
+        # In more complex cases, this would need more sophisticated analysis
+        return max(1, unique_nodes)
     
     def _analyze_feature_specific_impact(self, feature: Dict[str, Any], 
                                        general_impact: str, coverage: float,
