@@ -128,44 +128,131 @@ class GenomeGraphPathExtractor:
         paths = {}
         
         with open(self.graph_file, 'r') as f:
-            for line in f:
+            for line_num, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
                     continue
                 
                 fields = line.split('\t')
+                if not fields:
+                    continue
+                
                 if fields[0] == 'S':  # Segment
-                    seg_id = fields[1]
-                    sequence = fields[2]
-                    segments[seg_id] = sequence
+                    if len(fields) >= 3:
+                        seg_id = fields[1]
+                        sequence = fields[2]
+                        segments[seg_id] = sequence
                 
                 elif fields[0] == 'P':  # Path
-                    path_name = fields[1]
-                    path_segments = fields[2].split(',')
-                    
-                    # Reconstruct sequence from segments
-                    path_sequence = ""
-                    for seg in path_segments:
-                        # Handle orientation
-                        if seg.endswith('+'):
-                            seg_id = seg[:-1]
-                            if seg_id in segments:
-                                path_sequence += segments[seg_id]
-                        elif seg.endswith('-'):
-                            seg_id = seg[:-1]
-                            if seg_id in segments:
-                                # Reverse complement
-                                from Bio.Seq import Seq
-                                path_sequence += str(Seq(segments[seg_id]).reverse_complement())
-                        else:
-                            # No orientation specified, assume forward
-                            if seg in segments:
-                                path_sequence += segments[seg]
-                    
-                    paths[path_name] = path_sequence
+                    if len(fields) >= 3:
+                        path_name = fields[1]
+                        path_segments = fields[2].split(',')
+                        
+                        # Reconstruct sequence from segments
+                        path_sequence = self._reconstruct_path_sequence(path_segments, segments, path_name)
+                        if path_sequence:
+                            paths[path_name] = path_sequence
+                
+                elif fields[0] == 'W':  # Walk (alternative path representation)
+                    if len(fields) >= 6:
+                        # W format: W <sample_id> <haplotype_index> <seq_id> <seq_start> <seq_end> <walk>
+                        sample_id = fields[1]
+                        haplotype_index = fields[2]
+                        seq_id = fields[3]
+                        seq_start = fields[4]
+                        seq_end = fields[5]
+                        walk = fields[6]
+                        
+                        # Create path name from walk components
+                        path_name = f"{sample_id}#{haplotype_index}#{seq_id}#{seq_start}"
+                        
+                        # Parse walk to get segments
+                        path_segments = []
+                        if walk:
+                            # Walk format can be like: >1<2>3 or 1+,2-,3+
+                            walk_segments = self._parse_walk(walk)
+                            path_sequence = self._reconstruct_path_sequence(walk_segments, segments, path_name)
+                            if path_sequence:
+                                paths[path_name] = path_sequence
         
         logging.info(f"Extracted {len(paths)} paths from GFA")
+        if len(paths) == 0:
+            logging.warning("No paths found in GFA file. Check if the file contains P or W lines.")
+            logging.debug(f"Found {len(segments)} segments")
+        
         return paths
+    
+    def _parse_walk(self, walk: str) -> List[str]:
+        """Parse a walk string to extract segment IDs with orientations."""
+        segments = []
+        
+        # Handle different walk formats
+        if ',' in walk:
+            # Format like: 1+,2-,3+
+            for seg in walk.split(','):
+                seg = seg.strip()
+                if seg:
+                    segments.append(seg)
+        else:
+            # Format like: >1<2>3 or other formats
+            i = 0
+            current_seg = ""
+            orientation = "+"
+            
+            while i < len(walk):
+                char = walk[i]
+                if char == '>' or char == '<':
+                    if current_seg:
+                        # Add previous segment
+                        segments.append(current_seg + orientation)
+                        current_seg = ""
+                    orientation = "+" if char == '>' else "-"
+                elif char.isdigit() or char.isalpha() or char == '_':
+                    current_seg += char
+                elif char in [' ', '\t']:
+                    if current_seg:
+                        segments.append(current_seg + orientation)
+                        current_seg = ""
+                        orientation = "+"
+                i += 1
+            
+            # Add final segment
+            if current_seg:
+                segments.append(current_seg + orientation)
+        
+        return segments
+    
+    def _reconstruct_path_sequence(self, path_segments: List[str], segments: Dict[str, str], path_name: str) -> str:
+        """Reconstruct sequence from path segments."""
+        path_sequence = ""
+        
+        for seg in path_segments:
+            if not seg:
+                continue
+            
+            # Handle orientation
+            if seg.endswith('+'):
+                seg_id = seg[:-1]
+                if seg_id in segments:
+                    path_sequence += segments[seg_id]
+                else:
+                    logging.debug(f"Segment {seg_id} not found for path {path_name}")
+            elif seg.endswith('-'):
+                seg_id = seg[:-1]
+                if seg_id in segments:
+                    # Reverse complement
+                    from Bio.Seq import Seq
+                    path_sequence += str(Seq(segments[seg_id]).reverse_complement())
+                else:
+                    logging.debug(f"Segment {seg_id} not found for path {path_name}")
+            else:
+                # No orientation specified, assume forward
+                if seg in segments:
+                    path_sequence += segments[seg]
+                else:
+                    logging.debug(f"Segment {seg} not found for path {path_name}")
+        
+        return path_sequence
     
     def _extract_vg_paths(self) -> Dict[str, str]:
         """Extract paths from VG/XG file using vg commands."""
