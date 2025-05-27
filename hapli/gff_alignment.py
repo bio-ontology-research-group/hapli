@@ -861,21 +861,42 @@ class GFFAligner:
                 sam_tmp.write(sam_line + "\n")
         
         try:
+            logging.debug(f"Created temporary SAM file: {sam_tmp_path}")
+            
+            # Check SAM file size and content for debugging
+            sam_size = Path(sam_tmp_path).stat().st_size
+            logging.debug(f"SAM file size: {sam_size} bytes")
+            
+            # For debugging: show first few lines of SAM file
+            if logging.getLogger().level <= logging.DEBUG:
+                with open(sam_tmp_path, 'r') as f:
+                    sample_lines = []
+                    for i, line in enumerate(f):
+                        if i < 10:  # First 10 lines
+                            sample_lines.append(line.strip())
+                        else:
+                            break
+                    logging.debug(f"Sample SAM content:\n" + "\n".join(sample_lines))
+            
             # Convert SAM to GAM using vg
-            # For GFA files, we need to convert GFA to VG first, then use VG for GAM conversion
             if self.graph_file.suffix.lower() == '.gfa':
-                # Create temporary VG file from GFA
+                # For GFA files, convert GFA to VG first, then use VG for GAM conversion
                 with tempfile.NamedTemporaryFile(suffix='.vg', delete=False) as vg_tmp:
                     vg_tmp_path = vg_tmp.name
                 
                 try:
                     # Convert GFA to VG
+                    logging.debug(f"Converting GFA to VG: {self.graph_file} -> {vg_tmp_path}")
                     cmd_gfa_to_vg = ['vg', 'view', '-Fv', str(self.graph_file)]
                     with open(vg_tmp_path, 'wb') as vg_out:
                         result = subprocess.run(cmd_gfa_to_vg, stdout=vg_out, stderr=subprocess.PIPE, check=True)
                     
-                    # Convert SAM to GAM using VG file
-                    cmd = ['vg', 'view', '-b', '-S', vg_tmp_path, sam_tmp_path]
+                    vg_size = Path(vg_tmp_path).stat().st_size
+                    logging.debug(f"VG file size: {vg_size} bytes")
+                    
+                    # Convert SAM to GAM using the VG file
+                    logging.debug(f"Converting SAM to GAM using VG file")
+                    cmd = ['vg', 'view', '-G', '-b', sam_tmp_path, vg_tmp_path]
                     with open(output_path, 'wb') as gam_out:
                         result = subprocess.run(cmd, stdout=gam_out, stderr=subprocess.PIPE, check=True)
                     
@@ -884,17 +905,26 @@ class GFFAligner:
                     Path(vg_tmp_path).unlink(missing_ok=True)
             
             else:
-                # For VG/XG files, use directly
-                cmd = ['vg', 'view', '-b', '-S', str(self.graph_file), sam_tmp_path]
+                # For VG/XG files, convert SAM to GAM directly
+                logging.debug(f"Converting SAM to GAM using VG/XG file")
+                cmd = ['vg', 'view', '-G', '-b', sam_tmp_path, str(self.graph_file)]
                 with open(output_path, 'wb') as gam_out:
                     result = subprocess.run(cmd, stdout=gam_out, stderr=subprocess.PIPE, check=True)
+            
+            # Check GAM file size
+            gam_size = Path(output_path).stat().st_size
+            logging.info(f"GAM file size: {gam_size} bytes")
+            
+            if gam_size < 100:  # Suspiciously small
+                logging.warning(f"GAM file seems very small ({gam_size} bytes) for {len(alignments)} alignments")
             
             logging.info(f"GAM alignments written to {output_path}")
             
         except subprocess.CalledProcessError as e:
             logging.error(f"Failed to create GAM file: {e}")
             if e.stderr:
-                logging.error(f"stderr: {e.stderr.decode()}")
+                stderr_text = e.stderr.decode() if isinstance(e.stderr, bytes) else str(e.stderr)
+                logging.error(f"stderr: {stderr_text}")
             raise
         
         finally:
