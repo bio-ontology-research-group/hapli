@@ -15,17 +15,19 @@ Usage:
 import argparse
 import logging
 import sys
+import os
 from pathlib import Path
 from typing import Optional
 
 # Add the current directory to Python path to allow imports
-sys.path.insert(0, str(Path(__file__).parent))
+current_dir = Path(__file__).parent
+sys.path.insert(0, str(current_dir))
 
-# Import the individual modules
-from hapli.gff_alignment import GFFAligner
-from hapli.gam_parser import GAMParser
-from hapli.impact_detector import ImpactDetector
-from hapli.diploid_analyzer import DiploidAnalyzer
+# Import the individual modules using direct imports
+import hapli.gff_alignment as gff_alignment_module
+import hapli.gam_parser as gam_parser_module
+import hapli.impact_detector as impact_detector_module
+import hapli.diploid_analyzer as diploid_analyzer_module
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -44,7 +46,7 @@ def run_gff_alignment(gff_file: Path, reference_file: Path, graph_file: Path,
     """Run GFF alignment step."""
     logging.info("Step 1: Running GFF alignment to pangenome graph")
     
-    aligner = GFFAligner(
+    aligner = gff_alignment_module.GFFAligner(
         gff_file=gff_file,
         reference_file=reference_file,
         graph_file=graph_file,
@@ -64,7 +66,7 @@ def run_gam_parsing(gam_file: Path, output_file: Path, verbose: bool = False) ->
     """Run GAM parsing step."""
     logging.info("Step 2: Parsing GAM file and grouping alignments")
     
-    parser = GAMParser(gam_file)
+    parser = gam_parser_module.GAMParser(gam_file)
     parser.load_alignments()
     
     # Group alignments by sample/haplotype
@@ -81,7 +83,7 @@ def run_impact_detection(gam_data_file: Path, gfa_file: Path, gff_file: Path,
     """Run impact detection step."""
     logging.info("Step 3: Detecting variant impacts on genomic features")
     
-    detector = ImpactDetector(gfa_file, gff_file)
+    detector = impact_detector_module.ImpactDetector(gfa_file, gff_file)
     
     # Load GAM data
     import json
@@ -102,7 +104,7 @@ def run_diploid_analysis(impact_data_file: Path, output_file: Path,
     """Run diploid analysis step."""
     logging.info("Step 4: Running diploid analysis and generating reports")
     
-    analyzer = DiploidAnalyzer()
+    analyzer = diploid_analyzer_module.DiploidAnalyzer()
     
     # Load impact data
     import json
