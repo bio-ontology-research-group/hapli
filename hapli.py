@@ -18,6 +18,9 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+# Add the current directory to Python path to allow imports
+sys.path.insert(0, str(Path(__file__).parent))
+
 # Import the individual modules
 from hapli.gff_alignment import GFFAligner
 from hapli.gam_parser import GAMParser
