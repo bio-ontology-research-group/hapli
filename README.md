@@ -11,15 +11,20 @@ Generate a complete test dataset with a single command:
 `python scripts/generate_test_data.py --preset <size> --output-dir data/large_test`
 where `size` can be `small`, `medium`, or `large`.
 
-## Core Components
+## Core Analysis Workflow
 
-### GAM File Parser (`hapli/gam_parser.py`)
+Hapli provides a four-step analysis workflow for detecting variant impacts on genomic features using pangenome graphs:
 
-The `GAMParser` class provides functionality to parse GAM (Graph Alignment/Map) files and organize alignment data by sample and haplotype path names. This is useful for analyzing pangenome alignments and understanding how features align across different samples and haplotypes.
+### 1. GFF Alignment (`hapli/gff_alignment.py`)
 
-#### Generating GAM Files
+Aligns genomic features from a GFF3 file to paths in a pangenome graph.
 
-First, generate GAM alignments using the GFF alignment script:
+**Inputs:**
+- GFF3 file with genomic features (genes, exons, etc.)
+- Reference genome FASTA file
+- Pangenome graph file (GFA format)
 
-`python scripts/align_gff_to_graph.py --reference-path-name reference --max-workers 6 --verbose --output-format gam data/gff/genome_features.gff3 data/medium_test/reference.fa data/medium_test/pangenome/pangenome.gfa data/medium_test/alignment.gam`
+**Outputs:**
+- GAM file containing feature alignments to graph paths
 
+**Usage:**
