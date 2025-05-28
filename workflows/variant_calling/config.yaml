@@ -1,10 +1,17 @@
-pangenome_vg: /home/leechuck/Public/software/hapli-nairobi/data/test/pangenome/pangenome.vg
-reference: /home/leechuck/Public/software/hapli-nairobi/data/test/reference.fa
-output_dir: /home/leechuck/Public/software/hapli-nairobi/data/test/vcf_output
-mount_dir: /home/leechuck/Public/software/hapli-nairobi/data/test
+pangenome_vg: /home/leechuck/Public/software/hapli-nairobi/data/large_test/pangenome/pangenome.vg
+reference: /home/leechuck/Public/software/hapli-nairobi/data/large_test/reference.fa
+output_dir: /home/leechuck/Public/software/hapli-nairobi/data/large_test/vcf_output
+mount_dir: /home/leechuck/Public/software/hapli-nairobi/data/large_test
 sample_names:
 - sample_000
 - sample_001
 - sample_002
-threads: 8
+- sample_003
+- sample_004
+- sample_005
+- sample_006
+- sample_007
+- sample_008
+- sample_009
+threads: 16
 vg_docker: quay.io/vgteam/vg:v1.65.0
