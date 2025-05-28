@@ -21,3 +21,5 @@ The `GAMParser` class provides functionality to parse GAM (Graph Alignment/Map) 
 
 First, generate GAM alignments using the GFF alignment script:
 
+`python scripts/align_gff_to_graph.py --reference-path-name reference --max-workers 6 --verbose --output-format gam data/gff/genome_features.gff3 data/medium_test/reference.fa data/medium_test/pangenome/pangenome.gfa data/medium_test/alignment.gam`
+
