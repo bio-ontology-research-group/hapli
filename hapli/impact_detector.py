@@ -473,7 +473,7 @@ class ImpactDetector:
         'SKIPPED': 'Exon appears to be skipped in splicing'
     }
     
-    def __init__(self, gfa_file: Path, gff3_file: Optional[Path] = None,
+    def __init__(self, gfa_file: Path, gff3_file: Path,
                  min_alignment_coverage: float = 0.8,
                  min_identity_threshold: float = 0.9):
         """
@@ -481,23 +481,22 @@ class ImpactDetector:
         
         Args:
             gfa_file: Path to GFA graph file
-            gff3_file: Path to GFF3 annotation file (optional)
+            gff3_file: Path to GFF3 annotation file
             min_alignment_coverage: Minimum coverage to consider feature intact
             min_identity_threshold: Minimum identity to consider alignment valid
         """
         self.gfa_file = Path(gfa_file)
-        self.gff3_file = Path(gff3_file) if gff3_file else None
+        self.gff3_file = Path(gff3_file)
         self.min_alignment_coverage = min_alignment_coverage
         self.min_identity_threshold = min_identity_threshold
         
         self.gfa_parser = GFAParser(gfa_file)
-        self.gff3_parser = GFF3Parser(gff3_file) if gff3_file else None
+        self.gff3_parser = GFF3Parser(gff3_file)
         self.connected_components = []
         self.node_to_component = {}
         
         self._parse_graph()
-        if self.gff3_parser:
-            self._parse_annotations()
+        self._parse_annotations()
     
     def _parse_graph(self) -> None:
         """Parse the GFA graph and identify connected components."""
@@ -565,12 +564,8 @@ class ImpactDetector:
         feature_name = feature['read_name']
         
         # Get feature type from GFF3 if available, otherwise from GAM data
-        gff3_feature = None
-        if self.gff3_parser:
-            gff3_feature = self.gff3_parser.get_feature(feature_name)
-            feature_type = gff3_feature['type'] if gff3_feature else feature.get('feature_type', 'unknown')
-        else:
-            feature_type = feature.get('feature_type', 'unknown')
+        gff3_feature = self.gff3_parser.get_feature(feature_name)
+        feature_type = gff3_feature['type'] if gff3_feature else feature.get('feature_type', 'unknown')
         
         sequence_length = len(feature['sequence'])
         identity = feature.get('identity', 0.0)
@@ -895,9 +890,8 @@ class ImpactDetector:
         if gff3_feature:
             feature_type = gff3_feature['type'].lower()
             # Also consider parent feature types for context
-            if self.gff3_parser:
-                parent = self.gff3_parser.get_parent_feature(gff3_feature['id'])
-                parent_type = parent['type'].lower() if parent else None
+            parent = self.gff3_parser.get_parent_feature(gff3_feature['id'])
+            parent_type = parent['type'].lower() if parent else None
         else:
             feature_type = feature.get('feature_type', '').lower()
             parent_type = None
@@ -1205,7 +1199,7 @@ class ImpactDetector:
             'avg_identity': 0.0,
             'samples_analyzed': len(impact_results),
             'sample_summaries': {},
-            'gff3_annotations_used': self.gff3_parser is not None
+            'gff3_annotations_used': True
         }
         
         total_coverage = 0.0
@@ -1308,7 +1302,7 @@ class ImpactDetector:
                 'min_alignment_coverage': self.min_alignment_coverage,
                 'min_identity_threshold': self.min_identity_threshold,
                 'gfa_file': str(self.gfa_file),
-                'gff3_file': str(self.gff3_file) if self.gff3_file else None
+                'gff3_file': str(self.gff3_file)
             },
             'impact_type_descriptions': {
                 'general_types': self.GENERAL_IMPACT_TYPES,
@@ -1331,11 +1325,11 @@ def main():
     """Command-line interface for impact detector."""
     import argparse
     
-    parser = argparse.ArgumentParser(description="Analyze feature impacts using GAM and GFA data")
+    parser = argparse.ArgumentParser(description="Analyze feature impacts using GAM, GFA, and GFF3 data")
     parser.add_argument("gfa_file", help="Input GFA graph file")
     parser.add_argument("gam_json", help="Input GAM data (JSON from GAMParser)")
+    parser.add_argument("gff3_file", help="Input GFF3 annotation file for feature type information")
     parser.add_argument("-o", "--output", required=True, help="Output JSON file for impact analysis")
-    parser.add_argument("--gff3", help="Input GFF3 annotation file for feature type information")
     parser.add_argument("--min-coverage", type=float, default=0.8, 
                        help="Minimum alignment coverage for intact features")
     parser.add_argument("--min-identity", type=float, default=0.9,
@@ -1358,7 +1352,7 @@ def main():
     # Initialize impact detector
     detector = ImpactDetector(
         Path(args.gfa_file),
-        gff3_file=Path(args.gff3) if args.gff3 else None,
+        Path(args.gff3_file),
         min_alignment_coverage=args.min_coverage,
         min_identity_threshold=args.min_identity
     )
@@ -1373,10 +1367,7 @@ def main():
     summary = detector.get_impact_summary(impact_results)
     print(f"\nImpact Analysis Summary:")
     print(f"Total features analyzed: {summary['total_features']}")
-    if summary['gff3_annotations_used']:
-        print("✓ Using GFF3 annotations for feature type information")
-    else:
-        print("ℹ No GFF3 annotations provided - using feature types from GAM data")
+    print("✓ Using GFF3 annotations for feature type information")
     
     print(f"\nImpact type distribution:")
     for impact_type, count in summary['impact_type_counts'].items():
