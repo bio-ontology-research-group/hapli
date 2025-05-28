@@ -12,6 +12,7 @@ from collections import defaultdict, deque, Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Any, Union
 import json
+import gffutils
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +194,219 @@ class GFAParser:
         return False
 
 
+class GFF3Parser:
+    """Parse GFF3 files to extract feature information."""
+    
+    def __init__(self, gff3_file: Path):
+        """
+        Initialize GFF3 parser.
+        
+        Args:
+            gff3_file: Path to GFF3 file
+        """
+        self.gff3_file = Path(gff3_file)
+        self.features = {}  # feature_id -> feature_info
+        self.feature_hierarchy = {}  # child_id -> parent_id
+        self.children_map = defaultdict(list)  # parent_id -> [child_ids]
+        self._validate_input()
+    
+    def _validate_input(self) -> None:
+        """Validate input file exists."""
+        if not self.gff3_file.exists():
+            raise FileNotFoundError(f"GFF3 file not found: {self.gff3_file}")
+    
+    def parse(self) -> None:
+        """Parse the GFF3 file to extract feature information."""
+        logger.info(f"Parsing GFF3 file: {self.gff3_file}")
+        
+        try:
+            # Create an in-memory database
+            db = gffutils.create_db(
+                str(self.gff3_file),
+                ':memory:',
+                merge_strategy='create_unique',
+                verbose=False,
+                disable_infer_genes=True,
+                disable_infer_transcripts=True
+            )
+            
+            # Extract feature information
+            for feature in db.all_features():
+                feature_info = self._extract_feature_info(feature)
+                self.features[feature_info['id']] = feature_info
+                
+                # Build hierarchy
+                if feature_info['parent_ids']:
+                    for parent_id in feature_info['parent_ids']:
+                        self.feature_hierarchy[feature_info['id']] = parent_id
+                        self.children_map[parent_id].append(feature_info['id'])
+            
+            logger.info(f"Parsed {len(self.features)} features from GFF3")
+            
+        except Exception as e:
+            logger.error(f"Error parsing GFF3 file: {e}")
+            # Fall back to manual parsing if gffutils fails
+            self._manual_parse()
+    
+    def _extract_feature_info(self, feature) -> Dict[str, Any]:
+        """Extract relevant information from a gffutils feature."""
+        # Get attributes
+        attributes = dict(feature.attributes)
+        
+        # Extract ID
+        feature_id = attributes.get('ID', [feature.id])[0] if 'ID' in attributes else feature.id
+        
+        # Extract parent IDs
+        parent_ids = attributes.get('Parent', [])
+        
+        # Extract name
+        name = attributes.get('Name', attributes.get('gene_name', [feature_id]))[0]
+        
+        # Extract biotype/gene_biotype
+        biotype = attributes.get('biotype', attributes.get('gene_biotype', ['unknown']))[0]
+        
+        return {
+            'id': feature_id,
+            'name': name,
+            'type': feature.featuretype,
+            'seqid': feature.seqid,
+            'start': feature.start,
+            'end': feature.end,
+            'strand': feature.strand,
+            'biotype': biotype,
+            'parent_ids': parent_ids,
+            'attributes': attributes
+        }
+    
+    def _manual_parse(self) -> None:
+        """Manual parsing fallback if gffutils fails."""
+        logger.info("Attempting manual GFF3 parsing...")
+        
+        with open(self.gff3_file, 'r') as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                
+                try:
+                    feature_info = self._parse_gff3_line(line)
+                    if feature_info:
+                        self.features[feature_info['id']] = feature_info
+                        
+                        # Build hierarchy
+                        if feature_info['parent_ids']:
+                            for parent_id in feature_info['parent_ids']:
+                                self.feature_hierarchy[feature_info['id']] = parent_id
+                                self.children_map[parent_id].append(feature_info['id'])
+                                
+                except Exception as e:
+                    logger.warning(f"Error parsing GFF3 line {line_num}: {e}")
+                    continue
+        
+        logger.info(f"Manually parsed {len(self.features)} features from GFF3")
+    
+    def _parse_gff3_line(self, line: str) -> Optional[Dict[str, Any]]:
+        """Parse a single GFF3 line."""
+        fields = line.split('\t')
+        if len(fields) != 9:
+            return None
+        
+        seqid, source, feature_type, start, end, score, strand, phase, attributes_str = fields
+        
+        # Parse attributes
+        attributes = {}
+        for attr in attributes_str.split(';'):
+            if '=' in attr:
+                key, value = attr.split('=', 1)
+                attributes[key] = [value]  # Store as list for consistency
+        
+        # Extract ID
+        feature_id = attributes.get('ID', [f"feature_{start}_{end}"])[0]
+        
+        # Extract parent IDs
+        parent_ids = attributes.get('Parent', [])
+        if isinstance(parent_ids, str):
+            parent_ids = parent_ids.split(',')
+        
+        # Extract name
+        name = attributes.get('Name', attributes.get('gene_name', [feature_id]))[0]
+        
+        # Extract biotype
+        biotype = attributes.get('biotype', attributes.get('gene_biotype', ['unknown']))[0]
+        
+        return {
+            'id': feature_id,
+            'name': name,
+            'type': feature_type.lower(),
+            'seqid': seqid,
+            'start': int(start),
+            'end': int(end),
+            'strand': strand,
+            'biotype': biotype,
+            'parent_ids': parent_ids,
+            'attributes': attributes
+        }
+    
+    def get_feature(self, feature_id: str) -> Optional[Dict[str, Any]]:
+        """Get feature information by ID."""
+        return self.features.get(feature_id)
+    
+    def get_feature_type(self, feature_id: str) -> str:
+        """Get feature type by ID."""
+        feature = self.features.get(feature_id)
+        return feature['type'] if feature else 'unknown'
+    
+    def get_parent_feature(self, feature_id: str) -> Optional[Dict[str, Any]]:
+        """Get parent feature information."""
+        parent_id = self.feature_hierarchy.get(feature_id)
+        return self.features.get(parent_id) if parent_id else None
+    
+    def get_children_features(self, feature_id: str) -> List[Dict[str, Any]]:
+        """Get child features."""
+        child_ids = self.children_map.get(feature_id, [])
+        return [self.features[child_id] for child_id in child_ids if child_id in self.features]
+    
+    def get_gene_structure(self, feature_id: str) -> Dict[str, Any]:
+        """Get complete gene structure for a feature."""
+        feature = self.get_feature(feature_id)
+        if not feature:
+            return {}
+        
+        # Find the gene (top-level parent)
+        gene = feature
+        while gene and gene['type'] not in ['gene', 'pseudogene']:
+            parent = self.get_parent_feature(gene['id'])
+            if parent:
+                gene = parent
+            else:
+                break
+        
+        # Get all descendants
+        children = self._get_all_descendants(gene['id'])
+        
+        return {
+            'gene': gene,
+            'children': children,
+            'transcripts': [c for c in children if c['type'] in ['mRNA', 'transcript', 'lnc_RNA', 'miRNA', 'tRNA', 'rRNA']],
+            'exons': [c for c in children if c['type'] == 'exon'],
+            'cds': [c for c in children if c['type'] == 'CDS'],
+            'utrs': [c for c in children if c['type'] in ['five_prime_UTR', 'three_prime_UTR', 'UTR']]
+        }
+    
+    def _get_all_descendants(self, feature_id: str) -> List[Dict[str, Any]]:
+        """Get all descendant features recursively."""
+        descendants = []
+        
+        def _collect_children(parent_id):
+            children = self.get_children_features(parent_id)
+            for child in children:
+                descendants.append(child)
+                _collect_children(child['id'])
+        
+        _collect_children(feature_id)
+        return descendants
+
+
 class ImpactDetector:
     """
     Detect impact of structural variations on genomic features.
@@ -259,25 +473,31 @@ class ImpactDetector:
         'SKIPPED': 'Exon appears to be skipped in splicing'
     }
     
-    def __init__(self, gfa_file: Path, min_alignment_coverage: float = 0.8,
+    def __init__(self, gfa_file: Path, gff3_file: Optional[Path] = None,
+                 min_alignment_coverage: float = 0.8,
                  min_identity_threshold: float = 0.9):
         """
         Initialize impact detector.
         
         Args:
             gfa_file: Path to GFA graph file
+            gff3_file: Path to GFF3 annotation file (optional)
             min_alignment_coverage: Minimum coverage to consider feature intact
             min_identity_threshold: Minimum identity to consider alignment valid
         """
         self.gfa_file = Path(gfa_file)
+        self.gff3_file = Path(gff3_file) if gff3_file else None
         self.min_alignment_coverage = min_alignment_coverage
         self.min_identity_threshold = min_identity_threshold
         
         self.gfa_parser = GFAParser(gfa_file)
+        self.gff3_parser = GFF3Parser(gff3_file) if gff3_file else None
         self.connected_components = []
         self.node_to_component = {}
         
         self._parse_graph()
+        if self.gff3_parser:
+            self._parse_annotations()
     
     def _parse_graph(self) -> None:
         """Parse the GFA graph and identify connected components."""
@@ -293,6 +513,11 @@ class ImpactDetector:
                 self.node_to_component[node] = i
         
         logger.info(f"Found {len(self.connected_components)} connected components")
+    
+    def _parse_annotations(self) -> None:
+        """Parse GFF3 annotations."""
+        logger.info("Parsing GFF3 annotations...")
+        self.gff3_parser.parse()
     
     def analyze_impacts(self, gam_data: Dict[str, Dict[str, Dict[str, List[Dict[str, Any]]]]]) -> Dict[str, Dict[str, Dict[str, Dict[str, Any]]]]:
         """
@@ -338,7 +563,15 @@ class ImpactDetector:
             Impact analysis for the feature with type, consequence, and structural impacts
         """
         feature_name = feature['read_name']
-        feature_type = feature.get('feature_type', 'unknown')
+        
+        # Get feature type from GFF3 if available, otherwise from GAM data
+        gff3_feature = None
+        if self.gff3_parser:
+            gff3_feature = self.gff3_parser.get_feature(feature_name)
+            feature_type = gff3_feature['type'] if gff3_feature else feature.get('feature_type', 'unknown')
+        else:
+            feature_type = feature.get('feature_type', 'unknown')
+        
         sequence_length = len(feature['sequence'])
         identity = feature.get('identity', 0.0)
         score = feature.get('score', 0)
@@ -364,7 +597,8 @@ class ImpactDetector:
                 'copy_number': 0,
                 'expected_copy_number': 1,
                 'is_inverted': False,
-                'translocation_detected': False
+                'translocation_detected': False,
+                'gff3_info': gff3_feature
             }
         }
         
@@ -420,9 +654,9 @@ class ImpactDetector:
         elif general_impact == 'TRUNCATED':
             impact_analysis['details']['is_truncated'] = True
         
-        # Dispatch to feature-specific analysis
+        # Dispatch to feature-specific analysis using GFF3 information
         consequence = self._analyze_feature_specific_impact(
-            feature, general_impact, coverage, fragments, components_spanned
+            feature, general_impact, coverage, fragments, components_spanned, gff3_feature
         )
         impact_analysis['consequence'] = consequence
         
@@ -641,7 +875,8 @@ class ImpactDetector:
     def _analyze_feature_specific_impact(self, feature: Dict[str, Any], 
                                        general_impact: str, coverage: float,
                                        fragments: List[Dict[str, Any]], 
-                                       components_spanned: List[int]) -> str:
+                                       components_spanned: List[int],
+                                       gff3_feature: Optional[Dict[str, Any]] = None) -> str:
         """
         Analyze feature-specific consequences based on feature type.
         
@@ -651,29 +886,44 @@ class ImpactDetector:
             coverage: Alignment coverage
             fragments: Fragment analysis
             components_spanned: Components spanned by alignment
+            gff3_feature: GFF3 feature information if available
             
         Returns:
             Feature-specific consequence
         """
-        feature_type = feature.get('feature_type', '').lower()
+        # Use GFF3 feature type if available, otherwise fall back to GAM data
+        if gff3_feature:
+            feature_type = gff3_feature['type'].lower()
+            # Also consider parent feature types for context
+            if self.gff3_parser:
+                parent = self.gff3_parser.get_parent_feature(gff3_feature['id'])
+                parent_type = parent['type'].lower() if parent else None
+        else:
+            feature_type = feature.get('feature_type', '').lower()
+            parent_type = None
         
         # Dispatch to appropriate analyzer
         if feature_type == 'cds':
-            return self._analyze_cds_impact(feature, general_impact, coverage, fragments)
+            return self._analyze_cds_impact(feature, general_impact, coverage, fragments, gff3_feature)
         elif feature_type in ['promoter', 'regulatory']:
-            return self._analyze_promoter_impact(feature, general_impact, coverage, fragments)
+            return self._analyze_promoter_impact(feature, general_impact, coverage, fragments, gff3_feature)
         elif 'splice' in feature_type or feature_type == 'splice_site':
-            return self._analyze_splice_site_impact(feature, general_impact, coverage, fragments)
-        elif 'utr' in feature_type or feature_type in ['5_prime_utr', '3_prime_utr']:
-            return self._analyze_utr_impact(feature, general_impact, coverage, fragments)
+            return self._analyze_splice_site_impact(feature, general_impact, coverage, fragments, gff3_feature)
+        elif 'utr' in feature_type or feature_type in ['five_prime_utr', 'three_prime_utr', 'utr']:
+            return self._analyze_utr_impact(feature, general_impact, coverage, fragments, gff3_feature)
         elif feature_type == 'exon':
-            return self._analyze_exon_impact(feature, general_impact, coverage, fragments)
+            return self._analyze_exon_impact(feature, general_impact, coverage, fragments, gff3_feature)
+        elif feature_type in ['gene', 'pseudogene']:
+            return self._analyze_gene_impact(feature, general_impact, coverage, fragments, gff3_feature)
+        elif feature_type in ['mrna', 'transcript', 'lnc_rna', 'mirna', 'trna', 'rrna']:
+            return self._analyze_transcript_impact(feature, general_impact, coverage, fragments, gff3_feature)
         else:
             # Default to general impact for unknown feature types
             return general_impact
     
     def _analyze_cds_impact(self, feature: Dict[str, Any], general_impact: str,
-                          coverage: float, fragments: List[Dict[str, Any]]) -> str:
+                          coverage: float, fragments: List[Dict[str, Any]],
+                          gff3_feature: Optional[Dict[str, Any]] = None) -> str:
         """Analyze CDS-specific impact."""
         sequence = feature.get('sequence', '')
         sequence_length = len(sequence)
@@ -717,7 +967,8 @@ class ImpactDetector:
             return 'INFRAME_INDEL'
     
     def _analyze_promoter_impact(self, feature: Dict[str, Any], general_impact: str,
-                               coverage: float, fragments: List[Dict[str, Any]]) -> str:
+                               coverage: float, fragments: List[Dict[str, Any]],
+                               gff3_feature: Optional[Dict[str, Any]] = None) -> str:
         """Analyze promoter/regulatory element impact."""
         if general_impact == 'MISSING':
             return 'MISSING'
@@ -736,7 +987,8 @@ class ImpactDetector:
             return 'MISSING'
     
     def _analyze_splice_site_impact(self, feature: Dict[str, Any], general_impact: str,
-                                  coverage: float, fragments: List[Dict[str, Any]]) -> str:
+                                  coverage: float, fragments: List[Dict[str, Any]],
+                                  gff3_feature: Optional[Dict[str, Any]] = None) -> str:
         """Analyze splice site impact."""
         if general_impact == 'MISSING':
             return 'LOST'
@@ -763,7 +1015,8 @@ class ImpactDetector:
             return 'LOST'
     
     def _analyze_utr_impact(self, feature: Dict[str, Any], general_impact: str,
-                          coverage: float, fragments: List[Dict[str, Any]]) -> str:
+                          coverage: float, fragments: List[Dict[str, Any]],
+                          gff3_feature: Optional[Dict[str, Any]] = None) -> str:
         """Analyze UTR impact."""
         if general_impact == 'MISSING':
             return 'MISSING'
@@ -780,7 +1033,8 @@ class ImpactDetector:
             return 'MISSING'
     
     def _analyze_exon_impact(self, feature: Dict[str, Any], general_impact: str,
-                           coverage: float, fragments: List[Dict[str, Any]]) -> str:
+                           coverage: float, fragments: List[Dict[str, Any]],
+                           gff3_feature: Optional[Dict[str, Any]] = None) -> str:
         """Analyze exon impact."""
         if general_impact == 'MISSING':
             return 'MISSING'
@@ -790,6 +1044,40 @@ class ImpactDetector:
         elif coverage >= 0.3:
             if len(fragments) > 1:
                 return 'SKIPPED'
+            else:
+                return 'PARTIAL'
+        else:
+            return 'MISSING'
+    
+    def _analyze_gene_impact(self, feature: Dict[str, Any], general_impact: str,
+                           coverage: float, fragments: List[Dict[str, Any]],
+                           gff3_feature: Optional[Dict[str, Any]] = None) -> str:
+        """Analyze gene-level impact."""
+        if general_impact == 'MISSING':
+            return 'MISSING'
+        
+        if coverage >= 0.9:
+            return 'COMPLETE'
+        elif coverage >= 0.5:
+            if len(fragments) > 1:
+                return 'DISRUPTED'
+            else:
+                return 'PARTIAL'
+        else:
+            return 'MISSING'
+    
+    def _analyze_transcript_impact(self, feature: Dict[str, Any], general_impact: str,
+                                 coverage: float, fragments: List[Dict[str, Any]],
+                                 gff3_feature: Optional[Dict[str, Any]] = None) -> str:
+        """Analyze transcript-level impact."""
+        if general_impact == 'MISSING':
+            return 'MISSING'
+        
+        if coverage >= 0.9:
+            return 'COMPLETE'
+        elif coverage >= 0.5:
+            if len(fragments) > 1:
+                return 'SPLICING_DISRUPTED'
             else:
                 return 'PARTIAL'
         else:
@@ -916,7 +1204,8 @@ class ImpactDetector:
             'avg_coverage': 0.0,
             'avg_identity': 0.0,
             'samples_analyzed': len(impact_results),
-            'sample_summaries': {}
+            'sample_summaries': {},
+            'gff3_annotations_used': self.gff3_parser is not None
         }
         
         total_coverage = 0.0
@@ -1018,7 +1307,8 @@ class ImpactDetector:
             'parameters': {
                 'min_alignment_coverage': self.min_alignment_coverage,
                 'min_identity_threshold': self.min_identity_threshold,
-                'gfa_file': str(self.gfa_file)
+                'gfa_file': str(self.gfa_file),
+                'gff3_file': str(self.gff3_file) if self.gff3_file else None
             },
             'impact_type_descriptions': {
                 'general_types': self.GENERAL_IMPACT_TYPES,
@@ -1045,6 +1335,7 @@ def main():
     parser.add_argument("gfa_file", help="Input GFA graph file")
     parser.add_argument("gam_json", help="Input GAM data (JSON from GAMParser)")
     parser.add_argument("-o", "--output", required=True, help="Output JSON file for impact analysis")
+    parser.add_argument("--gff3", help="Input GFF3 annotation file for feature type information")
     parser.add_argument("--min-coverage", type=float, default=0.8, 
                        help="Minimum alignment coverage for intact features")
     parser.add_argument("--min-identity", type=float, default=0.9,
@@ -1067,6 +1358,7 @@ def main():
     # Initialize impact detector
     detector = ImpactDetector(
         Path(args.gfa_file),
+        gff3_file=Path(args.gff3) if args.gff3 else None,
         min_alignment_coverage=args.min_coverage,
         min_identity_threshold=args.min_identity
     )
@@ -1081,7 +1373,12 @@ def main():
     summary = detector.get_impact_summary(impact_results)
     print(f"\nImpact Analysis Summary:")
     print(f"Total features analyzed: {summary['total_features']}")
-    print(f"Impact type distribution:")
+    if summary['gff3_annotations_used']:
+        print("✓ Using GFF3 annotations for feature type information")
+    else:
+        print("ℹ No GFF3 annotations provided - using feature types from GAM data")
+    
+    print(f"\nImpact type distribution:")
     for impact_type, count in summary['impact_type_counts'].items():
         percentage = (count / summary['total_features'] * 100) if summary['total_features'] > 0 else 0
         print(f"  {impact_type}: {count} ({percentage:.1f}%)")
@@ -1097,6 +1394,15 @@ def main():
     for consequence, count in sorted_consequences:
         percentage = (count / summary['total_features'] * 100) if summary['total_features'] > 0 else 0
         print(f"  {consequence}: {count} ({percentage:.1f}%)")
+    
+    print(f"\nFeature type analysis:")
+    for feature_type, type_data in summary['feature_type_analysis'].items():
+        if type_data['total'] > 0:
+            print(f"  {feature_type}: {type_data['total']} features")
+            top_consequences = sorted(type_data['consequences'].items(), 
+                                    key=lambda x: x[1], reverse=True)[:3]
+            for consequence, count in top_consequences:
+                print(f"    {consequence}: {count}")
     
     print(f"\nStructural variations detected: {summary['structural_variations_detected']}")
     print(f"Features spanning multiple components: {summary['features_spanning_multiple_components']}")
