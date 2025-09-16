@@ -755,10 +755,17 @@ class GFFAligner:
     def align_features_parallel(self, max_workers: int = 4) -> List[FeatureAlignment]:
         """Align all features to graph paths in parallel, respecting hierarchy."""
         if not self.sorted_features:
-            raise ValueError("Features not sorted. Run topological_sort_features() first.")
-        
+            logging.info("Features not sorted. Running pre-alignment setup.")
+            if not self.db:
+                self.load_gff_database()
+            if not self.reference_genome:
+                self.load_reference_genome()
+            self.build_feature_parent_map()
+            self.topological_sort_features()
+
         if not self.graph_paths:
-            raise ValueError("Graph paths not loaded. Run load_graph_paths() first.")
+            logging.info("Graph paths not loaded. Loading now.")
+            self.load_graph_paths()
         
         logging.info(f"Aligning {len(self.sorted_features)} features using {max_workers} workers")
         
