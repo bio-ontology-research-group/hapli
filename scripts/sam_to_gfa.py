@@ -59,13 +59,12 @@ class SamToGfaConverter:
             return
 
         chrom = mapped_alignments[0].reference_name
-        ref_start = min(aln.reference_start for aln in mapped_alignments)
-        ref_end = max(aln.reference_end for aln in mapped_alignments)
         
-        logging.info(f"Determined region from SAM file: {chrom}:{ref_start}-{ref_end}")
+        logging.info(f"Using chromosome '{chrom}' from SAM file to build GFA path.")
 
         try:
-            ref_seq = ref_fasta.fetch(chrom, ref_start, ref_end)
+            # Fetch the entire chromosome sequence to ensure coordinates are valid
+            ref_seq = ref_fasta.fetch(chrom)
         except KeyError:
             logging.error(f"Chromosome '{chrom}' not found in reference FASTA file.")
             return
