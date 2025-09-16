@@ -1,7 +1,6 @@
 import argparse
 import logging
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 try:
@@ -54,98 +53,47 @@ def get_sam_region(sam_path: Path) -> tuple[str, int, int]:
 
 def filter_gff(gff_path: Path, output_path: Path, chrom: str, start: int, end: int):
     """
-    Filters a GFF3 file to include only features overlapping the given region,
-    including their parent and child features. This version avoids building a
-    gffutils database for performance by performing two passes over the file.
+    Filters a GFF3 file to include only features that overlap the given region.
+    This is a single-pass filter that streams the file and does not load it
+    into memory or build a database. It only keeps features that physically
+    lie within the specified coordinates.
     """
     logging.info(f"Filtering GFF file {gff_path} for region {chrom}:{start}-{end}")
-    logging.info("Pass 1: Identifying overlapping features and building relationship map...")
-
-    child_to_parents = defaultdict(list)
-    parent_to_children = defaultdict(list)
-    overlapping_feature_ids = set()
-
-    def get_attrs(attr_str):
-        attrs = {}
-        for part in attr_str.split(';'):
-            if '=' in part:
-                key, val = part.split('=', 1)
-                attrs[key] = val
-        return attrs
-
-    with open(gff_path) as f:
-        for line in f:
-            if line.startswith('#'):
-                continue
-            
-            parts = line.strip().split('\t')
-            if len(parts) != 9:
-                continue
-
-            line_chrom, _, _, line_start_str, line_end_str, _, _, _, attrs_str = parts
-            
-            attrs = get_attrs(attrs_str)
-            feature_id = attrs.get('ID')
-            if not feature_id:
-                continue
-
-            parent_id_val = attrs.get('Parent')
-            if parent_id_val:
-                parent_ids = parent_id_val.split(',')
-                child_to_parents[feature_id].extend(parent_ids)
-                for p_id in parent_ids:
-                    parent_to_children[p_id].append(feature_id)
-
-            line_start, line_end = int(line_start_str), int(line_end_str)
-            if line_chrom == chrom and line_end >= start and line_start <= end:
-                overlapping_feature_ids.add(feature_id)
-
-    logging.info(f"Found {len(overlapping_feature_ids)} directly overlapping features.")
-    logging.info("Expanding set to include all relatives...")
-
-    features_to_keep = set()
-    queue = list(overlapping_feature_ids)
     
-    while queue:
-        feature_id = queue.pop(0)
-        if feature_id in features_to_keep:
-            continue
-        
-        features_to_keep.add(feature_id)
-
-        for p_id in child_to_parents.get(feature_id, []):
-            if p_id not in features_to_keep:
-                queue.append(p_id)
-        
-        for c_id in parent_to_children.get(feature_id, []):
-            if c_id not in features_to_keep:
-                queue.append(c_id)
-
-    logging.info(f"Total features to keep (including relatives): {len(features_to_keep)}")
-
-    logging.info(f"Pass 2: Writing filtered GFF to {output_path}")
-    with open(output_path, "w") as out_f, open(gff_path) as in_f:
+    count = 0
+    with open(gff_path, 'r') as in_f, open(output_path, 'w') as out_f:
         for line in in_f:
-            if line.startswith("#"):
+            if line.startswith('#'):
                 out_f.write(line)
                 continue
-            
+
             parts = line.strip().split('\t')
             if len(parts) != 9:
                 continue
-            
-            attrs = get_attrs(parts[8])
-            feature_id = attrs.get('ID')
-            if feature_id and feature_id in features_to_keep:
-                out_f.write(line)
 
-    logging.info("Filtering complete.")
+            line_chrom, _, _, line_start_str, line_end_str, _, _, _, _ = parts
+            
+            if line_chrom == chrom:
+                try:
+                    line_start = int(line_start_str)
+                    line_end = int(line_end_str)
+                except ValueError:
+                    logging.warning(f"Could not parse coordinates in line: {line.strip()}")
+                    continue
+                
+                # Check for overlap: region_A_end >= region_B_start AND region_A_start <= region_B_end
+                if line_end >= start and line_start <= end:
+                    out_f.write(line)
+                    count += 1
+
+    logging.info(f"Found and wrote {count} features within the region.")
+    logging.info(f"Filtered GFF written to {output_path}")
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Filter a GFF3 file to a specific genomic region defined by a SAM/BAM file. "
-                    "Keeps all features that overlap the region, plus their parent and child features."
+                    "Keeps only features that physically overlap the region."
     )
     parser.add_argument("--sam-file", required=True, type=Path, help="Input SAM or BAM file to define the region.")
     parser.add_argument("--gff-file", required=True, type=Path, help="Input GFF3 file to filter.")
