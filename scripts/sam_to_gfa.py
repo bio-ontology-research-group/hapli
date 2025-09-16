@@ -37,128 +37,54 @@ class SamToGfaConverter:
         return self.segments[seq]
 
     def convert(self):
-        """Main conversion logic."""
+        """
+        Main conversion logic.
+        Creates a simple GFA with a single path representing the reference
+        sequence over the region covered by the SAM/BAM file.
+        """
         logging.info("Starting SAM to GFA conversion.")
         
-        samfile = pysam.AlignmentFile(self.sam_path)
-        ref_fasta = pysam.FastaFile(str(self.ref_fasta_path))
-
-        alignments = list(samfile.fetch())
-        if not alignments:
-            logging.warning("No alignments found.")
+        try:
+            samfile = pysam.AlignmentFile(self.sam_path)
+            ref_fasta = pysam.FastaFile(str(self.ref_fasta_path))
+        except (ValueError, FileNotFoundError) as e:
+            logging.error(f"Error opening input files: {e}")
             return
 
-        chrom = alignments[0].reference_name
-        ref_start = min(aln.reference_start for aln in alignments if not aln.is_unmapped)
-        ref_end = max(aln.reference_end for aln in alignments if not aln.is_unmapped)
+        mapped_alignments = [aln for aln in samfile.fetch(until_eof=True) if not aln.is_unmapped]
         
-        logging.info(f"Processing region {chrom}:{ref_start}-{ref_end}")
+        if not mapped_alignments:
+            logging.warning("No mapped alignments found in the input file.")
+            self.write_gfa()
+            return
 
-        breakpoints = self._collect_breakpoints(alignments, ref_fasta, chrom, ref_start, ref_end)
-        sorted_bps = sorted(list(breakpoints))
+        chrom = mapped_alignments[0].reference_name
+        ref_start = min(aln.reference_start for aln in mapped_alignments)
+        ref_end = max(aln.reference_end for aln in mapped_alignments)
+        
+        logging.info(f"Determined region from SAM file: {chrom}:{ref_start}-{ref_end}")
 
-        self._build_haplotype_paths(alignments, ref_fasta, chrom, sorted_bps)
-        self._build_reference_path(ref_fasta, chrom, sorted_bps)
+        try:
+            ref_seq = ref_fasta.fetch(chrom, ref_start, ref_end)
+        except KeyError:
+            logging.error(f"Chromosome '{chrom}' not found in reference FASTA file.")
+            return
+        
+        if not ref_seq:
+            logging.warning("Fetched empty reference sequence for the region. GFA will be empty.")
+            self.write_gfa()
+            return
+
+        seg_id = self._add_segment(ref_seq)
+        
+        if seg_id:
+            # Create a path named after the chromosome.
+            self.paths[chrom] = [(seg_id, '+')]
+            # Also create a generic 'reference' path for compatibility.
+            self.paths['reference'] = [(seg_id, '+')]
 
         self.write_gfa()
         logging.info(f"GFA file written to {self.output_gfa_path}")
-
-    def _collect_breakpoints(self, alignments, ref_fasta, chrom, ref_start, ref_end):
-        breakpoints = {ref_start, ref_end}
-        for aln in alignments:
-            if aln.is_unmapped:
-                continue
-            
-            # Indel breakpoints from CIGAR
-            ref_pos = aln.reference_start
-            for op, length in aln.cigartuples:
-                if op in (0, 7, 8):  # M, X, =
-                    ref_pos += length
-                elif op == 1:  # Insertion
-                    breakpoints.add(ref_pos)
-                elif op == 2:  # Deletion
-                    breakpoints.add(ref_pos)
-                    breakpoints.add(ref_pos + length)
-                    ref_pos += length
-                elif op == 3: # N
-                    ref_pos += length
-
-            # SNV breakpoints
-            for q_idx, r_idx in aln.get_aligned_pairs():
-                if q_idx is not None and r_idx is not None:
-                    if ref_start <= r_idx < ref_end:
-                        q_base = aln.query_sequence[q_idx]
-                        r_base = ref_fasta.fetch(chrom, r_idx, r_idx + 1).upper()
-                        if q_base != r_base:
-                            breakpoints.add(r_idx)
-                            breakpoints.add(r_idx + 1)
-        return breakpoints
-
-    def _build_haplotype_paths(self, alignments, ref_fasta, chrom, sorted_bps):
-        for aln in alignments:
-            if aln.is_unmapped:
-                continue
-
-            path_name = aln.query_name
-            current_path_segs = []
-            
-            ref_pos = aln.reference_start
-            q_pos = 0
-
-            for op, length in aln.cigartuples:
-                if op in (0, 7, 8):  # Match/mismatch
-                    op_ref_end = ref_pos + length
-                    
-                    bps_in_match = [bp for bp in sorted_bps if ref_pos < bp < op_ref_end]
-                    block_bps = [ref_pos] + bps_in_match + [op_ref_end]
-
-                    for i in range(len(block_bps) - 1):
-                        start, end = block_bps[i], block_bps[i+1]
-                        q_start_offset = start - ref_pos
-                        q_end_offset = end - ref_pos
-                        q_sub_seq = aln.query_sequence[q_pos + q_start_offset : q_pos + q_end_offset]
-                        
-                        seg_id = self._add_segment(q_sub_seq)
-                        if seg_id:
-                            current_path_segs.append((seg_id, '+'))
-                    
-                    ref_pos = op_ref_end
-                    q_pos += length
-                
-                elif op == 1:  # Insertion
-                    ins_seq = aln.query_sequence[q_pos:q_pos + length]
-                    seg_id = self._add_segment(ins_seq)
-                    if seg_id:
-                        current_path_segs.append((seg_id, '+'))
-                    q_pos += length
-
-                elif op == 2:  # Deletion
-                    ref_pos += length
-
-                elif op == 4:  # Soft clip
-                    q_pos += length
-            
-            self.paths[path_name] = current_path_segs
-            for i in range(len(current_path_segs) - 1):
-                from_seg, from_orient = current_path_segs[i]
-                to_seg, to_orient = current_path_segs[i+1]
-                self.links.add((from_seg, from_orient, to_seg, to_orient, '0M'))
-
-    def _build_reference_path(self, ref_fasta, chrom, sorted_bps):
-        ref_path_segs = []
-        for i in range(len(sorted_bps) - 1):
-            start, end = sorted_bps[i], sorted_bps[i+1]
-            if start < end:
-                seq = ref_fasta.fetch(chrom, start, end)
-                seg_id = self._add_segment(seq)
-                if seg_id:
-                    ref_path_segs.append((seg_id, '+'))
-        
-        self.paths['reference'] = ref_path_segs
-        for i in range(len(ref_path_segs) - 1):
-            from_seg, from_orient = ref_path_segs[i]
-            to_seg, to_orient = ref_path_segs[i+1]
-            self.links.add((from_seg, from_orient, to_seg, to_orient, '0M'))
 
     def write_gfa(self):
         with open(self.output_gfa_path, 'w') as f:

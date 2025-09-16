@@ -57,7 +57,7 @@ def run_gff_alignment(gff_file: Path, reference_file: Path, graph_file: Path,
     alignments = aligner.align_features_parallel(max_workers=max_workers)
     
     # Write GAM output
-    aligner.write_alignments(alignments, output_file, format_type="gam")
+    aligner.write_alignments(alignments, output_file, output_format="gam")
     
     logging.info(f"GFF alignment complete. Output: {output_file}")
 
