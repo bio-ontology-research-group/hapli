@@ -135,10 +135,11 @@ class FeatureInfo:
 class GenomeGraphPathExtractor:
     """Extract paths from genome graph files (GFA/VG/XG)."""
     
-    def __init__(self, graph_file: Path, reference_path_name: Optional[str] = None):
+    def __init__(self, graph_file: Path, reference_path_name: Optional[str] = None, vg_threads: int = 8):
         """Initialize with genome graph file."""
         self.graph_file = graph_file
         self.reference_path_name = reference_path_name
+        self.vg_threads = vg_threads
         self.file_type = self._detect_file_type()
     
     def _detect_file_type(self) -> str:
@@ -324,7 +325,7 @@ class GenomeGraphPathExtractor:
             paths = {}
             for path_name in path_names:
                 try:
-                    cmd = ['vg', 'find', '-p', path_name, '-x', str(self.graph_file)]
+                    cmd = ['vg', 'find', '-p', path_name, '-x', str(self.graph_file), '-t', str(self.vg_threads)]
                     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
                     
                     # Parse FASTA output
@@ -355,12 +356,13 @@ class GFFAligner:
     """Handle GFF3 topological sorting and sequence alignment."""
     
     def __init__(self, gff_path: Path, reference_path: Path, graph_file: Optional[Path] = None, 
-                 reference_path_name: Optional[str] = None):
+                 reference_path_name: Optional[str] = None, vg_threads: int = 8):
         """Initialize with GFF3 and reference files."""
         self.gff_path = gff_path
         self.reference_path = reference_path
         self.graph_file = graph_file
         self.reference_path_name = reference_path_name
+        self.vg_threads = vg_threads
         self.db = None
         self.reference_genome = {}
         self.sorted_features = []
@@ -415,7 +417,7 @@ class GFFAligner:
         if not self.graph_file:
             return {}
         
-        extractor = GenomeGraphPathExtractor(self.graph_file, self.reference_path_name)
+        extractor = GenomeGraphPathExtractor(self.graph_file, self.reference_path_name, self.vg_threads)
         self.graph_paths = extractor.extract_paths()
         
         logging.info(f"Loaded {len(self.graph_paths)} graph paths")
@@ -842,7 +844,7 @@ class GFFAligner:
         
         logging.info(f"JSON alignments written to {output_path}")
     
-    def write_alignments_gam(self, alignments: List[FeatureAlignment], output_path: Path) -> None:
+    def write_alignments_gam(self, alignments: List[FeatureAlignment], output_path: Path, vg_threads: int = 8) -> None:
         """Write alignments to GAM file using vg tools."""
         logging.info(f"Writing {len(alignments)} alignments to GAM: {output_path}")
         
@@ -894,7 +896,7 @@ class GFFAligner:
                 try:
                     # Convert GFA to VG
                     logging.debug(f"Converting GFA to VG: {self.graph_file} -> {vg_tmp_path}")
-                    cmd_gfa_to_vg = ['vg', 'view', '-Fv', str(self.graph_file)]
+                    cmd_gfa_to_vg = ['vg', 'view', '-Fv', '--threads', str(vg_threads), str(self.graph_file)]
                     with open(vg_tmp_path, 'wb') as vg_out:
                         result = subprocess.run(cmd_gfa_to_vg, stdout=vg_out, stderr=subprocess.PIPE, check=True)
                     
@@ -903,7 +905,7 @@ class GFFAligner:
                     
                     # Convert SAM to GAM using the VG file
                     logging.debug(f"Converting SAM to GAM using VG file")
-                    cmd = ['vg', 'inject', '-x', vg_tmp_path, sam_tmp_path]
+                    cmd = ['vg', 'inject', '-x', vg_tmp_path, '-t', str(vg_threads), sam_tmp_path]
                     with open(output_path, 'wb') as gam_out:
                         result = subprocess.run(cmd, stdout=gam_out, stderr=subprocess.PIPE, check=True)
                     
@@ -914,7 +916,7 @@ class GFFAligner:
             else:
                 # For VG/XG files, convert SAM to GAM directly
                 logging.debug(f"Converting SAM to GAM using VG/XG file")
-                cmd = ['vg', 'inject', '-x', str(self.graph_file), sam_tmp_path]
+                cmd = ['vg', 'inject', '-x', str(self.graph_file), '-t', str(vg_threads), sam_tmp_path]
                 with open(output_path, 'wb') as gam_out:
                     result = subprocess.run(cmd, stdout=gam_out, stderr=subprocess.PIPE, check=True)
             
@@ -1073,12 +1075,12 @@ class GFFAligner:
             logging.warning(f"Failed to index {bam_file}: {e}")
     
     def write_alignments(self, alignments: List[FeatureAlignment], output_path: Path, 
-                        output_format: str = "json") -> None:
+                        output_format: str = "json", vg_threads: int = 8) -> None:
         """Write alignments in the specified format."""
         if output_format == "json":
             self.write_alignments_json(alignments, output_path)
         elif output_format == "gam":
-            self.write_alignments_gam(alignments, output_path)
+            self.write_alignments_gam(alignments, output_path, vg_threads=vg_threads)
         elif output_format == "bam":
             self.write_alignments_bam(alignments, output_path)
         else:

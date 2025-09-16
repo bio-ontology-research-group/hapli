@@ -42,7 +42,7 @@ def setup_logging(verbose: bool = False) -> None:
 
 def run_gff_alignment(gff_file: Path, reference_file: Path, graph_file: Path, 
                      output_file: Path, reference_path_name: str = "reference",
-                     max_workers: int = 4, verbose: bool = False) -> None:
+                     max_workers: int = 4, vg_threads: int = 8, verbose: bool = False) -> None:
     """Run GFF alignment step."""
     logging.info("Step 1: Running GFF alignment to pangenome graph")
     
@@ -50,23 +50,24 @@ def run_gff_alignment(gff_file: Path, reference_file: Path, graph_file: Path,
         gff_path=gff_file,
         reference_path=reference_file,
         graph_file=graph_file,
-        reference_path_name=reference_path_name
+        reference_path_name=reference_path_name,
+        vg_threads=vg_threads
     )
     
     # Align features in parallel
     alignments = aligner.align_features_parallel(max_workers=max_workers)
     
     # Write GAM output
-    aligner.write_alignments(alignments, output_file, output_format="gam")
+    aligner.write_alignments(alignments, output_file, output_format="gam", vg_threads=vg_threads)
     
     logging.info(f"GFF alignment complete. Output: {output_file}")
 
 
-def run_gam_parsing(gam_file: Path, output_file: Path, vg_executable: str = "vg", verbose: bool = False) -> None:
+def run_gam_parsing(gam_file: Path, output_file: Path, vg_executable: str = "vg", vg_threads: int = 8, verbose: bool = False) -> None:
     """Run GAM parsing step."""
     logging.info("Step 2: Parsing GAM file and grouping alignments")
     
-    parser = gam_parser.GAMParser(gam_file, vg_executable=vg_executable)
+    parser = gam_parser.GAMParser(gam_file, vg_executable=vg_executable, vg_threads=vg_threads)
     parser.load_alignments()
     
     # Group alignments by sample/haplotype
@@ -194,6 +195,12 @@ Examples:
         default="vg",
         help="Path to the vg executable (default: vg)"
     )
+    parser.add_argument(
+        "--vg-threads",
+        type=int,
+        default=8,
+        help="Number of threads for vg commands (default: 8)"
+    )
     
     args = parser.parse_args()
     
@@ -229,6 +236,7 @@ Examples:
                 output_file=gam_file,
                 reference_path_name=args.reference_path_name,
                 max_workers=args.max_workers,
+                vg_threads=args.vg_threads,
                 verbose=args.verbose
             )
         
@@ -240,6 +248,7 @@ Examples:
                 gam_file=gam_file,
                 output_file=grouped_file,
                 vg_executable=args.vg_executable,
+                vg_threads=args.vg_threads,
                 verbose=args.verbose
             )
         

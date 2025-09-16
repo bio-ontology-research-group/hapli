@@ -26,16 +26,18 @@ class GAMParser:
     information from path names, and builds a hierarchical feature structure.
     """
     
-    def __init__(self, gam_file: Path, vg_executable: str = "vg"):
+    def __init__(self, gam_file: Path, vg_executable: str = "vg", vg_threads: int = 8):
         """
         Initialize GAM parser.
         
         Args:
             gam_file: Path to the GAM file to parse
             vg_executable: Path to vg executable (default: "vg")
+            vg_threads: Number of threads for vg commands (default: 8)
         """
         self.gam_file = Path(gam_file)
         self.vg_executable = vg_executable
+        self.vg_threads = vg_threads
         self.alignments = []
         self._validate_inputs()
     
@@ -86,7 +88,8 @@ class GAMParser:
         logger.info(f"Loading alignments from {self.gam_file}")
         
         # Convert GAM to JSON using vg view
-        json_output = self._run_vg_command(["view", "-a", str(self.gam_file)])
+        cmd = ["view", "-a", str(self.gam_file), "--threads", str(self.vg_threads)]
+        json_output = self._run_vg_command(cmd)
         
         # Parse JSON lines
         self.alignments = []
