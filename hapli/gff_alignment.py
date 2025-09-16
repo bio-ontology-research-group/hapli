@@ -903,7 +903,7 @@ class GFFAligner:
                     
                     # Convert SAM to GAM using the VG file
                     logging.debug(f"Converting SAM to GAM using VG file")
-                    cmd = ['vg', 'view', '-G', '-b', sam_tmp_path, vg_tmp_path]
+                    cmd = ['vg', 'view', '-S', '-a', sam_tmp_path, vg_tmp_path]
                     with open(output_path, 'wb') as gam_out:
                         result = subprocess.run(cmd, stdout=gam_out, stderr=subprocess.PIPE, check=True)
                     
@@ -914,7 +914,7 @@ class GFFAligner:
             else:
                 # For VG/XG files, convert SAM to GAM directly
                 logging.debug(f"Converting SAM to GAM using VG/XG file")
-                cmd = ['vg', 'view', '-G', '-b', sam_tmp_path, str(self.graph_file)]
+                cmd = ['vg', 'view', '-S', '-a', sam_tmp_path, str(self.graph_file)]
                 with open(output_path, 'wb') as gam_out:
                     result = subprocess.run(cmd, stdout=gam_out, stderr=subprocess.PIPE, check=True)
             
