@@ -47,8 +47,8 @@ def run_gff_alignment(gff_file: Path, reference_file: Path, graph_file: Path,
     logging.info("Step 1: Running GFF alignment to pangenome graph")
     
     aligner = gff_alignment.GFFAligner(
-        gff_file=gff_file,
-        reference_file=reference_file,
+        gff_path=gff_file,
+        reference_path=reference_file,
         graph_file=graph_file,
         reference_path_name=reference_path_name
     )
