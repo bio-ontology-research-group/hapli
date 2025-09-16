@@ -903,9 +903,9 @@ class GFFAligner:
                     
                     # Convert SAM to GAM using the VG file
                     logging.debug(f"Converting SAM to GAM using VG file")
-                    cmd = ['vg', 'view', '-S', '-G', vg_tmp_path]
-                    with open(sam_tmp_path, 'rb') as sam_in, open(output_path, 'wb') as gam_out:
-                        result = subprocess.run(cmd, stdin=sam_in, stdout=gam_out, stderr=subprocess.PIPE, check=True)
+                    cmd = ['vg', 'inject', vg_tmp_path, '-s', sam_tmp_path]
+                    with open(output_path, 'wb') as gam_out:
+                        result = subprocess.run(cmd, stdout=gam_out, stderr=subprocess.PIPE, check=True)
                     
                 finally:
                     # Clean up temporary VG file
@@ -914,9 +914,9 @@ class GFFAligner:
             else:
                 # For VG/XG files, convert SAM to GAM directly
                 logging.debug(f"Converting SAM to GAM using VG/XG file")
-                cmd = ['vg', 'view', '-S', '-G', str(self.graph_file)]
-                with open(sam_tmp_path, 'rb') as sam_in, open(output_path, 'wb') as gam_out:
-                    result = subprocess.run(cmd, stdin=sam_in, stdout=gam_out, stderr=subprocess.PIPE, check=True)
+                cmd = ['vg', 'inject', str(self.graph_file), '-s', sam_tmp_path]
+                with open(output_path, 'wb') as gam_out:
+                    result = subprocess.run(cmd, stdout=gam_out, stderr=subprocess.PIPE, check=True)
             
             # Check GAM file size
             gam_size = Path(output_path).stat().st_size
