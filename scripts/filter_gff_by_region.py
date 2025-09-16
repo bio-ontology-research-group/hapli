@@ -1,13 +1,8 @@
 import argparse
 import logging
 import sys
+from collections import defaultdict
 from pathlib import Path
-
-try:
-    import gffutils
-except ImportError:
-    print("Error: gffutils is not installed. Please install it with 'pip install gffutils'")
-    sys.exit(1)
 
 try:
     import pysam
@@ -60,57 +55,90 @@ def get_sam_region(sam_path: Path) -> tuple[str, int, int]:
 def filter_gff(gff_path: Path, output_path: Path, chrom: str, start: int, end: int):
     """
     Filters a GFF3 file to include only features overlapping the given region,
-    including their parent and child features.
+    including their parent and child features. This version avoids building a
+    gffutils database for performance by performing two passes over the file.
     """
     logging.info(f"Filtering GFF file {gff_path} for region {chrom}:{start}-{end}")
+    logging.info("Pass 1: Identifying overlapping features and building relationship map...")
 
-    db_path = output_path.with_suffix(".db")
-    if db_path.exists():
-        db_path.unlink()
+    child_to_parents = defaultdict(list)
+    parent_to_children = defaultdict(list)
+    overlapping_feature_ids = set()
 
-    logging.info("Creating temporary GFF database (this may take a moment)...")
-    db = gffutils.create_db(str(gff_path), dbfn=str(db_path), force=True, keep_order=True,
-                            merge_strategy='merge', sort_attribute_values=True)
+    def get_attrs(attr_str):
+        attrs = {}
+        for part in attr_str.split(';'):
+            if '=' in part:
+                key, val = part.split('=', 1)
+                attrs[key] = val
+        return attrs
+
+    with open(gff_path) as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
+            
+            parts = line.strip().split('\t')
+            if len(parts) != 9:
+                continue
+
+            line_chrom, _, _, line_start_str, line_end_str, _, _, _, attrs_str = parts
+            
+            attrs = get_attrs(attrs_str)
+            feature_id = attrs.get('ID')
+            if not feature_id:
+                continue
+
+            parent_id_val = attrs.get('Parent')
+            if parent_id_val:
+                parent_ids = parent_id_val.split(',')
+                child_to_parents[feature_id].extend(parent_ids)
+                for p_id in parent_ids:
+                    parent_to_children[p_id].append(feature_id)
+
+            line_start, line_end = int(line_start_str), int(line_end_str)
+            if line_chrom == chrom and line_end >= start and line_start <= end:
+                overlapping_feature_ids.add(feature_id)
+
+    logging.info(f"Found {len(overlapping_feature_ids)} directly overlapping features.")
+    logging.info("Expanding set to include all relatives...")
 
     features_to_keep = set()
-
-    def add_relatives(feature, db, collection):
-        """Recursively add a feature and all its parents and children to the collection."""
-        collection.add(feature.id)
-        for parent in db.parents(feature.id):
-            if parent.id not in collection:
-                add_relatives(parent, db, collection)
-        for child in db.children(feature.id):
-            if child.id not in collection:
-                add_relatives(child, db, collection)
-
-    logging.info("Identifying overlapping features and their relatives...")
-    for feature in db.region(region=(chrom, start, end), completely_within=False):
-        if feature.id not in features_to_keep:
-            add_relatives(feature, db, features_to_keep)
-
-    logging.info(f"Found {len(features_to_keep)} features (including relatives) to keep.")
-
-    logging.info(f"Writing filtered GFF to {output_path}")
-    with open(output_path, "w") as out_f:
-        # Write original headers
-        with open(gff_path) as in_f:
-            for line in in_f:
-                if line.startswith("##"):
-                    out_f.write(line)
-                else:
-                    break
+    queue = list(overlapping_feature_ids)
+    
+    while queue:
+        feature_id = queue.pop(0)
+        if feature_id in features_to_keep:
+            continue
         
-        # Write features from the database
-        for feature_id in sorted(list(features_to_keep), key=lambda x: db[x].start):
-            try:
-                feature = db[feature_id]
-                out_f.write(str(feature) + '\n')
-            except gffutils.exceptions.FeatureNotFoundError:
-                logging.warning(f"Could not find feature with ID '{feature_id}' in the database, skipping.")
+        features_to_keep.add(feature_id)
 
-    if db_path.exists():
-        db_path.unlink()
+        for p_id in child_to_parents.get(feature_id, []):
+            if p_id not in features_to_keep:
+                queue.append(p_id)
+        
+        for c_id in parent_to_children.get(feature_id, []):
+            if c_id not in features_to_keep:
+                queue.append(c_id)
+
+    logging.info(f"Total features to keep (including relatives): {len(features_to_keep)}")
+
+    logging.info(f"Pass 2: Writing filtered GFF to {output_path}")
+    with open(output_path, "w") as out_f, open(gff_path) as in_f:
+        for line in in_f:
+            if line.startswith("#"):
+                out_f.write(line)
+                continue
+            
+            parts = line.strip().split('\t')
+            if len(parts) != 9:
+                continue
+            
+            attrs = get_attrs(parts[8])
+            feature_id = attrs.get('ID')
+            if feature_id and feature_id in features_to_keep:
+                out_f.write(line)
+
     logging.info("Filtering complete.")
 
 
