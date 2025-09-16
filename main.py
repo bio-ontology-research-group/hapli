@@ -62,11 +62,11 @@ def run_gff_alignment(gff_file: Path, reference_file: Path, graph_file: Path,
     logging.info(f"GFF alignment complete. Output: {output_file}")
 
 
-def run_gam_parsing(gam_file: Path, output_file: Path, verbose: bool = False) -> None:
+def run_gam_parsing(gam_file: Path, output_file: Path, vg_executable: str = "vg", verbose: bool = False) -> None:
     """Run GAM parsing step."""
     logging.info("Step 2: Parsing GAM file and grouping alignments")
     
-    parser = gam_parser.GAMParser(gam_file)
+    parser = gam_parser.GAMParser(gam_file, vg_executable=vg_executable)
     parser.load_alignments()
     
     # Group alignments by sample/haplotype
@@ -188,6 +188,12 @@ Examples:
         default="all",
         help="Run specific step only (default: all)"
     )
+    parser.add_argument(
+        "--vg-executable",
+        type=str,
+        default="vg",
+        help="Path to the vg executable (default: vg)"
+    )
     
     args = parser.parse_args()
     
@@ -233,6 +239,7 @@ Examples:
             run_gam_parsing(
                 gam_file=gam_file,
                 output_file=grouped_file,
+                vg_executable=args.vg_executable,
                 verbose=args.verbose
             )
         
