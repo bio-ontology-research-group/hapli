@@ -46,10 +46,20 @@ class GAMParser:
         
         # Check if vg is available
         try:
-            subprocess.run([self.vg_executable, "--version"], 
-                         capture_output=True, check=True)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            raise RuntimeError(f"vg executable not found or not working: {self.vg_executable}")
+            result = subprocess.run(
+                [self.vg_executable, "--version"], 
+                capture_output=True, check=True, text=True
+            )
+            logger.debug(f"vg version check successful: {result.stdout.strip()}")
+        except FileNotFoundError:
+            raise RuntimeError(f"vg executable not found at the specified path: {self.vg_executable}")
+        except subprocess.CalledProcessError as e:
+            error_message = (
+                f"vg executable at '{self.vg_executable}' failed to run. "
+                f"Return code: {e.returncode}\n"
+                f"Stderr: {e.stderr.strip()}"
+            )
+            raise RuntimeError(error_message)
     
     def _run_vg_command(self, command: List[str]) -> str:
         """
