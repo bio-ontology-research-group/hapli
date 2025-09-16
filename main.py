@@ -42,7 +42,8 @@ def setup_logging(verbose: bool = False) -> None:
 
 def run_gff_alignment(gff_file: Path, reference_file: Path, graph_file: Path, 
                      output_file: Path, reference_path_name: str = "reference",
-                     max_workers: int = 4, vg_threads: int = 8, verbose: bool = False) -> None:
+                     max_workers: int = 4, vg_threads: int = 8, keep_temp_files: bool = False, 
+                     verbose: bool = False) -> None:
     """Run GFF alignment step."""
     logging.info("Step 1: Running GFF alignment to pangenome graph")
     
@@ -58,7 +59,10 @@ def run_gff_alignment(gff_file: Path, reference_file: Path, graph_file: Path,
     alignments = aligner.align_features_parallel(max_workers=max_workers)
     
     # Write GAM output
-    aligner.write_alignments(alignments, output_file, output_format="gam", vg_threads=vg_threads)
+    aligner.write_alignments(
+        alignments, output_file, output_format="gam", 
+        vg_threads=vg_threads, keep_temp_files=keep_temp_files
+    )
     
     logging.info(f"GFF alignment complete. Output: {output_file}")
 
@@ -201,6 +205,11 @@ Examples:
         default=8,
         help="Number of threads for vg commands (default: 8)"
     )
+    parser.add_argument(
+        "--keep-temp-files",
+        action="store_true",
+        help="Keep temporary files for debugging purposes"
+    )
     
     args = parser.parse_args()
     
@@ -237,6 +246,7 @@ Examples:
                 reference_path_name=args.reference_path_name,
                 max_workers=args.max_workers,
                 vg_threads=args.vg_threads,
+                keep_temp_files=args.keep_temp_files,
                 verbose=args.verbose
             )
         

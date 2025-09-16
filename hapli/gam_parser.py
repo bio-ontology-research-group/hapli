@@ -109,9 +109,9 @@ class GAMParser:
         Extract sample and haplotype information from path name.
         
         Common patterns:
-        - sample_name#0#chr1 -> sample: sample_name, haplotype: 0
-        - sample_name.1.chr1 -> sample: sample_name, haplotype: 1
-        - GRCh38#0#chr1 -> sample: GRCh38, haplotype: 0
+        - sample_name.hp1 -> sample: sample_name, haplotype: 1
+        - sample_name.hp2 -> sample: sample_name, haplotype: 2
+        - reference -> sample: reference, haplotype: ref
         
         Args:
             path_name: Path name from alignment
@@ -119,23 +119,16 @@ class GAMParser:
         Returns:
             Tuple of (sample_name, haplotype)
         """
-        # Pattern 1: sample#haplotype#chromosome
-        pattern1 = re.match(r'^([^#]+)#(\d+)#', path_name)
-        if pattern1:
-            return pattern1.group(1), pattern1.group(2)
+        if path_name == 'reference':
+            return 'reference', 'ref'
+
+        # Pattern: sample_name.hp<number>
+        match = re.match(r'(.+)\.hp([12])', path_name)
+        if match:
+            return match.group(1), match.group(2)
         
-        # Pattern 2: sample.haplotype.chromosome
-        pattern2 = re.match(r'^([^.]+)\.(\d+)\.', path_name)
-        if pattern2:
-            return pattern2.group(1), pattern2.group(2)
-        
-        # Pattern 3: sample_haplotype_chromosome (underscore separated)
-        pattern3 = re.match(r'^(.+)_(\d+)_', path_name)
-        if pattern3:
-            return pattern3.group(1), pattern3.group(2)
-        
-        # Default: treat entire path as sample, haplotype as "unknown"
-        return path_name, "unknown"
+        logger.warning(f"Could not parse sample/haplotype from path name: '{path_name}'. Treating as a single sample.")
+        return path_name, "1"
     
     def _extract_feature_info_from_alignment(self, alignment: Dict[str, Any]) -> Dict[str, Any]:
         """

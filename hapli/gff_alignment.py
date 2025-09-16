@@ -844,7 +844,7 @@ class GFFAligner:
         
         logging.info(f"JSON alignments written to {output_path}")
     
-    def write_alignments_gam(self, alignments: List[FeatureAlignment], output_path: Path, vg_threads: int = 8) -> None:
+    def write_alignments_gam(self, alignments: List[FeatureAlignment], output_path: Path, vg_threads: int = 8, keep_temp_files: bool = False) -> None:
         """Write alignments to GAM file using vg tools."""
         logging.info(f"Writing {len(alignments)} alignments to GAM: {output_path}")
         
@@ -911,7 +911,10 @@ class GFFAligner:
                     
                 finally:
                     # Clean up temporary VG file
-                    Path(vg_tmp_path).unlink(missing_ok=True)
+                    if not keep_temp_files:
+                        Path(vg_tmp_path).unlink(missing_ok=True)
+                    else:
+                        logging.info(f"Kept temporary VG file: {vg_tmp_path}")
             
             else:
                 # For VG/XG files, convert SAM to GAM directly
@@ -938,7 +941,10 @@ class GFFAligner:
         
         finally:
             # Clean up temporary SAM file
-            Path(sam_tmp_path).unlink(missing_ok=True)
+            if not keep_temp_files:
+                Path(sam_tmp_path).unlink(missing_ok=True)
+            else:
+                logging.info(f"Kept temporary SAM file: {sam_tmp_path}")
     
     def write_alignments_bam(self, alignments: List[FeatureAlignment], output_path: Path) -> None:
         """Write alignments to separate BAM files for each path."""
@@ -1075,12 +1081,12 @@ class GFFAligner:
             logging.warning(f"Failed to index {bam_file}: {e}")
     
     def write_alignments(self, alignments: List[FeatureAlignment], output_path: Path, 
-                        output_format: str = "json", vg_threads: int = 8) -> None:
+                        output_format: str = "json", vg_threads: int = 8, keep_temp_files: bool = False) -> None:
         """Write alignments in the specified format."""
         if output_format == "json":
             self.write_alignments_json(alignments, output_path)
         elif output_format == "gam":
-            self.write_alignments_gam(alignments, output_path, vg_threads=vg_threads)
+            self.write_alignments_gam(alignments, output_path, vg_threads=vg_threads, keep_temp_files=keep_temp_files)
         elif output_format == "bam":
             self.write_alignments_bam(alignments, output_path)
         else:
