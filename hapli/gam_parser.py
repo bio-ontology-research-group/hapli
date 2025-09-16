@@ -47,7 +47,7 @@ class GAMParser:
         # Check if vg is available
         try:
             result = subprocess.run(
-                [self.vg_executable, "--version"], 
+                [self.vg_executable, "version"], 
                 capture_output=True, check=True, text=True
             )
             logger.debug(f"vg version check successful: {result.stdout.strip()}")
