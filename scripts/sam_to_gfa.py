@@ -58,33 +58,43 @@ class SamToGfaConverter:
             self.write_gfa()
             return
 
-        # 1. Add paths for each haplotype from the SAM file
-        logging.info(f"Adding {len(mapped_alignments)} haplotype paths from SAM file.")
+        # Group alignments by chromosome to efficiently fetch reference sequence
+        alignments_by_chrom = defaultdict(list)
         for aln in mapped_alignments:
-            path_name = aln.query_name
-            path_sequence = aln.query_sequence
-            
-            if not path_sequence:
-                logging.warning(f"Skipping alignment '{path_name}' with empty sequence.")
-                continue
-                
-            seg_id = self._add_segment(path_sequence)
-            if seg_id:
-                self.paths[path_name] = [(seg_id, '+')]
+            alignments_by_chrom[aln.reference_name].append(aln)
 
-        # 2. Add the reference path
-        chrom = mapped_alignments[0].reference_name
-        logging.info(f"Adding reference path for chromosome '{chrom}'.")
-        try:
-            ref_seq = ref_fasta.fetch(chrom)
-            if ref_seq:
+        # Process each chromosome
+        for chrom, alignments in alignments_by_chrom.items():
+            logging.info(f"Processing chromosome '{chrom}' to construct full-length paths.")
+            try:
+                ref_seq = ref_fasta.fetch(chrom)
+            except KeyError:
+                logging.error(f"Chromosome '{chrom}' not found in reference FASTA. Cannot construct full haplotype paths.")
+                continue
+
+            # Add the full, unmodified reference sequence as a path
+            # This assumes the SAM file is for a single region, so 'reference' path is unique.
+            if 'reference' not in self.paths:
                 ref_seg_id = self._add_segment(ref_seq)
                 if ref_seg_id:
                     self.paths['reference'] = [(ref_seg_id, '+')]
-            else:
-                logging.warning(f"Fetched empty reference sequence for chromosome '{chrom}'.")
-        except KeyError:
-            logging.error(f"Chromosome '{chrom}' not found in reference FASTA file. Reference path will not be added.")
+                    logging.info(f"Added 'reference' path for chromosome '{chrom}'.")
+
+            # For each haplotype, construct the full sequence by applying the variant
+            for aln in alignments:
+                path_name = aln.query_name
+                
+                # Construct full haplotype sequence by substituting the aligned region.
+                # This assumes the unaligned parts of the chromosome are identical to the reference.
+                full_hap_seq = (
+                    ref_seq[:aln.reference_start] +
+                    aln.query_sequence +
+                    ref_seq[aln.reference_end:]
+                )
+                
+                hap_seg_id = self._add_segment(full_hap_seq)
+                if hap_seg_id:
+                    self.paths[path_name] = [(hap_seg_id, '+')]
 
         self.write_gfa()
         logging.info(f"GFA file written to {self.output_gfa_path}")
