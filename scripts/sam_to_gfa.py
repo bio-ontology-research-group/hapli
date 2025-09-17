@@ -39,8 +39,8 @@ class SamToGfaConverter:
     def convert(self):
         """
         Main conversion logic.
-        Creates a simple GFA with a single path representing the reference
-        sequence over the region covered by the SAM/BAM file.
+        Creates a GFA file with a path for the reference sequence and for each
+        haplotype alignment in the SAM/BAM file.
         """
         logging.info("Starting SAM to GFA conversion.")
         
@@ -58,29 +58,33 @@ class SamToGfaConverter:
             self.write_gfa()
             return
 
+        # 1. Add paths for each haplotype from the SAM file
+        logging.info(f"Adding {len(mapped_alignments)} haplotype paths from SAM file.")
+        for aln in mapped_alignments:
+            path_name = aln.query_name
+            path_sequence = aln.query_sequence
+            
+            if not path_sequence:
+                logging.warning(f"Skipping alignment '{path_name}' with empty sequence.")
+                continue
+                
+            seg_id = self._add_segment(path_sequence)
+            if seg_id:
+                self.paths[path_name] = [(seg_id, '+')]
+
+        # 2. Add the reference path
         chrom = mapped_alignments[0].reference_name
-        
-        logging.info(f"Using chromosome '{chrom}' from SAM file to build GFA path.")
-
+        logging.info(f"Adding reference path for chromosome '{chrom}'.")
         try:
-            # Fetch the entire chromosome sequence to ensure coordinates are valid
             ref_seq = ref_fasta.fetch(chrom)
+            if ref_seq:
+                ref_seg_id = self._add_segment(ref_seq)
+                if ref_seg_id:
+                    self.paths['reference'] = [(ref_seg_id, '+')]
+            else:
+                logging.warning(f"Fetched empty reference sequence for chromosome '{chrom}'.")
         except KeyError:
-            logging.error(f"Chromosome '{chrom}' not found in reference FASTA file.")
-            return
-        
-        if not ref_seq:
-            logging.warning("Fetched empty reference sequence for the region. GFA will be empty.")
-            self.write_gfa()
-            return
-
-        seg_id = self._add_segment(ref_seq)
-        
-        if seg_id:
-            # Create a path named after the chromosome.
-            self.paths[chrom] = [(seg_id, '+')]
-            # Also create a generic 'reference' path for compatibility.
-            self.paths['reference'] = [(seg_id, '+')]
+            logging.error(f"Chromosome '{chrom}' not found in reference FASTA file. Reference path will not be added.")
 
         self.write_gfa()
         logging.info(f"GFA file written to {self.output_gfa_path}")
