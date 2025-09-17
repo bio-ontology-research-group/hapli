@@ -236,15 +236,24 @@ class GAMParser:
         grouped_data = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         
         for alignment in self.alignments:
-            # Get path name from alignment
+            # Get path name from alignment by searching in multiple possible locations
             path_name = None
-            if 'path' in alignment and 'name' in alignment['path']:
-                path_name = alignment['path']['name']
-            elif 'refpos' in alignment:
-                # Alternative path name location
-                for refpos in alignment['refpos']:
-                    if 'name' in refpos:
-                        path_name = refpos['name']
+            if alignment.get('path'):
+                path_obj = alignment['path']
+                if path_obj.get('name'):
+                    path_name = path_obj.get('name')
+                elif path_obj.get('mapping'):
+                    # Fallback: check the position of the first mapping
+                    for mapping in path_obj.get('mapping', []):
+                        if mapping.get('position') and mapping['position'].get('name'):
+                            path_name = mapping['position']['name']
+                            break  # Found it
+            
+            if not path_name and alignment.get('refpos'):
+                # Alternative path name location for unaligned reads with ref pos
+                for refpos in alignment.get('refpos', []):
+                    if refpos.get('name'):
+                        path_name = refpos.get('name')
                         break
             
             if not path_name:
