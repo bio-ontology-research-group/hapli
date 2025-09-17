@@ -60,6 +60,7 @@ class FeatureAlignment:
     feature_end: int
     strand: str
     mapq: int
+    cigar: str
     alignment_score: int
     sequence_identity: float
     feature_sequence: str
@@ -93,9 +94,7 @@ class FeatureAlignment:
         rname = self.path_name
         pos = self.path_start + 1  # SAM uses 1-based coordinates
         mapq = self.mapq
-        
-        # Simple CIGAR - assume match for now (could be improved with actual alignment)
-        cigar = f"{len(self.feature_sequence)}M"
+        cigar = self.cigar
         
         rnext = "*"
         pnext = 0
@@ -630,6 +629,7 @@ class GFFAligner:
                         feature_end=hit.q_en,
                         strand="+" if hit.strand == 1 else "-",
                         mapq=hit.mapq,
+                        cigar=hit.cigar_str if hasattr(hit, 'cigar_str') and hit.cigar_str else f"{len(sequence)}M",
                         alignment_score=hit.score if hasattr(hit, 'score') else 0,
                         sequence_identity=hit.mlen / max(hit.blen, 1),
                         feature_sequence=sequence
@@ -670,6 +670,7 @@ class GFFAligner:
                                     feature_end=len(sequence),
                                     strand="+" if int(fields[1]) & 16 == 0 else "-",
                                     mapq=int(fields[4]),
+                                    cigar=fields[5],
                                     alignment_score=0,  # Not easily available from SAM
                                     sequence_identity=1.0,  # Approximate
                                     feature_sequence=sequence
