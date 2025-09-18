@@ -2,12 +2,6 @@
 
 import argparse
 import logging
-import sys
-from collections import defaultdict
-from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
-
-import logging
 import re
 import subprocess
 import sys
