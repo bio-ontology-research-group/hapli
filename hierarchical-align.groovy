@@ -9,8 +9,6 @@ import groovy.transform.Field
 @Field def threads
 @Field def pafFile = null
 @Field def refSeq
-@Field def refSeq
-@Field def refSeq
 
 def cli = new CliBuilder(usage: 'hierarchical_align.groovy [options]')
 cli.with {
