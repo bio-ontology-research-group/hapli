@@ -275,64 +275,64 @@ class HierarchicalAligner:
         
         # Load target sequences and search for exact matches
         target_seqs = pysam.FastaFile(str(target_fasta))
-            results = []
+        results = []
+        
+        for ref_name in target_seqs.references:
+            # For reference path, we expect to find the feature at its original position
+            is_reference = "grch38" in ref_name.lower() or "hg38" in ref_name.lower()
             
-            for ref_name in target_seqs.references:
-                # For reference path, we expect to find the feature at its original position
-                is_reference = "grch38" in ref_name.lower() or "hg38" in ref_name.lower()
-                
-                if is_reference:
-                    # For reference, check the exact expected position first
-                    try:
-                        # Get the sequence at the expected position
-                        target_len = target_seqs.get_reference_length(ref_name)
-                        expected_seq = target_seqs.fetch(ref_name, feature.start - 1, feature.end)
-                        if feature.strand == '-':
-                            expected_seq = self.seq._reverse_complement(expected_seq)
-                        
-                        if expected_seq.upper() == feature_seq.upper():
-                            results.append({
-                                "query_name": feature_id,
-                                "query_len": len(feature_seq),
-                                "target_name": ref_name,
-                                "target_len": target_len,
-                                "target_start": feature.start - 1,  # Convert to 0-based
-                                "target_end": feature.end,
-                                "matches": len(feature_seq),
-                                "align_len": len(feature_seq),
-                                "mapq": 60,  # High quality for exact match
-                                "cigar": f"{len(feature_seq)}M",
-                                "is_exact": True
-                            })
-                            logging.debug(f"Found exact match for {feature_id} in {ref_name} at expected position {feature.start - 1}")
-                            # For reference, only take the expected position, so continue to next haplotype
-                            continue
-                    except Exception as e:
-                        logging.debug(f"Could not check expected position for {feature_id}: {e}")
-                    # If not found at exact position on reference, let minimap2 handle it.
-                else:
-                    # For non-reference paths, search the entire sequence
-                    ref_seq = target_seqs.fetch(ref_name)
-                    target_len = len(ref_seq)
-                    pos = ref_seq.upper().find(feature_seq.upper())
-                    if pos != -1:
+            if is_reference:
+                # For reference, check the exact expected position first
+                try:
+                    # Get the sequence at the expected position
+                    target_len = target_seqs.get_reference_length(ref_name)
+                    expected_seq = target_seqs.fetch(ref_name, feature.start - 1, feature.end)
+                    if feature.strand == '-':
+                        expected_seq = self.seq._reverse_complement(expected_seq)
+                    
+                    if expected_seq.upper() == feature_seq.upper():
                         results.append({
                             "query_name": feature_id,
                             "query_len": len(feature_seq),
                             "target_name": ref_name,
                             "target_len": target_len,
-                            "target_start": pos,
-                            "target_end": pos + len(feature_seq),
+                            "target_start": feature.start - 1,  # Convert to 0-based
+                            "target_end": feature.end,
                             "matches": len(feature_seq),
                             "align_len": len(feature_seq),
                             "mapq": 60,  # High quality for exact match
                             "cigar": f"{len(feature_seq)}M",
                             "is_exact": True
                         })
-                        logging.debug(f"Found exact match for {feature_id} in {ref_name} at position {pos}")
-            
-            target_seqs.close()
-            return results if results else None
+                        logging.debug(f"Found exact match for {feature_id} in {ref_name} at expected position {feature.start - 1}")
+                        # For reference, only take the expected position, so continue to next haplotype
+                        continue
+                except Exception as e:
+                    logging.debug(f"Could not check expected position for {feature_id}: {e}")
+                # If not found at exact position on reference, let minimap2 handle it.
+            else:
+                # For non-reference paths, search the entire sequence
+                ref_seq = target_seqs.fetch(ref_name)
+                target_len = len(ref_seq)
+                pos = ref_seq.upper().find(feature_seq.upper())
+                if pos != -1:
+                    results.append({
+                        "query_name": feature_id,
+                        "query_len": len(feature_seq),
+                        "target_name": ref_name,
+                        "target_len": target_len,
+                        "target_start": pos,
+                        "target_end": pos + len(feature_seq),
+                        "matches": len(feature_seq),
+                        "align_len": len(feature_seq),
+                        "mapq": 60,  # High quality for exact match
+                        "cigar": f"{len(feature_seq)}M",
+                        "is_exact": True
+                    })
+                    logging.debug(f"Found exact match for {feature_id} in {ref_name} at position {pos}")
+        
+        target_seqs.close()
+        return results if results else None
 
     def _choose_minimap2_preset(self, feature_length: int) -> Tuple[str, List[str]]:
         """Choose appropriate minimap2 preset based on feature length."""
