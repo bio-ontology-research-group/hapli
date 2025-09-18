@@ -30,13 +30,14 @@ def setup_logging(verbose: bool = False):
 
 class AlignmentResult:
     """Stores the result of a single alignment."""
-    def __init__(self, feature_id: str, feature_type: str, mapq: int, target_start: int, target_end: int, identity: float):
+    def __init__(self, feature_id: str, feature_type: str, mapq: int, target_start: int, target_end: int, identity: float, cigar: str = None):
         self.feature_id = feature_id
         self.feature_type = feature_type
         self.mapq = mapq
         self.target_start = target_start
         self.target_end = target_end
         self.identity = identity
+        self.cigar = cigar
         self.children: List[AlignmentResult] = []
 
     def __repr__(self) -> str:
@@ -51,6 +52,7 @@ class AlignmentResult:
             'target_start': self.target_start,
             'target_end': self.target_end,
             'identity': self.identity,
+            'cigar': self.cigar,
             'children': [child.to_dict() for child in self.children]
         }
 
@@ -267,65 +269,104 @@ class HierarchicalAligner:
         for child in self.gff.get_children(feature):
             self._get_all_features_recursive(child, feature_list)
 
-    def _run_minimap2(self, target_fasta: Path, query_fasta: Path) -> Dict[str, List[Dict[str, Any]]]:
-        """Runs minimap2 and parses PAF output."""
-        logging.info(f"Running minimap2 with {self.threads} threads...")
-        cmd = [
-            "minimap2",
-            "-x", "asm20",  # Preset for accurate assembly-to-assembly alignment
-            "-c",           # Output CIGAR string in PAF
-            "--paf-no-hit", # Suppress output for sequences with no hits
-            "-t", str(self.threads),
-            str(target_fasta),
-            str(query_fasta)
-        ]
-            
-        try:
-            process = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError as e:
-            logging.error(f"minimap2 execution failed with return code {e.returncode}")
-            logging.error(f"minimap2 stderr:\n{e.stderr}")
-            sys.exit(1)
-        except FileNotFoundError:
-            logging.error("minimap2 not found. Please ensure minimap2 is installed and in your PATH.")
-            sys.exit(1)
+    def _choose_minimap2_preset(self, feature_length: int) -> Tuple[str, List[str]]:
+        """Choose appropriate minimap2 preset based on feature length."""
+        if feature_length < 50:
+            # For very small features like start/stop codons, use most sensitive settings
+            return "sr", ["-k", "7", "-w", "1", "--score-N", "0", "-A", "2", "-B", "4"]
+        elif feature_length < 200:
+            # For small exons/UTRs
+            return "sr", ["-k", "11", "-w", "3"]
+        elif feature_length < 1000:
+            # For medium features
+            return "splice", []
+        else:
+            # For large features
+            return "asm20", []
 
-        alignments = defaultdict(list)
-        lines = process.stdout.strip().split('\n')
+    def _run_minimap2_batch(self, target_fasta: Path, features_by_size: Dict[str, List[Tuple[gffutils.Feature, str]]]) -> Dict[str, List[Dict[str, Any]]]:
+        """Run minimap2 with different settings for different feature sizes."""
+        all_alignments = defaultdict(list)
+        all_paf_lines = []
         
-        if lines == ['']:  # No alignments found
-            logging.warning("No alignments found by minimap2")
-            return alignments
-        
-        logging.info(f"Parsing {len(lines)} alignment records from minimap2...")
-        
-        # Store raw PAF lines for later saving
-        self.raw_paf_lines = []
-        
-        for line in lines:
-            if not line:
-                continue
-            
-            # Store the raw line
-            self.raw_paf_lines.append(line)
-            
-            parts = line.split('\t')
-            if len(parts) < 12:
+        for size_category, features in features_by_size.items():
+            if not features:
                 continue
                 
-            paf_record = {
-                "query_name": parts[0],
-                "target_name": parts[5],
-                "target_start": int(parts[7]),
-                "target_end": int(parts[8]),
-                "matches": int(parts[9]),
-                "align_len": int(parts[10]),
-                "mapq": int(parts[11]),
-            }
-            alignments[paf_record["target_name"]].append(paf_record)
+            # Create temp file for this batch
+            with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix=".fa") as query_fasta:
+                query_path = Path(query_fasta.name)
+                
+                # Write sequences
+                feature_lengths = {}
+                for feature, seq in features:
+                    query_fasta.write(f">{feature.id}\n{seq}\n")
+                    feature_lengths[feature.id] = len(seq)
+                query_fasta.flush()
+                
+                # Get appropriate preset
+                avg_length = sum(len(seq) for _, seq in features) / len(features)
+                preset, extra_args = self._choose_minimap2_preset(int(avg_length))
+                
+                logging.info(f"Running minimap2 for {len(features)} {size_category} features (preset: {preset})...")
+                
+                cmd = [
+                    "minimap2",
+                    "-x", preset,
+                    "-c",  # Output CIGAR
+                    "--paf-no-hit",
+                    "-t", str(self.threads),
+                ] + extra_args + [
+                    str(target_fasta),
+                    str(query_path)
+                ]
+                
+                try:
+                    process = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    
+                    lines = process.stdout.strip().split('\n')
+                    for line in lines:
+                        if not line:
+                            continue
+                        
+                        all_paf_lines.append(line)
+                        parts = line.split('\t')
+                        if len(parts) < 12:
+                            continue
+                        
+                        # Extract CIGAR string
+                        cigar = None
+                        for tag in parts[12:]:
+                            if tag.startswith("cg:Z:"):
+                                cigar = tag[5:]
+                                break
+                        
+                        paf_record = {
+                            "query_name": parts[0],
+                            "query_len": int(parts[1]),
+                            "target_name": parts[5],
+                            "target_start": int(parts[7]),
+                            "target_end": int(parts[8]),
+                            "matches": int(parts[9]),
+                            "align_len": int(parts[10]),
+                            "mapq": int(parts[11]),
+                            "cigar": cigar
+                        }
+                        all_alignments[paf_record["target_name"]].append(paf_record)
+                        
+                except subprocess.CalledProcessError as e:
+                    logging.warning(f"minimap2 failed for {size_category} features: {e.stderr}")
+                except FileNotFoundError:
+                    logging.error("minimap2 not found. Please ensure minimap2 is installed and in your PATH.")
+                    sys.exit(1)
+                finally:
+                    try:
+                        query_path.unlink()
+                    except Exception:
+                        pass
         
-        logging.info(f"Found alignments to {len(alignments)} target sequences")
-        return alignments
+        self.raw_paf_lines = all_paf_lines
+        return all_alignments
 
     def align_gene_to_haplotypes(self, gene: gffutils.Feature, haplotypes_fasta: Path) -> Dict[str, AlignmentResult]:
         """Aligns a gene and its sub-features to all sequences in a multi-sample FASTA."""
@@ -333,42 +374,49 @@ class HierarchicalAligner:
         all_features = []
         logging.info("Gathering all features in gene hierarchy...")
         self._get_all_features_recursive(gene, all_features)
-            
+        
         logging.info(f"Found {len(all_features)} features (gene and descendants) to align.")
-
-        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix=".fa") as query_fasta:
-            query_path = Path(query_fasta.name)
-            try:
-                feature_count = 0
-                skipped_count = 0
-                for feature in tqdm(all_features, desc="Extracting feature sequences", unit=" features"):
-                    seq = self.seq.get_sequence(feature)
-                    if seq and len(seq) > 0:  # Ensure sequence is not empty
-                        query_fasta.write(f">{feature.id}\n{seq}\n")
-                        feature_count += 1
-                    else:
-                        skipped_count += 1
-                        logging.debug(f"Skipped feature {feature.id} (no sequence)")
-                query_fasta.flush()
-                
-                if skipped_count > 0:
-                    logging.warning(f"Skipped {skipped_count} features with no extractable sequence")
-                
-                if feature_count == 0:
-                    logging.error("No feature sequences could be extracted.")
-                    return {}
-                
-                logging.info(f"Wrote {feature_count} feature sequences to temporary file.")
-
-                # 2. Run minimap2 to get all alignments at once
-                all_alignments = self._run_minimap2(haplotypes_fasta, query_path)
-            finally:
-                # Clean up temporary file
-                try:
-                    query_path.unlink()
-                except Exception:
-                    pass
-
+        
+        # Categorize features by size for appropriate alignment strategies
+        features_by_size = {
+            "tiny": [],      # < 50bp (start/stop codons)
+            "small": [],     # 50-200bp (small exons, UTRs)
+            "medium": [],    # 200-1000bp
+            "large": []      # > 1000bp
+        }
+        
+        skipped_count = 0
+        for feature in tqdm(all_features, desc="Extracting feature sequences", unit=" features"):
+            seq = self.seq.get_sequence(feature)
+            if seq and len(seq) > 0:
+                length = len(seq)
+                if length < 50:
+                    features_by_size["tiny"].append((feature, seq))
+                elif length < 200:
+                    features_by_size["small"].append((feature, seq))
+                elif length < 1000:
+                    features_by_size["medium"].append((feature, seq))
+                else:
+                    features_by_size["large"].append((feature, seq))
+            else:
+                skipped_count += 1
+                logging.debug(f"Skipped feature {feature.id} (no sequence)")
+        
+        if skipped_count > 0:
+            logging.warning(f"Skipped {skipped_count} features with no extractable sequence")
+        
+        total_features = sum(len(f) for f in features_by_size.values())
+        if total_features == 0:
+            logging.error("No feature sequences could be extracted.")
+            return {}
+        
+        logging.info(f"Feature size distribution: tiny={len(features_by_size['tiny'])}, "
+                    f"small={len(features_by_size['small'])}, medium={len(features_by_size['medium'])}, "
+                    f"large={len(features_by_size['large'])}")
+        
+        # 2. Run minimap2 with appropriate settings for each size category
+        all_alignments = self._run_minimap2_batch(haplotypes_fasta, features_by_size)
+        
         # 3. Build hierarchical results from flat alignment list
         results = {}
         hap_names = list(all_alignments.keys())
@@ -380,7 +428,7 @@ class HierarchicalAligner:
         logging.info(f"Building hierarchical alignment results for {len(hap_names)} haplotypes...")
         
         for hap_name in tqdm(hap_names, desc="Building hierarchical results", unit=" haplotypes"):
-            # Group alignments by query name and select the best one (highest MAPQ)
+            # Group alignments by query name and select the best one
             grouped_by_query = defaultdict(list)
             for aln in all_alignments[hap_name]:
                 grouped_by_query[aln['query_name']].append(aln)
@@ -391,13 +439,13 @@ class HierarchicalAligner:
                     # Select best alignment based on MAPQ, then identity
                     best_aln = max(aln_list, key=lambda x: (x['mapq'], x['matches']/x['align_len'] if x['align_len'] > 0 else 0))
                     alignments_for_hap[query_name] = best_aln
-
+            
             # Find the top-level gene alignment
             gene_aln_data = alignments_for_hap.get(gene.id)
             if not gene_aln_data:
                 logging.debug(f"No alignment found for gene {gene.id} on haplotype {hap_name}")
                 continue
-
+            
             identity = gene_aln_data['matches'] / gene_aln_data['align_len'] if gene_aln_data['align_len'] > 0 else 0
             gene_result = AlignmentResult(
                 feature_id=gene.id,
@@ -405,23 +453,43 @@ class HierarchicalAligner:
                 mapq=gene_aln_data['mapq'],
                 target_start=gene_aln_data['target_start'],
                 target_end=gene_aln_data['target_end'],
-                identity=identity
+                identity=identity,
+                cigar=gene_aln_data.get('cigar')
             )
-
+            
             # Recursively build the tree for children
-            self._build_result_tree(gene, gene_result, alignments_for_hap)
+            # Pass perfect identity info down if parent has 100% identity
+            self._build_result_tree(gene, gene_result, alignments_for_hap, 
+                                  inherit_perfect=(identity >= 0.999))
             results[hap_name] = gene_result
         
         logging.info(f"Successfully built alignment results for {len(results)} haplotypes")
         return results
 
-    def _build_result_tree(self, parent_feature: gffutils.Feature, parent_result: AlignmentResult, alignments: Dict[str, Dict]):
+    def _build_result_tree(self, parent_feature: gffutils.Feature, parent_result: AlignmentResult, 
+                          alignments: Dict[str, Dict], inherit_perfect: bool = False):
         """Recursively constructs the alignment result tree, applying hierarchical constraints."""
         for child_feature in self.gff.get_children(parent_feature):
+            # If parent has perfect identity, child inherits it
+            if inherit_perfect:
+                child_result = AlignmentResult(
+                    feature_id=child_feature.id,
+                    feature_type=child_feature.featuretype,
+                    mapq=60,  # High quality inherited from parent
+                    target_start=parent_result.target_start + (child_feature.start - parent_feature.start),
+                    target_end=parent_result.target_start + (child_feature.end - parent_feature.start),
+                    identity=1.0,
+                    cigar=None  # Inherited, not directly aligned
+                )
+                parent_result.children.append(child_result)
+                # Recurse with perfect inheritance
+                self._build_result_tree(child_feature, child_result, alignments, inherit_perfect=True)
+                continue
+            
             child_aln_data = alignments.get(child_feature.id)
             if not child_aln_data:
                 continue
-
+            
             # Hierarchical constraint: child must be within parent's aligned region (with small tolerance)
             tolerance = 10  # Allow 10bp tolerance for alignment boundaries
             if not (child_aln_data['target_start'] >= parent_result.target_start - tolerance and 
@@ -429,7 +497,7 @@ class HierarchicalAligner:
                 logging.debug(f"Skipping child {child_feature.id} as its alignment [{child_aln_data['target_start']}-{child_aln_data['target_end']}] "
                             f"is outside parent {parent_feature.id}'s region [{parent_result.target_start}-{parent_result.target_end}]")
                 continue
-
+            
             identity = child_aln_data['matches'] / child_aln_data['align_len'] if child_aln_data['align_len'] > 0 else 0
             child_result = AlignmentResult(
                 feature_id=child_feature.id,
@@ -437,12 +505,14 @@ class HierarchicalAligner:
                 mapq=child_aln_data['mapq'],
                 target_start=child_aln_data['target_start'],
                 target_end=child_aln_data['target_end'],
-                identity=identity
+                identity=identity,
+                cigar=child_aln_data.get('cigar')
             )
             parent_result.children.append(child_result)
-                
-            # Recurse
-            self._build_result_tree(child_feature, child_result, alignments)
+            
+            # Recurse, potentially with perfect inheritance if this child has perfect identity
+            self._build_result_tree(child_feature, child_result, alignments, 
+                                  inherit_perfect=(identity >= 0.999))
     
     def get_raw_paf_lines(self) -> List[str]:
         """Returns the raw PAF output lines from the last alignment."""
@@ -472,6 +542,8 @@ def _print_result_recursively(result: AlignmentResult, indent: int):
     print(f"{prefix}- {result.feature_type} '{result.feature_id}':")
     print(f"{prefix}  - Aligned to region: {result.target_start:,}-{result.target_end:,}")
     print(f"{prefix}  - MAPQ: {result.mapq}, Identity: {result.identity:.2%}")
+    if result.cigar is None and result.identity >= 0.999:
+        print(f"{prefix}  - (Inherited from parent's perfect alignment)")
 
     # Sort children by their start position for logical output
     sorted_children = sorted(result.children, key=lambda r: r.target_start)

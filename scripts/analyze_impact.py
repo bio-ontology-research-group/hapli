@@ -199,12 +199,9 @@ class PAFParser:
         # Return the one with the highest mapping quality and coverage
         return max(alns, key=lambda x: (x['mapq'], x['coverage']))
 
-    def count_alignments(self, query_name: str) -> Dict[str, int]:
-        """Count how many times a feature aligns to each target."""
-        counts = {}
-        for target_name in self.alignments.get(query_name, {}):
-            counts[target_name] = len(self.alignments[query_name][target_name])
-        return counts
+    def count_alignments_per_target(self, query_name: str, target_name: str) -> int:
+        """Count how many times a feature aligns to a specific target."""
+        return len(self.alignments.get(query_name, {}).get(target_name, []))
 
 
 class ImpactAnalyzer:
@@ -282,9 +279,8 @@ class ImpactAnalyzer:
         feature = self.gff.get_feature(feature_id)
         alignments = self.paf.get_alignments(feature_id, path_name)
         
-        # Check for duplications
-        all_path_counts = self.paf.count_alignments(feature_id)
-        duplication_count = all_path_counts.get(path_name, 0)
+        # Count duplications for this specific target
+        duplication_count = self.paf.count_alignments_per_target(feature_id, path_name)
         
         if not alignments:
             return {
@@ -321,8 +317,18 @@ class ImpactAnalyzer:
         impact = FUNCTIONAL
         interpretation = ""
 
+        # Special handling for start/stop codons
+        if feature["type"] in ["start_codon", "stop_codon"]:
+            if coverage < 100 or identity < 100:
+                impact = NON_FUNCTIONAL
+                details.append(f"{feature['type']} is altered")
+                interpretation = f"{feature['type']} mutation will affect protein"
+            else:
+                impact = FUNCTIONAL
+                details.append(f"{feature['type']} is intact")
+                interpretation = f"{feature['type']} is preserved"
         # Analyze based on feature type
-        if feature["type"] == "CDS":
+        elif feature["type"] == "CDS":
             if coverage < 50:
                 impact = TRUNCATED
                 details.append(f"Only {coverage:.1f}% of CDS is aligned")
@@ -398,8 +404,10 @@ class ImpactAnalyzer:
                 details.append(f"Feature is preserved")
                 interpretation = f"Feature is intact"
 
-        # Check for duplications
-        if duplication_count > 1:
+        # Check for duplications (but not for reference path)
+        # Reference path shouldn't show duplications
+        is_reference = "grch38" in path_name.lower() or "hg38" in path_name.lower() or "reference" in path_name.lower()
+        if duplication_count > 1 and not is_reference:
             if impact == FUNCTIONAL:
                 impact = DUPLICATED
             details.append(f"Feature appears {duplication_count} times on this path")
@@ -413,7 +421,7 @@ class ImpactAnalyzer:
             "mismatches": mismatches,
             "insertions": insertions,
             "deletions": deletions,
-            "duplications": duplication_count,
+            "duplications": duplication_count if not is_reference else 1,
             "alignment": best_aln,
             "all_alignments": alignments,
             "interpretation": interpretation
@@ -431,11 +439,46 @@ class ImpactAnalyzer:
         for child in child_impacts:
             impact_counts[child["impact"]] += 1
         
-        # Determine overall impact
+        # Determine overall impact - STRICT aggregation
+        # If ANY critical child is non-functional, parent is non-functional
         most_severe_impact = FUNCTIONAL
-        for impact in child_impacts:
-            if IMPACT_SEVERITY[impact["impact"]] > IMPACT_SEVERITY[most_severe_impact]:
-                most_severe_impact = impact["impact"]
+        
+        # Check for critical failures
+        critical_child_types = {"CDS", "start_codon", "stop_codon", "exon"}
+        critical_failures = 0
+        total_critical = 0
+        
+        for child_impact in child_impacts:
+            child_id = child_impact.get("feature_id", "")
+            if child_id:
+                child_feature = self.gff.get_feature(child_id)
+                if child_feature and child_feature["type"] in critical_child_types:
+                    total_critical += 1
+                    if child_impact["impact"] in [NON_FUNCTIONAL, NOT_FOUND, FRAMESHIFT, TRUNCATED]:
+                        critical_failures += 1
+        
+        # Strict rules for parent impact based on children
+        if feature["type"] == "transcript":
+            # Transcript needs ALL critical components
+            if impact_counts[NOT_FOUND] > 0 or impact_counts[NON_FUNCTIONAL] > 0:
+                most_severe_impact = NON_FUNCTIONAL
+            elif impact_counts[FRAMESHIFT] > 0:
+                most_severe_impact = FRAMESHIFT
+            elif impact_counts[TRUNCATED] > 0:
+                most_severe_impact = TRUNCATED
+            elif critical_failures > 0:
+                most_severe_impact = NON_FUNCTIONAL
+            elif impact_counts[CHANGE_OF_FUNCTION] > 0:
+                most_severe_impact = CHANGE_OF_FUNCTION
+            elif impact_counts[PARTIAL_FUNCTION] > 0:
+                most_severe_impact = PARTIAL_FUNCTION
+            else:
+                most_severe_impact = FUNCTIONAL
+        else:
+            # For other parent types, use severity-based aggregation
+            for impact in child_impacts:
+                if IMPACT_SEVERITY[impact["impact"]] > IMPACT_SEVERITY[most_severe_impact]:
+                    most_severe_impact = impact["impact"]
         
         # Calculate aggregate statistics
         avg_identity = sum(c.get('identity', 0) for c in child_impacts) / len(child_impacts) if child_impacts else 0
@@ -444,6 +487,8 @@ class ImpactAnalyzer:
         
         # Build interpretation
         interpretation = f"{feature['type']} has "
+        if impact_counts[NOT_FOUND] > 0:
+            interpretation += f"{impact_counts[NOT_FOUND]} missing components, "
         if impact_counts[NON_FUNCTIONAL] > 0:
             interpretation += f"{impact_counts[NON_FUNCTIONAL]} non-functional components, "
         if impact_counts[FRAMESHIFT] > 0:
@@ -459,13 +504,15 @@ class ImpactAnalyzer:
         
         # Overall assessment
         if most_severe_impact in [NON_FUNCTIONAL, FRAMESHIFT]:
-            interpretation += ". Overall: likely non-functional"
-        elif most_severe_impact in [TRUNCATED, CHANGE_OF_FUNCTION]:
-            interpretation += ". Overall: altered function expected"
+            interpretation += ". Overall: NON-FUNCTIONAL"
+        elif most_severe_impact in [TRUNCATED]:
+            interpretation += ". Overall: SEVERELY DAMAGED"
+        elif most_severe_impact == CHANGE_OF_FUNCTION:
+            interpretation += ". Overall: ALTERED FUNCTION"
         elif most_severe_impact == PARTIAL_FUNCTION:
-            interpretation += ". Overall: partial function retained"
+            interpretation += ". Overall: PARTIAL FUNCTION"
         else:
-            interpretation += ". Overall: likely functional"
+            interpretation += ". Overall: FUNCTIONAL"
         
         details = [f"Aggregated from {len(child_impacts)} sub-features"]
         for impact_type, count in sorted(impact_counts.items(), key=lambda x: -IMPACT_SEVERITY[x[0]]):
@@ -483,7 +530,8 @@ class ImpactAnalyzer:
             "duplications": total_duplications,
             "interpretation": interpretation,
             "child_count": len(child_impacts),
-            "impact_counts": dict(impact_counts)
+            "impact_counts": dict(impact_counts),
+            "feature_id": parent_id  # Add feature_id for parent tracking
         }
 
     def _get_alignment_visualization(self, feature_id: str, aln: Dict[str, Any]) -> str:
