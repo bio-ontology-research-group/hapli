@@ -109,9 +109,17 @@ class GFFProcessor:
                     
                     # Check if this is our gene
                     if not gene_found and feature_type == 'gene':
-                        feature_name = attributes.get('Name', [''])[0]
+                        # Check multiple possible attribute names for gene name
+                        feature_name = attributes.get('Name', [''])[0]  # Standard GFF3
+                        if not feature_name:
+                            feature_name = attributes.get('gene_name', [''])[0]  # GENCODE/Ensembl style
                         
-                        if feature_id == self.gene_identifier or feature_name == self.gene_identifier:
+                        # Also check gene_id for Ensembl IDs
+                        gene_id = attributes.get('gene_id', [''])[0]
+                        
+                        if (feature_id == self.gene_identifier or 
+                            feature_name == self.gene_identifier or
+                            gene_id == self.gene_identifier):
                             # Create the gene feature
                             self.gene_feature = gffutils.Feature(
                                 seqid=parts[0],
@@ -130,7 +138,7 @@ class GFFProcessor:
                             gene_chr = parts[0]
                             gene_start = int(parts[3])
                             gene_end = int(parts[4])
-                            logging.info(f"Found gene '{self.gene_identifier}' at {gene_chr}:{gene_start}-{gene_end}")
+                            logging.info(f"Found gene '{self.gene_identifier}' (ID: {feature_id}, Name: {feature_name}) at {gene_chr}:{gene_start}-{gene_end}")
                     
                     # If gene is found, collect features in the same region (optimization)
                     if gene_found:
@@ -509,7 +517,8 @@ def main():
             logging.error(f"Could not find gene '{args.gene}' in the GFF file.")
             sys.exit(1)
         
-        gene_name = gene_feature.attributes.get('Name', ['-'])
+        # Get the gene name from attributes (try both Name and gene_name)
+        gene_name = gene_feature.attributes.get('Name', gene_feature.attributes.get('gene_name', ['-']))
         if isinstance(gene_name, list):
             gene_name = gene_name[0] if gene_name else '-'
         
