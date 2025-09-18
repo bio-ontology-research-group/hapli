@@ -9,6 +9,9 @@ import groovy.transform.Field
 @Field def threads
 @Field def pafFile = null
 @Field def refSeq
+@Field def getFeatureSequence
+@Field def getFeatureSequence
+@Field def getFeatureSequence
 
 def cli = new CliBuilder(usage: 'hierarchical_align.groovy [options]')
 cli.with {
@@ -153,7 +156,7 @@ if (refSeq.length() == 0) {
 println "Loaded reference sequence for ${chromosome} (${refSeq.length()} bp)"
 
 // Sequence extraction function
-def getFeatureSequence = { feature, referenceSequence ->
+getFeatureSequence = { feature, referenceSequence ->
     if (!feature) return null
     // GFF is 1-based, substring is 0-based exclusive end
     def start = feature.origStart - 1
