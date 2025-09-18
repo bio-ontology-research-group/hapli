@@ -7,6 +7,7 @@ import groovy.transform.Field
 @Field def children = [:].withDefault { [] }
 @Field def roots = []
 @Field def threads
+@Field def pafFile = null
 
 def cli = new CliBuilder(usage: 'hierarchical_align.groovy [options]')
 cli.with {
@@ -18,6 +19,9 @@ cli.with {
     e(longOpt: 'end', args: 1, argName: 'int', required: true, 'Region end coordinate')
     c(longOpt: 'chr', args: 1, argName: 'string', required: false, 'Chromosome (default: chr1)')
     t(longOpt: 'threads', args: 1, argName: 'int', required: false, 'Number of threads (default: 8)')
+    gn(longOpt: 'genes', args: 1, argName: 'list', required: false, 'Comma-separated list of gene names to align')
+    tp(longOpt: 'target-paths', args: 1, argName: 'list', required: false, 'Comma-separated list of paths to align against')
+    a(longOpt: 'paf-output', args: 1, argName: 'file', required: false, 'Save raw minimap2 PAF alignments to a file')
     h(longOpt: 'help', 'Show usage')
 }
 
@@ -35,6 +39,34 @@ def regionStart = options.s as Integer
 def regionEnd = options.e as Integer
 def chromosome = options.c ?: 'chr1'
 threads = (options.t ?: '8') as Integer
+def targetGenes = options.gn ? options.gn.split(',').collect { it.trim() } : []
+def targetPaths = options.tp ? options.tp.split(',').collect { it.trim() } as Set : null
+pafFile = options.a ? new File(options.a) : null
+
+if (pafFile) {
+    pafFile.text = '' // Clear PAF file at start
+    println "Will save raw PAF alignments to ${pafFile.name}"
+}
+
+if (targetPaths) {
+    println "Filtering for ${targetPaths.size()} target paths."
+    def filteredPathsFile = File.createTempFile("filtered_paths", ".fa")
+    filteredPathsFile.deleteOnExit()
+    def writer = filteredPathsFile.newWriter()
+    def currentPathId = null
+    def writing = false
+    pathsFile.eachLine { line ->
+        if (line.startsWith('>')) {
+            currentPathId = line.substring(1).split()[0]
+            writing = targetPaths.contains(currentPathId)
+        }
+        if (writing) {
+            writer.println line
+        }
+    }
+    writer.close()
+    pathsFile = filteredPathsFile // Use filtered paths for all subsequent operations
+}
 
 // Parse GFF3 hierarchy
 features = [:]
@@ -153,6 +185,10 @@ def alignFeature(featureId, pathFile, numThreads, parentRegion = null) {
     def errors = proc.err.text
     
     proc.waitFor()
+
+    if (pafFile) {
+        pafFile.append(output)
+    }
     
     if (proc.exitValue() != 0) {
         System.err.println "Error running minimap2 for feature ${featureId}. Exit code: ${proc.exitValue()}"
@@ -201,8 +237,18 @@ outputFile.withWriter { writer ->
     writer.println "Region: ${chromosome}:${regionStart}-${regionEnd}"
     writer.println "=" * 80
     
-    def totalGenes = roots.size()
-    roots.sort().eachWithIndex { geneId, i ->
+    def allRoots = roots.sort()
+    def filteredRoots = allRoots
+    if (targetGenes.size() > 0) {
+        filteredRoots = allRoots.findAll { geneId ->
+            def gene = features[geneId]
+            gene && targetGenes.contains(gene.geneName)
+        }
+        println "\nFiltered to ${filteredRoots.size()} of ${allRoots.size()} total root features based on specified gene names."
+    }
+
+    def totalGenes = filteredRoots.size()
+    filteredRoots.eachWithIndex { geneId, i ->
         def gene = features[geneId]
         
         // **NEW**: Print progress for each gene
@@ -241,7 +287,7 @@ outputFile.withWriter { writer ->
                 if (txAlignments) {
                     def txAln = txAlignments.find { it.path == path }
                     if (txAln) {
-                        writer.println "    ${transcript.type}: ${transcriptId.take(30)}"
+                        writer.println "    ${transcript.type}: ${transcriptId}"
                         writer.println "      ${txAln.start}-${txAln.end} (${String.format('%.1f%%', txAln.identity)}, ${txAln.length}bp)"
                         
                         transcript.children.each { childId ->
