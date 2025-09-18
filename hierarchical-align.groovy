@@ -164,13 +164,13 @@ def alignFeature(featureId, pathFile, numThreads, parentRegion = null) {
     
     def cmd
     if (seqLen < 30) {
-        cmd = "minimap2 -cx sr -k5 -w2 --min-dp-score 10 --min-chain-score 10 -B2 -O2,12 -E1,0 --score-N 0 --secondary=yes -N 500 -t ${numThreads}"
+        cmd = "minimap2 -c -cx sr -k5 -w2 --min-dp-score 10 --min-chain-score 10 -B2 -O2,12 -E1,0 --score-N 0 --secondary=yes -N 500 -t ${numThreads}"
     } else if (seqLen < 100) {
-        cmd = "minimap2 -cx sr -k7 -w3 --min-dp-score 20 --min-chain-score 20 -B3 -O3,18 --secondary=yes -N 500 -t ${numThreads}"
+        cmd = "minimap2 -c -cx sr -k7 -w3 --min-dp-score 20 --min-chain-score 20 -B3 -O3,18 --secondary=yes -N 500 -t ${numThreads}"
     } else if (seqLen < 500) {
-        cmd = "minimap2 -cx asm20 -k10 -w5 --min-dp-score 50 --secondary=yes -N 500 -t ${numThreads}"
+        cmd = "minimap2 -c -cx asm20 -k10 -w5 --min-dp-score 50 --secondary=yes -N 500 -t ${numThreads}"
     } else {
-        cmd = "minimap2 -cx asm5 --secondary=yes -N 500 -t ${numThreads}"
+        cmd = "minimap2 -c -cx asm5 --secondary=yes -N 500 -t ${numThreads}"
     }
     
     def targetFile = pathFile
