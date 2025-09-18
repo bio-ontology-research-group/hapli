@@ -68,13 +68,34 @@ class GFFProcessor:
         if self.db is None:
             logging.info(f"Creating GFF database at {self.db_path}...")
             logging.info("This may take a few minutes for large GFF files...")
+            
+            # Count total lines for progress bar
+            total_lines = 0
+            with open(gff_file, 'r') as f:
+                for line in f:
+                    if not line.startswith('#'):
+                        total_lines += 1
+            
+            # Create a custom iterator with progress bar
+            def gff_iterator():
+                with open(gff_file, 'r') as f:
+                    with tqdm(total=total_lines, desc="Processing GFF features", unit=" features") as pbar:
+                        for line in f:
+                            if not line.startswith('#'):
+                                pbar.update(1)
+                            yield line
+            
+            # Use optimized settings for faster database creation
             self.db = gffutils.create_db(
-                str(gff_file), 
+                gff_iterator(), 
                 dbfn=str(self.db_path), 
                 force=True, 
-                keep_order=True, 
-                merge_strategy='merge', 
-                id_spec=['ID', 'Name']
+                keep_order=False,  # Faster without preserving order
+                merge_strategy='error',  # Faster than 'merge'
+                id_spec=['ID', 'Name'],
+                disable_infer_genes=True,  # Faster without gene inference
+                disable_infer_transcripts=True,  # Faster without transcript inference
+                from_string=True  # Tell gffutils we're providing strings
             )
             logging.info("GFF database created successfully.")
 
@@ -90,12 +111,18 @@ class GFFProcessor:
             pass  # Not found by ID, will search by Name below.
 
         # If not found by ID, or if the ID matched a non-gene feature, search by Name.
-        for gene in self.db.features_of_type('gene'):
-            # The 'Name' attribute can be a list of names.
-            if gene_identifier in gene.attributes.get('Name', []):
-                return gene
+        logging.info(f"Searching for gene by Name attribute...")
+        found_count = 0
+        with tqdm(desc="Searching genes", unit=" genes") as pbar:
+            for gene in self.db.features_of_type('gene'):
+                pbar.update(1)
+                found_count += 1
+                # The 'Name' attribute can be a list of names.
+                if gene_identifier in gene.attributes.get('Name', []):
+                    logging.info(f"Found gene after checking {found_count} genes.")
+                    return gene
         
-        logging.error(f"Gene '{gene_identifier}' not found in GFF file.")
+        logging.error(f"Gene '{gene_identifier}' not found in GFF file after checking {found_count} genes.")
         return None
 
     def get_children(self, feature: gffutils.Feature) -> Iterator[gffutils.Feature]:
@@ -106,7 +133,9 @@ class GFFProcessor:
 class SequenceExtractor:
     """Extracts feature sequences from a reference FASTA."""
     def __init__(self, reference_fasta: Path):
+        logging.info(f"Loading reference FASTA: {reference_fasta}")
         self.fasta = pysam.FastaFile(str(reference_fasta))
+        logging.info(f"Reference FASTA loaded with {len(self.fasta.references)} sequences")
 
     def get_sequence(self, feature: gffutils.Feature) -> Optional[str]:
         """Extracts a feature's sequence, handling strand."""
@@ -164,7 +193,10 @@ class HierarchicalAligner:
             sys.exit(1)
 
         alignments = defaultdict(list)
-        for line in process.stdout.strip().split('\n'):
+        lines = process.stdout.strip().split('\n')
+        logging.info(f"Parsing {len(lines)} alignment records from minimap2...")
+        
+        for line in tqdm(lines, desc="Parsing PAF alignments", unit=" alignments"):
             if not line:
                 continue
             parts = line.split('\t')
@@ -181,12 +213,15 @@ class HierarchicalAligner:
                 "mapq": int(parts[11]),
             }
             alignments[paf_record["target_name"]].append(paf_record)
+        
+        logging.info(f"Found alignments to {len(alignments)} target sequences")
         return alignments
 
     def align_gene_to_haplotypes(self, gene: gffutils.Feature, haplotypes_fasta: Path) -> Dict[str, AlignmentResult]:
         """Aligns a gene and its sub-features to all sequences in a multi-sample FASTA."""
         # 1. Gather all features and their sequences
         all_features = []
+        logging.info("Gathering all features in gene hierarchy...")
         self._get_all_features_recursive(gene, all_features)
             
         logging.info(f"Extracted {len(all_features)} features (gene and descendants) to align.")
@@ -195,12 +230,18 @@ class HierarchicalAligner:
             query_path = Path(query_fasta.name)
             try:
                 feature_count = 0
-                for feature in tqdm(all_features, desc="Extracting feature sequences"):
+                skipped_count = 0
+                for feature in tqdm(all_features, desc="Extracting feature sequences", unit=" features"):
                     seq = self.seq.get_sequence(feature)
                     if seq:
                         query_fasta.write(f">{feature.id}\n{seq}\n")
                         feature_count += 1
+                    else:
+                        skipped_count += 1
                 query_fasta.flush()
+                
+                if skipped_count > 0:
+                    logging.warning(f"Skipped {skipped_count} features with no extractable sequence")
                 
                 if feature_count == 0:
                     logging.error("No feature sequences could be extracted.")
@@ -225,7 +266,9 @@ class HierarchicalAligner:
             logging.warning("No alignments found for any haplotype.")
             return results
         
-        for hap_name in tqdm(hap_names, desc="Building hierarchical results"):
+        logging.info(f"Building hierarchical alignment results for {len(hap_names)} haplotypes...")
+        
+        for hap_name in tqdm(hap_names, desc="Building hierarchical results", unit=" haplotypes"):
             # Group alignments by query name and select the best one (highest MAPQ)
             # This handles cases where a feature aligns to multiple places on a haplotype.
             grouped_by_query = defaultdict(list)
@@ -256,7 +299,8 @@ class HierarchicalAligner:
             # Recursively build the tree for children
             self._build_result_tree(gene, gene_result, alignments_for_hap)
             results[hap_name] = gene_result
-                
+        
+        logging.info(f"Successfully built alignment results for {len(results)} haplotypes")
         return results
 
     def _build_result_tree(self, parent_feature: gffutils.Feature, parent_result: AlignmentResult, alignments: Dict[str, Dict]):
