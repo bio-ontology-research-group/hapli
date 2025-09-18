@@ -96,6 +96,29 @@ def get_alignment_visualization(feature: dict, aln: dict, ref_genome: pysam.Fast
 def analyze_paf(paf_file: Path, gff_file: Path, reference_fasta: Path, path_fasta: Path):
     """Analyze PAF file to understand alignment patterns."""
     
+    # Load GFF features for visualization
+    gff_features = {}
+    if gff_file and gff_file.exists():
+        with open(gff_file, 'r') as f:
+            for line in f:
+                if line.startswith('#'): continue
+                parts = line.strip().split('\t')
+                if len(parts) < 9: continue
+                attributes = {k: v for k, v in (item.split('=', 1) for item in parts[8].split(';') if '=' in item)}
+                feature_id = attributes.get("ID")
+                if feature_id:
+                    gff_features[feature_id] = {
+                        "id": feature_id, "type": parts[2], "chrom": parts[0],
+                        "start": int(parts[3]), "end": int(parts[4]), "strand": parts[6]
+                    }
+
+    # Load FASTA files for visualization
+    ref_genome, path_seqs = None, None
+    can_visualize = gff_file and reference_fasta and reference_fasta.exists() and path_fasta and path_fasta.exists()
+    if can_visualize:
+        ref_genome = pysam.FastaFile(str(reference_fasta))
+        path_seqs = pysam.FastaFile(str(path_fasta))
+
     # Track alignments per feature per target
     alignments = defaultdict(lambda: defaultdict(list))
     features_seen = set()
