@@ -47,12 +47,36 @@ class GFFProcessor:
     """Handles GFF parsing and feature hierarchy."""
     def __init__(self, gff_file: Path):
         self.db_path = gff_file.with_suffix(".db")
-        if not self.db_path.exists():
+        self.db = None
+        
+        # Try to load existing database
+        if self.db_path.exists():
+            try:
+                logging.info(f"Loading existing GFF database from {self.db_path}...")
+                self.db = gffutils.FeatureDB(str(self.db_path))
+                logging.info("Successfully loaded existing GFF database.")
+            except Exception as e:
+                logging.warning(f"Failed to load existing database: {e}")
+                logging.info("Will recreate the database...")
+                # Remove the corrupted database file
+                try:
+                    self.db_path.unlink()
+                except Exception:
+                    pass
+        
+        # Create new database if needed
+        if self.db is None:
             logging.info(f"Creating GFF database at {self.db_path}...")
-            self.db = gffutils.create_db(str(gff_file), dbfn=str(self.db_path), force=True, keep_order=True, merge_strategy='merge', id_spec=['ID', 'Name'])
-        else:
-            logging.info(f"Loading existing GFF database from {self.db_path}...")
-            self.db = gffutils.FeatureDB(str(self.db_path))
+            logging.info("This may take a few minutes for large GFF files...")
+            self.db = gffutils.create_db(
+                str(gff_file), 
+                dbfn=str(self.db_path), 
+                force=True, 
+                keep_order=True, 
+                merge_strategy='merge', 
+                id_spec=['ID', 'Name']
+            )
+            logging.info("GFF database created successfully.")
 
     def find_gene(self, gene_identifier: str) -> Optional[gffutils.Feature]:
         """Finds a gene by its ID or Name attribute."""
@@ -131,10 +155,12 @@ class HierarchicalAligner:
             
         try:
             process = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            logging.error(f"minimap2 execution failed: {e}")
-            if isinstance(e, subprocess.CalledProcessError):
-                logging.error(f"minimap2 stderr:\n{e.stderr}")
+        except subprocess.CalledProcessError as e:
+            logging.error(f"minimap2 execution failed with return code {e.returncode}")
+            logging.error(f"minimap2 stderr:\n{e.stderr}")
+            sys.exit(1)
+        except FileNotFoundError:
+            logging.error("minimap2 not found. Please ensure minimap2 is installed and in your PATH.")
             sys.exit(1)
 
         alignments = defaultdict(list)
@@ -165,19 +191,40 @@ class HierarchicalAligner:
             
         logging.info(f"Extracted {len(all_features)} features (gene and descendants) to align.")
 
-        with tempfile.NamedTemporaryFile(mode='w+', delete=True, suffix=".fa") as query_fasta:
-            for feature in tqdm(all_features, desc="Extracting feature sequences"):
-                seq = self.seq.get_sequence(feature)
-                if seq:
-                    query_fasta.write(f">{feature.id}\n{seq}\n")
-            query_fasta.flush()
+        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix=".fa") as query_fasta:
+            query_path = Path(query_fasta.name)
+            try:
+                feature_count = 0
+                for feature in tqdm(all_features, desc="Extracting feature sequences"):
+                    seq = self.seq.get_sequence(feature)
+                    if seq:
+                        query_fasta.write(f">{feature.id}\n{seq}\n")
+                        feature_count += 1
+                query_fasta.flush()
+                
+                if feature_count == 0:
+                    logging.error("No feature sequences could be extracted.")
+                    return {}
+                
+                logging.info(f"Wrote {feature_count} feature sequences to temporary file.")
 
-            # 2. Run minimap2 to get all alignments at once
-            all_alignments = self._run_minimap2(haplotypes_fasta, Path(query_fasta.name))
+                # 2. Run minimap2 to get all alignments at once
+                all_alignments = self._run_minimap2(haplotypes_fasta, query_path)
+            finally:
+                # Clean up temporary file
+                try:
+                    query_path.unlink()
+                except Exception:
+                    pass
 
         # 3. Build hierarchical results from flat alignment list
         results = {}
         hap_names = list(all_alignments.keys())
+        
+        if not hap_names:
+            logging.warning("No alignments found for any haplotype.")
+            return results
+        
         for hap_name in tqdm(hap_names, desc="Building hierarchical results"):
             # Group alignments by query name and select the best one (highest MAPQ)
             # This handles cases where a feature aligns to multiple places on a haplotype.
@@ -193,6 +240,7 @@ class HierarchicalAligner:
             # Find the top-level gene alignment
             gene_aln_data = alignments_for_hap.get(gene.id)
             if not gene_aln_data:
+                logging.debug(f"No alignment found for gene {gene.id} on haplotype {hap_name}")
                 continue
 
             identity = gene_aln_data['matches'] / gene_aln_data['align_len'] if gene_aln_data['align_len'] > 0 else 0
@@ -244,6 +292,10 @@ def print_summary(results: Dict[str, AlignmentResult]):
     print("\n" + "="*80)
     print("HIERARCHICAL ALIGNMENT SUMMARY")
     print("="*80)
+    
+    if not results:
+        print("\nNo alignment results found.")
+        return
 
     for hap_name, gene_result in results.items():
         print(f"\n--- Haplotype: {hap_name} ---")
@@ -277,6 +329,17 @@ def main():
     setup_logging(args.verbose)
 
     try:
+        # Validate input files exist
+        if not args.multi_fasta.exists():
+            logging.error(f"Multi-sample FASTA file not found: {args.multi_fasta}")
+            sys.exit(1)
+        if not args.gff.exists():
+            logging.error(f"GFF file not found: {args.gff}")
+            sys.exit(1)
+        if not args.reference.exists():
+            logging.error(f"Reference FASTA file not found: {args.reference}")
+            sys.exit(1)
+
         # 1. Initialize tools
         gff_processor = GFFProcessor(args.gff)
         seq_extractor = SequenceExtractor(args.reference)
@@ -285,9 +348,14 @@ def main():
         # 2. Find the gene
         gene_feature = gff_processor.find_gene(args.gene)
         if not gene_feature:
+            logging.error(f"Could not find gene '{args.gene}' in the GFF file.")
             sys.exit(1)
         
-        logging.info(f"Found gene '{gene_feature.id}' ({gene_feature.attributes.get('Name', ['-'])[0]}) at {gene_feature.chrom}:{gene_feature.start}-{gene_feature.end}")
+        gene_name = gene_feature.attributes.get('Name', ['-'])
+        if isinstance(gene_name, list):
+            gene_name = gene_name[0] if gene_name else '-'
+        
+        logging.info(f"Found gene '{gene_feature.id}' (Name: {gene_name}) at {gene_feature.chrom}:{gene_feature.start}-{gene_feature.end}")
 
         # 3. Run alignment
         alignment_results = aligner.align_gene_to_haplotypes(gene_feature, args.multi_fasta)
