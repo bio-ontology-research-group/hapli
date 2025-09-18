@@ -8,7 +8,7 @@ import sys
 import tempfile
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Set
 
 import gffutils
 import pysam
@@ -44,90 +44,165 @@ class AlignmentResult:
 # --- Core Classes ---
 
 class GFFProcessor:
-    """Handles GFF parsing and feature hierarchy."""
-    def __init__(self, gff_file: Path):
-        self.db_path = gff_file.with_suffix(".db")
-        self.db = None
+    """Handles GFF parsing and feature hierarchy for a specific gene."""
+    def __init__(self, gff_file: Path, gene_identifier: str):
+        self.gff_file = gff_file
+        self.gene_identifier = gene_identifier
+        self.gene_feature = None
+        self.features_by_id = {}
+        self.children_map = defaultdict(list)
         
-        # Try to load existing database
-        if self.db_path.exists():
-            try:
-                logging.info(f"Loading existing GFF database from {self.db_path}...")
-                self.db = gffutils.FeatureDB(str(self.db_path))
-                logging.info("Successfully loaded existing GFF database.")
-            except Exception as e:
-                logging.warning(f"Failed to load existing database: {e}")
-                logging.info("Will recreate the database...")
-                # Remove the corrupted database file
-                try:
-                    self.db_path.unlink()
-                except Exception:
-                    pass
+        # Load only the relevant gene and its descendants
+        self._load_gene_features()
+    
+    def _load_gene_features(self):
+        """Load only the gene and its related features from the GFF file."""
+        logging.info(f"Searching for gene '{self.gene_identifier}' in GFF file...")
         
-        # Create new database if needed
-        if self.db is None:
-            logging.info(f"Creating GFF database at {self.db_path}...")
-            logging.info("This may take a few minutes for large GFF files...")
-            
-            # Count total lines for progress bar
-            total_lines = 0
-            with open(gff_file, 'r') as f:
-                for line in f:
-                    if not line.startswith('#'):
-                        total_lines += 1
-            
-            # Create a custom iterator with progress bar
-            def gff_iterator():
-                with open(gff_file, 'r') as f:
-                    with tqdm(total=total_lines, desc="Processing GFF features", unit=" features") as pbar:
-                        for line in f:
-                            if not line.startswith('#'):
-                                pbar.update(1)
-                            yield line
-            
-            # Use optimized settings for faster database creation
-            self.db = gffutils.create_db(
-                gff_iterator(), 
-                dbfn=str(self.db_path), 
-                force=True, 
-                keep_order=False,  # Faster without preserving order
-                merge_strategy='error',  # Faster than 'merge'
-                id_spec=['ID', 'Name'],
-                disable_infer_genes=True,  # Faster without gene inference
-                disable_infer_transcripts=True,  # Faster without transcript inference
-                from_string=True  # Tell gffutils we're providing strings
-            )
-            logging.info("GFF database created successfully.")
-
+        # First pass: find the gene
+        gene_found = False
+        with open(self.gff_file, 'r') as f:
+            line_count = 0
+            for line in f:
+                line_count += 1
+                if line.startswith('#'):
+                    continue
+                
+                parts = line.strip().split('\t')
+                if len(parts) < 9:
+                    continue
+                
+                feature_type = parts[2]
+                attributes = self._parse_attributes(parts[8])
+                
+                # Check if this is our gene
+                if feature_type == 'gene':
+                    feature_id = attributes.get('ID', [''])[0]
+                    feature_name = attributes.get('Name', [''])[0]
+                    
+                    if feature_id == self.gene_identifier or feature_name == self.gene_identifier:
+                        # Create the gene feature
+                        self.gene_feature = gffutils.Feature(
+                            seqid=parts[0],
+                            source=parts[1],
+                            featuretype=parts[2],
+                            start=int(parts[3]),
+                            end=int(parts[4]),
+                            score=parts[5],
+                            strand=parts[6],
+                            frame=parts[7],
+                            attributes=attributes,
+                            id=feature_id
+                        )
+                        self.features_by_id[feature_id] = self.gene_feature
+                        gene_found = True
+                        logging.info(f"Found gene '{self.gene_identifier}' at line {line_count}")
+                        break
+        
+        if not gene_found:
+            raise ValueError(f"Gene '{self.gene_identifier}' not found in GFF file")
+        
+        # Second pass: collect all descendants of the gene
+        logging.info(f"Collecting features related to gene '{self.gene_identifier}'...")
+        
+        # Get all feature IDs that are descendants of our gene
+        relevant_ids = {self.gene_feature.id}
+        parent_to_children = defaultdict(set)
+        
+        # Build parent-child relationships
+        with open(self.gff_file, 'r') as f:
+            for line in tqdm(f, desc="Scanning for gene descendants", unit=" lines"):
+                if line.startswith('#'):
+                    continue
+                
+                parts = line.strip().split('\t')
+                if len(parts) < 9:
+                    continue
+                
+                attributes = self._parse_attributes(parts[8])
+                feature_id = attributes.get('ID', [''])[0]
+                parent_ids = attributes.get('Parent', [])
+                
+                for parent_id in parent_ids:
+                    parent_to_children[parent_id].add(feature_id)
+        
+        # Recursively find all descendants
+        to_process = [self.gene_feature.id]
+        while to_process:
+            current_id = to_process.pop()
+            for child_id in parent_to_children.get(current_id, []):
+                if child_id not in relevant_ids:
+                    relevant_ids.add(child_id)
+                    to_process.append(child_id)
+        
+        logging.info(f"Found {len(relevant_ids)} features related to gene '{self.gene_identifier}'")
+        
+        # Third pass: load only relevant features
+        feature_count = 0
+        with open(self.gff_file, 'r') as f:
+            for line in tqdm(f, desc="Loading gene features", unit=" lines"):
+                if line.startswith('#'):
+                    continue
+                
+                parts = line.strip().split('\t')
+                if len(parts) < 9:
+                    continue
+                
+                attributes = self._parse_attributes(parts[8])
+                feature_id = attributes.get('ID', [''])[0]
+                
+                if feature_id in relevant_ids and feature_id != self.gene_feature.id:
+                    # Create the feature
+                    feature = gffutils.Feature(
+                        seqid=parts[0],
+                        source=parts[1],
+                        featuretype=parts[2],
+                        start=int(parts[3]),
+                        end=int(parts[4]),
+                        score=parts[5],
+                        strand=parts[6],
+                        frame=parts[7],
+                        attributes=attributes,
+                        id=feature_id
+                    )
+                    self.features_by_id[feature_id] = feature
+                    feature_count += 1
+                    
+                    # Build parent-child relationships
+                    parent_ids = attributes.get('Parent', [])
+                    for parent_id in parent_ids:
+                        if parent_id in relevant_ids:
+                            self.children_map[parent_id].append(feature_id)
+        
+        logging.info(f"Loaded {feature_count + 1} features for gene '{self.gene_identifier}'")
+    
+    def _parse_attributes(self, attr_string: str) -> Dict[str, List[str]]:
+        """Parse GFF attribute string into a dictionary."""
+        attributes = defaultdict(list)
+        for item in attr_string.strip().split(';'):
+            if '=' in item:
+                key, value = item.split('=', 1)
+                attributes[key].append(value)
+        return dict(attributes)
+    
     def find_gene(self, gene_identifier: str) -> Optional[gffutils.Feature]:
-        """Finds a gene by its ID or Name attribute."""
-        try:
-            # Try fetching by ID first. This is the most reliable way.
-            feature = self.db[gene_identifier]
-            if feature.featuretype == 'gene':
-                return feature
-            # If an ID matches but it's not a gene, we'll proceed to search by Name.
-        except gffutils.exceptions.FeatureNotFoundError:
-            pass  # Not found by ID, will search by Name below.
-
-        # If not found by ID, or if the ID matched a non-gene feature, search by Name.
-        logging.info(f"Searching for gene by Name attribute...")
-        found_count = 0
-        with tqdm(desc="Searching genes", unit=" genes") as pbar:
-            for gene in self.db.features_of_type('gene'):
-                pbar.update(1)
-                found_count += 1
-                # The 'Name' attribute can be a list of names.
-                if gene_identifier in gene.attributes.get('Name', []):
-                    logging.info(f"Found gene after checking {found_count} genes.")
-                    return gene
-        
-        logging.error(f"Gene '{gene_identifier}' not found in GFF file after checking {found_count} genes.")
+        """Returns the gene feature if it matches the identifier."""
+        if self.gene_feature:
+            return self.gene_feature
         return None
-
+    
     def get_children(self, feature: gffutils.Feature) -> Iterator[gffutils.Feature]:
         """Yields all direct children of a feature, sorted by position."""
-        return self.db.children(feature, order_by='start')
+        child_ids = self.children_map.get(feature.id, [])
+        children = []
+        for child_id in child_ids:
+            if child_id in self.features_by_id:
+                children.append(self.features_by_id[child_id])
+        
+        # Sort by start position
+        children.sort(key=lambda f: f.start)
+        for child in children:
+            yield child
 
 
 class SequenceExtractor:
@@ -384,12 +459,12 @@ def main():
             logging.error(f"Reference FASTA file not found: {args.reference}")
             sys.exit(1)
 
-        # 1. Initialize tools
-        gff_processor = GFFProcessor(args.gff)
+        # 1. Initialize tools - now passing gene identifier to GFFProcessor
+        gff_processor = GFFProcessor(args.gff, args.gene)
         seq_extractor = SequenceExtractor(args.reference)
         aligner = HierarchicalAligner(gff_processor, seq_extractor, threads=args.threads)
 
-        # 2. Find the gene
+        # 2. Get the gene feature
         gene_feature = gff_processor.find_gene(args.gene)
         if not gene_feature:
             logging.error(f"Could not find gene '{args.gene}' in the GFF file.")
@@ -409,6 +484,9 @@ def main():
 
     except FileNotFoundError as e:
         logging.error(f"Error: Input file not found - {e}")
+        sys.exit(1)
+    except ValueError as e:
+        logging.error(f"Error: {e}")
         sys.exit(1)
     except Exception as e:
         logging.error(f"An unexpected error occurred: {e}", exc_info=True)
