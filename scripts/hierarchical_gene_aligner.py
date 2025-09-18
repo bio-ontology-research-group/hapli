@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import logging
 import re
 import subprocess
@@ -40,6 +41,18 @@ class AlignmentResult:
 
     def __repr__(self) -> str:
         return f"AlignmentResult(id={self.feature_id}, type={self.feature_type}, mapq={self.mapq})"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'feature_id': self.feature_id,
+            'feature_type': self.feature_type,
+            'mapq': self.mapq,
+            'target_start': self.target_start,
+            'target_end': self.target_end,
+            'identity': self.identity,
+            'children': [child.to_dict() for child in self.children]
+        }
 
 # --- Core Classes ---
 
@@ -53,128 +66,7 @@ class GFFProcessor:
         self.children_map = defaultdict(list)
         
         # Load only the relevant gene and its descendants
-        self._load_gene_features()
-    
-    def _load_gene_features(self):
-        """Load only the gene and its related features from the GFF file."""
-        logging.info(f"Searching for gene '{self.gene_identifier}' in GFF file...")
-        
-        # First pass: find the gene
-        gene_found = False
-        with open(self.gff_file, 'r') as f:
-            line_count = 0
-            for line in f:
-                line_count += 1
-                if line.startswith('#'):
-                    continue
-                
-                parts = line.strip().split('\t')
-                if len(parts) < 9:
-                    continue
-                
-                feature_type = parts[2]
-                attributes = self._parse_attributes(parts[8])
-                
-                # Check if this is our gene
-                if feature_type == 'gene':
-                    feature_id = attributes.get('ID', [''])[0]
-                    feature_name = attributes.get('Name', [''])[0]
-                    
-                    if feature_id == self.gene_identifier or feature_name == self.gene_identifier:
-                        # Create the gene feature
-                        self.gene_feature = gffutils.Feature(
-                            seqid=parts[0],
-                            source=parts[1],
-                            featuretype=parts[2],
-                            start=int(parts[3]),
-                            end=int(parts[4]),
-                            score=parts[5],
-                            strand=parts[6],
-                            frame=parts[7],
-                            attributes=attributes,
-                            id=feature_id
-                        )
-                        self.features_by_id[feature_id] = self.gene_feature
-                        gene_found = True
-                        logging.info(f"Found gene '{self.gene_identifier}' at line {line_count}")
-                        break
-        
-        if not gene_found:
-            raise ValueError(f"Gene '{self.gene_identifier}' not found in GFF file")
-        
-        # Second pass: collect all descendants of the gene
-        logging.info(f"Collecting features related to gene '{self.gene_identifier}'...")
-        
-        # Get all feature IDs that are descendants of our gene
-        relevant_ids = {self.gene_feature.id}
-        parent_to_children = defaultdict(set)
-        
-        # Build parent-child relationships
-        with open(self.gff_file, 'r') as f:
-            for line in tqdm(f, desc="Scanning for gene descendants", unit=" lines"):
-                if line.startswith('#'):
-                    continue
-                
-                parts = line.strip().split('\t')
-                if len(parts) < 9:
-                    continue
-                
-                attributes = self._parse_attributes(parts[8])
-                feature_id = attributes.get('ID', [''])[0]
-                parent_ids = attributes.get('Parent', [])
-                
-                for parent_id in parent_ids:
-                    parent_to_children[parent_id].add(feature_id)
-        
-        # Recursively find all descendants
-        to_process = [self.gene_feature.id]
-        while to_process:
-            current_id = to_process.pop()
-            for child_id in parent_to_children.get(current_id, []):
-                if child_id not in relevant_ids:
-                    relevant_ids.add(child_id)
-                    to_process.append(child_id)
-        
-        logging.info(f"Found {len(relevant_ids)} features related to gene '{self.gene_identifier}'")
-        
-        # Third pass: load only relevant features
-        feature_count = 0
-        with open(self.gff_file, 'r') as f:
-            for line in tqdm(f, desc="Loading gene features", unit=" lines"):
-                if line.startswith('#'):
-                    continue
-                
-                parts = line.strip().split('\t')
-                if len(parts) < 9:
-                    continue
-                
-                attributes = self._parse_attributes(parts[8])
-                feature_id = attributes.get('ID', [''])[0]
-                
-                if feature_id in relevant_ids and feature_id != self.gene_feature.id:
-                    # Create the feature
-                    feature = gffutils.Feature(
-                        seqid=parts[0],
-                        source=parts[1],
-                        featuretype=parts[2],
-                        start=int(parts[3]),
-                        end=int(parts[4]),
-                        score=parts[5],
-                        strand=parts[6],
-                        frame=parts[7],
-                        attributes=attributes,
-                        id=feature_id
-                    )
-                    self.features_by_id[feature_id] = feature
-                    feature_count += 1
-                    
-                    # Build parent-child relationships
-                    parent_ids = attributes.get('Parent', [])
-                    for parent_id in parent_ids:
-                        if parent_id in relevant_ids:
-                            self.children_map[parent_id].append(feature_id)
-        
-        logging.info(f"Loaded {feature_count + 1} features for gene '{self.gene_identifier}'")
+        self._load_gene_features_optimized()
     
     def _parse_attributes(self, attr_string: str) -> Dict[str, List[str]]:
         """Parse GFF attribute string into a dictionary."""
@@ -184,6 +76,121 @@ class GFFProcessor:
                 key, value = item.split('=', 1)
                 attributes[key].append(value)
         return dict(attributes)
+    
+    def _load_gene_features_optimized(self):
+        """Load only the gene and its related features from the GFF file in a single pass."""
+        logging.info(f"Searching for gene '{self.gene_identifier}' and loading its features...")
+        
+        # Single pass to find gene and collect all potential descendants
+        gene_found = False
+        gene_chr = None
+        gene_start = None
+        gene_end = None
+        all_features = []  # Store all features temporarily
+        parent_to_children = defaultdict(set)
+        
+        # Count lines for progress bar
+        total_lines = sum(1 for line in open(self.gff_file, 'r') if not line.startswith('#'))
+        
+        with open(self.gff_file, 'r') as f:
+            with tqdm(total=total_lines, desc="Processing GFF file", unit=" lines") as pbar:
+                for line in f:
+                    if line.startswith('#'):
+                        continue
+                    
+                    pbar.update(1)
+                    parts = line.strip().split('\t')
+                    if len(parts) < 9:
+                        continue
+                    
+                    feature_type = parts[2]
+                    attributes = self._parse_attributes(parts[8])
+                    feature_id = attributes.get('ID', [''])[0]
+                    
+                    # Check if this is our gene
+                    if not gene_found and feature_type == 'gene':
+                        feature_name = attributes.get('Name', [''])[0]
+                        
+                        if feature_id == self.gene_identifier or feature_name == self.gene_identifier:
+                            # Create the gene feature
+                            self.gene_feature = gffutils.Feature(
+                                seqid=parts[0],
+                                source=parts[1],
+                                featuretype=parts[2],
+                                start=int(parts[3]),
+                                end=int(parts[4]),
+                                score=parts[5],
+                                strand=parts[6],
+                                frame=parts[7],
+                                attributes=attributes,
+                                id=feature_id
+                            )
+                            self.features_by_id[feature_id] = self.gene_feature
+                            gene_found = True
+                            gene_chr = parts[0]
+                            gene_start = int(parts[3])
+                            gene_end = int(parts[4])
+                            logging.info(f"Found gene '{self.gene_identifier}' at {gene_chr}:{gene_start}-{gene_end}")
+                    
+                    # If gene is found, collect features in the same region (optimization)
+                    if gene_found:
+                        # Only process features on the same chromosome and overlapping the gene region
+                        if parts[0] == gene_chr:
+                            feat_start = int(parts[3])
+                            feat_end = int(parts[4])
+                            
+                            # Check if feature overlaps with gene region (with some buffer)
+                            if feat_start <= gene_end + 10000 and feat_end >= gene_start - 10000:
+                                all_features.append((parts, attributes, feature_id))
+                                
+                                # Build parent-child relationships
+                                parent_ids = attributes.get('Parent', [])
+                                for parent_id in parent_ids:
+                                    parent_to_children[parent_id].add(feature_id)
+        
+        if not gene_found:
+            raise ValueError(f"Gene '{self.gene_identifier}' not found in GFF file")
+        
+        # Find all descendants of the gene
+        relevant_ids = {self.gene_feature.id}
+        to_process = [self.gene_feature.id]
+        
+        while to_process:
+            current_id = to_process.pop()
+            for child_id in parent_to_children.get(current_id, []):
+                if child_id not in relevant_ids:
+                    relevant_ids.add(child_id)
+                    to_process.append(child_id)
+        
+        logging.info(f"Found {len(relevant_ids)} features related to gene '{self.gene_identifier}'")
+        
+        # Now load only the relevant features
+        feature_count = 0
+        for parts, attributes, feature_id in all_features:
+            if feature_id in relevant_ids and feature_id != self.gene_feature.id:
+                # Create the feature
+                feature = gffutils.Feature(
+                    seqid=parts[0],
+                    source=parts[1],
+                    featuretype=parts[2],
+                    start=int(parts[3]),
+                    end=int(parts[4]),
+                    score=parts[5],
+                    strand=parts[6],
+                    frame=parts[7],
+                    attributes=attributes,
+                    id=feature_id
+                )
+                self.features_by_id[feature_id] = feature
+                feature_count += 1
+                
+                # Build parent-child relationships
+                parent_ids = attributes.get('Parent', [])
+                for parent_id in parent_ids:
+                    if parent_id in relevant_ids:
+                        self.children_map[parent_id].append(feature_id)
+        
+        logging.info(f"Loaded {feature_count + 1} features for gene '{self.gene_identifier}'")
     
     def find_gene(self, gene_identifier: str) -> Optional[gffutils.Feature]:
         """Returns the gene feature if it matches the identifier."""
@@ -210,14 +217,21 @@ class SequenceExtractor:
     def __init__(self, reference_fasta: Path):
         logging.info(f"Loading reference FASTA: {reference_fasta}")
         self.fasta = pysam.FastaFile(str(reference_fasta))
+        self.available_chromosomes = set(self.fasta.references)
         logging.info(f"Reference FASTA loaded with {len(self.fasta.references)} sequences")
 
     def get_sequence(self, feature: gffutils.Feature) -> Optional[str]:
         """Extracts a feature's sequence, handling strand."""
+        # Check if chromosome exists in reference
+        if feature.seqid not in self.available_chromosomes:
+            logging.warning(f"Chromosome {feature.seqid} not found in reference FASTA")
+            return None
+        
         try:
-            seq = self.fasta.fetch(feature.chrom, feature.start - 1, feature.end)
+            # GFF coordinates are 1-based, pysam uses 0-based
+            seq = self.fasta.fetch(feature.seqid, feature.start - 1, feature.end)
         except (KeyError, ValueError) as e:
-            logging.warning(f"Could not fetch sequence for {feature.id} ({feature.chrom}:{feature.start}-{feature.end}): {e}")
+            logging.warning(f"Could not fetch sequence for {feature.id} ({feature.seqid}:{feature.start}-{feature.end}): {e}")
             return None
 
         if feature.strand == '-':
@@ -269,9 +283,14 @@ class HierarchicalAligner:
 
         alignments = defaultdict(list)
         lines = process.stdout.strip().split('\n')
+        
+        if lines == ['']:  # No alignments found
+            logging.warning("No alignments found by minimap2")
+            return alignments
+        
         logging.info(f"Parsing {len(lines)} alignment records from minimap2...")
         
-        for line in tqdm(lines, desc="Parsing PAF alignments", unit=" alignments"):
+        for line in lines:
             if not line:
                 continue
             parts = line.split('\t')
@@ -299,7 +318,7 @@ class HierarchicalAligner:
         logging.info("Gathering all features in gene hierarchy...")
         self._get_all_features_recursive(gene, all_features)
             
-        logging.info(f"Extracted {len(all_features)} features (gene and descendants) to align.")
+        logging.info(f"Found {len(all_features)} features (gene and descendants) to align.")
 
         with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix=".fa") as query_fasta:
             query_path = Path(query_fasta.name)
@@ -308,11 +327,12 @@ class HierarchicalAligner:
                 skipped_count = 0
                 for feature in tqdm(all_features, desc="Extracting feature sequences", unit=" features"):
                     seq = self.seq.get_sequence(feature)
-                    if seq:
+                    if seq and len(seq) > 0:  # Ensure sequence is not empty
                         query_fasta.write(f">{feature.id}\n{seq}\n")
                         feature_count += 1
                     else:
                         skipped_count += 1
+                        logging.debug(f"Skipped feature {feature.id} (no sequence)")
                 query_fasta.flush()
                 
                 if skipped_count > 0:
@@ -345,7 +365,6 @@ class HierarchicalAligner:
         
         for hap_name in tqdm(hap_names, desc="Building hierarchical results", unit=" haplotypes"):
             # Group alignments by query name and select the best one (highest MAPQ)
-            # This handles cases where a feature aligns to multiple places on a haplotype.
             grouped_by_query = defaultdict(list)
             for aln in all_alignments[hap_name]:
                 grouped_by_query[aln['query_name']].append(aln)
@@ -353,7 +372,9 @@ class HierarchicalAligner:
             alignments_for_hap = {}
             for query_name, aln_list in grouped_by_query.items():
                 if aln_list:
-                    alignments_for_hap[query_name] = max(aln_list, key=lambda x: x['mapq'])
+                    # Select best alignment based on MAPQ, then identity
+                    best_aln = max(aln_list, key=lambda x: (x['mapq'], x['matches']/x['align_len'] if x['align_len'] > 0 else 0))
+                    alignments_for_hap[query_name] = best_aln
 
             # Find the top-level gene alignment
             gene_aln_data = alignments_for_hap.get(gene.id)
@@ -385,9 +406,12 @@ class HierarchicalAligner:
             if not child_aln_data:
                 continue
 
-            # Hierarchical constraint: child must be within parent's aligned region
-            if not (child_aln_data['target_start'] >= parent_result.target_start and child_aln_data['target_end'] <= parent_result.target_end):
-                logging.debug(f"Skipping child {child_feature.id} as its alignment is outside parent {parent_feature.id}'s region.")
+            # Hierarchical constraint: child must be within parent's aligned region (with small tolerance)
+            tolerance = 10  # Allow 10bp tolerance for alignment boundaries
+            if not (child_aln_data['target_start'] >= parent_result.target_start - tolerance and 
+                    child_aln_data['target_end'] <= parent_result.target_end + tolerance):
+                logging.debug(f"Skipping child {child_feature.id} as its alignment [{child_aln_data['target_start']}-{child_aln_data['target_end']}] "
+                            f"is outside parent {parent_feature.id}'s region [{parent_result.target_start}-{parent_result.target_end}]")
                 continue
 
             identity = child_aln_data['matches'] / child_aln_data['align_len'] if child_aln_data['align_len'] > 0 else 0
@@ -416,6 +440,8 @@ def print_summary(results: Dict[str, AlignmentResult]):
         print("\nNo alignment results found.")
         return
 
+    print(f"\nTotal haplotypes with alignments: {len(results)}")
+    
     for hap_name, gene_result in results.items():
         print(f"\n--- Haplotype: {hap_name} ---")
         _print_result_recursively(gene_result, indent=0)
@@ -424,13 +450,25 @@ def _print_result_recursively(result: AlignmentResult, indent: int):
     """Helper to print results hierarchically."""
     prefix = "  " * indent
     print(f"{prefix}- {result.feature_type} '{result.feature_id}':")
-    print(f"{prefix}  - Aligned to region: {result.target_start}-{result.target_end}")
+    print(f"{prefix}  - Aligned to region: {result.target_start:,}-{result.target_end:,}")
     print(f"{prefix}  - MAPQ: {result.mapq}, Identity: {result.identity:.2%}")
 
     # Sort children by their start position for logical output
     sorted_children = sorted(result.children, key=lambda r: r.target_start)
     for child in sorted_children:
         _print_result_recursively(child, indent + 1)
+
+def save_results(results: Dict[str, AlignmentResult], output_path: Path):
+    """Save alignment results to JSON file."""
+    results_dict = {
+        hap_name: result.to_dict() 
+        for hap_name, result in results.items()
+    }
+    
+    with open(output_path, 'w') as f:
+        json.dump(results_dict, f, indent=2)
+    
+    logging.info(f"Results saved to {output_path}")
 
 # --- Main Execution ---
 
@@ -442,6 +480,7 @@ def main():
     parser.add_argument("--reference", required=True, type=Path, help="Reference genome FASTA file.")
     parser.add_argument("--gene", required=True, type=str, help="Name or ID of the gene to align.")
     parser.add_argument("--threads", type=int, default=4, help="Number of threads for minimap2.")
+    parser.add_argument("--output", type=Path, help="Output JSON file for alignment results.")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging.")
     args = parser.parse_args()
 
@@ -474,13 +513,16 @@ def main():
         if isinstance(gene_name, list):
             gene_name = gene_name[0] if gene_name else '-'
         
-        logging.info(f"Found gene '{gene_feature.id}' (Name: {gene_name}) at {gene_feature.chrom}:{gene_feature.start}-{gene_feature.end}")
+        logging.info(f"Found gene '{gene_feature.id}' (Name: {gene_name}) at {gene_feature.seqid}:{gene_feature.start}-{gene_feature.end}")
 
         # 3. Run alignment
         alignment_results = aligner.align_gene_to_haplotypes(gene_feature, args.multi_fasta)
 
-        # 4. Print summary
+        # 4. Output results
         print_summary(alignment_results)
+        
+        if args.output:
+            save_results(alignment_results, args.output)
 
     except FileNotFoundError as e:
         logging.error(f"Error: Input file not found - {e}")
