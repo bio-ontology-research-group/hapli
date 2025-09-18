@@ -9,6 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import gffutils
 import pysam
 from tqdm import tqdm
 
@@ -63,69 +64,54 @@ def setup_logging(verbose: bool = False):
 
 
 class GFFParser:
-    """Parses a GFF file to build a feature hierarchy."""
+    """Parses a GFF file using gffutils to build a feature database."""
 
     def __init__(self, gff_file: Path):
         self.gff_file = gff_file
-        self.features: Dict[str, Dict[str, Any]] = {}
-        self.children: Dict[str, List[str]] = defaultdict(list)
-        self.roots: List[str] = []
-        self._parse()
-
-    def _parse(self):
-        """Reads the GFF file and builds the feature tree."""
-        logging.info(f"Parsing GFF hierarchy from {self.gff_file}...")
+        self.db_path = gff_file.with_suffix(gff_file.suffix + '.db')
         
-        # Count lines for progress bar
-        total_lines = sum(1 for line in open(self.gff_file, 'r') if not line.startswith('#'))
-        
-        with open(self.gff_file, 'r') as f:
-            with tqdm(total=total_lines, desc="Loading GFF features", unit=" features") as pbar:
-                for line in f:
-                    if line.startswith('#'):
-                        continue
-                    pbar.update(1)
-                    
-                    parts = line.strip().split('\t')
-                    if len(parts) < 9:
-                        continue
+        logging.info(f"Creating/loading GFF database from {gff_file}...")
+        try:
+            # Attempt to load existing DB
+            self.db = gffutils.FeatureDB(str(self.db_path))
+            logging.info(f"Loaded existing GFF database: {self.db_path}")
+        except Exception:
+            logging.warning(f"Could not load GFF database '{self.db_path}'. Recreating it.")
+            try:
+                self.db = gffutils.create_db(
+                    str(gff_file),
+                    dbfn=str(self.db_path),
+                    force=True,
+                    keep_order=True,
+                    merge_strategy='merge',
+                    sort_attributes=True,
+                    disable_infer_genes=True,
+                    disable_infer_transcripts=True
+                )
+            except Exception as e:
+                logging.error(f"Failed to create gffutils database: {e}")
+                # Clean up failed DB file
+                if self.db_path.exists():
+                    self.db_path.unlink()
+                sys.exit(1)
 
-                    # Parse attributes
-                    attributes = {}
-                    for attr in parts[8].split(';'):
-                        if '=' in attr:
-                            k, v = attr.split('=', 1)
-                            attributes[k] = v
-                    
-                    feature_id = attributes.get("ID")
-                    if feature_id:
-                        self.features[feature_id] = {
-                            "id": feature_id,
-                            "type": parts[2],
-                            "chrom": parts[0],
-                            "start": int(parts[3]),
-                            "end": int(parts[4]),
-                            "strand": parts[6],
-                            "parent": attributes.get("Parent"),
-                            "attributes": attributes,
-                            "length": int(parts[4]) - int(parts[3]) + 1
-                        }
+        self.roots = [f for f in self.db.features_of_type('gene')]
+        logging.info(f"Loaded {len(list(self.db.all_features()))} features with {len(self.roots)} root gene features")
 
-        # Build hierarchy
-        for feature_id, feature_data in self.features.items():
-            parent_id = feature_data.get("parent")
-            if parent_id:
-                self.children[parent_id].append(feature_id)
-            else:
-                self.roots.append(feature_id)
-        
-        logging.info(f"Loaded {len(self.features)} features with {len(self.roots)} root features")
+    def get_feature(self, feature_id: str) -> Optional[gffutils.Feature]:
+        """Retrieves a feature by its ID."""
+        try:
+            return self.db[feature_id]
+        except gffutils.exceptions.FeatureNotFoundError:
+            return None
 
-    def get_feature(self, feature_id: str) -> Optional[Dict[str, Any]]:
-        return self.features.get(feature_id)
-
-    def get_children(self, feature_id: str) -> List[str]:
-        return self.children.get(feature_id, [])
+    def get_children(self, feature_id: str) -> List[gffutils.Feature]:
+        """Retrieves all direct children of a feature."""
+        try:
+            # Sorting by start position for consistent order
+            return list(self.db.children(feature_id, order_by='start'))
+        except gffutils.exceptions.FeatureNotFoundError:
+            return []
 
 
 class PAFParser:
@@ -233,18 +219,18 @@ class ImpactAnalyzer:
         root_features = self.gff.roots
         if self.target_genes:
             logging.info(f"Filtering for genes: {', '.join(self.target_genes)}")
-            root_features = []
-            for r in self.gff.roots:
-                feature = self.gff.get_feature(r)
-                gene_name = feature['attributes'].get('gene_name', feature['attributes'].get('Name', ''))
-                if gene_name in self.target_genes or r in self.target_genes:
-                    root_features.append(r)
+            filtered_roots = []
+            for feature in self.gff.roots:
+                gene_name = feature.attributes.get('gene_name', feature.attributes.get('Name', ['']))[0]
+                if gene_name in self.target_genes or feature.id in self.target_genes:
+                    filtered_roots.append(feature)
+            root_features = filtered_roots
             logging.info(f"Found {len(root_features)} matching root features to analyze")
 
         # Analyze each path
         for path_name in tqdm(all_paths, desc="Analyzing paths", unit=" paths"):
-            for root_id in root_features:
-                self._analyze_feature_recursively(root_id, path_name)
+            for root_feature in root_features:
+                self._analyze_feature_recursively(root_feature.id, path_name)
         
         return self.results
 
@@ -257,16 +243,16 @@ class ImpactAnalyzer:
         if not feature:
             return {"impact": UNKNOWN, "details": ["Feature not found in GFF"], "identity": 0.0}
 
-        child_ids = self.gff.get_children(feature_id)
+        child_features = self.gff.get_children(feature_id)
         
-        if not child_ids:
+        if not child_features:
             # This is a leaf node, perform direct analysis
             impact = self._get_direct_impact(feature_id, path_name)
         else:
             # This is a parent node, aggregate from children
             child_impacts = []
-            for child_id in child_ids:
-                child_impact = self._analyze_feature_recursively(child_id, path_name)
+            for child_feature in child_features:
+                child_impact = self._analyze_feature_recursively(child_feature.id, path_name)
                 if child_impact:
                     child_impacts.append(child_impact)
             impact = self._aggregate_impacts(child_impacts, feature_id, path_name)
@@ -318,17 +304,17 @@ class ImpactAnalyzer:
         interpretation = ""
 
         # Special handling for start/stop codons
-        if feature["type"] in ["start_codon", "stop_codon"]:
+        if feature.featuretype in ["start_codon", "stop_codon"]:
             if coverage < 100 or identity < 100:
                 impact = NON_FUNCTIONAL
-                details.append(f"{feature['type']} is altered")
-                interpretation = f"{feature['type']} mutation will affect protein"
+                details.append(f"{feature.featuretype} is altered")
+                interpretation = f"{feature.featuretype} mutation will affect protein"
             else:
                 impact = FUNCTIONAL
-                details.append(f"{feature['type']} is intact")
-                interpretation = f"{feature['type']} is preserved"
+                details.append(f"{feature.featuretype} is intact")
+                interpretation = f"{feature.featuretype} is preserved"
         # Analyze based on feature type
-        elif feature["type"] == "CDS":
+        elif feature.featuretype == "CDS":
             if coverage < 50:
                 impact = TRUNCATED
                 details.append(f"Only {coverage:.1f}% of CDS is aligned")
@@ -362,7 +348,7 @@ class ImpactAnalyzer:
                     details.append(f"Perfect alignment ({identity:.1f}% identity)")
                     interpretation = f"CDS is intact and functional"
 
-        elif feature["type"] in ["five_prime_UTR", "three_prime_UTR"]:
+        elif feature.featuretype in ["five_prime_UTR", "three_prime_UTR"]:
             if coverage < 50:
                 impact = PARTIAL_FUNCTION
                 details.append(f"UTR coverage is only {coverage:.1f}%")
@@ -376,7 +362,7 @@ class ImpactAnalyzer:
                 details.append(f"UTR is well preserved ({identity:.1f}% identity)")
                 interpretation = f"UTR is intact, regulation likely preserved"
 
-        elif feature["type"] == "exon":
+        elif feature.featuretype == "exon":
             if coverage < 80:
                 impact = TRUNCATED
                 details.append(f"Exon coverage is only {coverage:.1f}%")
@@ -452,13 +438,13 @@ class ImpactAnalyzer:
             child_id = child_impact.get("feature_id", "")
             if child_id:
                 child_feature = self.gff.get_feature(child_id)
-                if child_feature and child_feature["type"] in critical_child_types:
+                if child_feature and child_feature.featuretype in critical_child_types:
                     total_critical += 1
                     if child_impact["impact"] in [NON_FUNCTIONAL, NOT_FOUND, FRAMESHIFT, TRUNCATED]:
                         critical_failures += 1
         
         # Strict rules for parent impact based on children
-        if feature["type"] == "transcript":
+        if feature.featuretype == "transcript":
             # Transcript needs ALL critical components
             if impact_counts[NOT_FOUND] > 0 or impact_counts[NON_FUNCTIONAL] > 0:
                 most_severe_impact = NON_FUNCTIONAL
@@ -486,7 +472,7 @@ class ImpactAnalyzer:
         total_duplications = sum(c.get('duplications', 0) for c in child_impacts)
         
         # Build interpretation
-        interpretation = f"{feature['type']} has "
+        interpretation = f"{feature.featuretype} has "
         if impact_counts[NOT_FOUND] > 0:
             interpretation += f"{impact_counts[NOT_FOUND]} missing components, "
         if impact_counts[NON_FUNCTIONAL] > 0:
@@ -545,11 +531,11 @@ class ImpactAnalyzer:
         try:
             # Get reference sequence
             ref_seq = self.reference_genome.fetch(
-                feature['chrom'], 
-                feature['start'] - 1, 
-                feature['end']
+                feature.seqid, 
+                feature.start - 1, 
+                feature.end
             )
-            if feature['strand'] == '-':
+            if feature.strand == '-':
                 ref_seq = self._reverse_complement(ref_seq)
         except Exception as e:
             return f"  (Could not fetch reference sequence: {e})"
@@ -663,18 +649,18 @@ class ImpactAnalyzer:
             # Get root features to display
             root_features = self.gff.roots
             if self.target_genes:
-                root_features = []
-                for r in self.gff.roots:
-                    feature = self.gff.get_feature(r)
-                    gene_name = feature['attributes'].get('gene_name', feature['attributes'].get('Name', ''))
-                    if gene_name in self.target_genes or r in self.target_genes:
-                        root_features.append(r)
+                filtered_roots = []
+                for feature in self.gff.roots:
+                    gene_name = feature.attributes.get('gene_name', feature.attributes.get('Name', ['']))[0]
+                    if gene_name in self.target_genes or feature.id in self.target_genes:
+                        filtered_roots.append(feature)
+                root_features = filtered_roots
 
-            sorted_roots = sorted(root_features, key=lambda r: self.gff.get_feature(r)['start'])
+            sorted_roots = sorted(root_features, key=lambda f: f.start)
 
-            for root_id in sorted_roots:
-                if root_id in self.results[path_name]:
-                    self._print_feature_summary(root_id, path_name, indent=0)
+            for root_feature in sorted_roots:
+                if root_feature.id in self.results[path_name]:
+                    self._print_feature_summary(root_feature.id, path_name, indent=0)
 
     def _print_feature_summary(self, feature_id: str, path_name: str, indent: int):
         """Recursively prints the summary for a feature and its children."""
@@ -686,10 +672,11 @@ class ImpactAnalyzer:
         prefix = "  " * indent
         
         # Get display name
-        display_name = feature_id
-        if feature['type'] == 'gene':
-            display_name = feature['attributes'].get('gene_name', 
-                          feature['attributes'].get('Name', feature_id))
+        display_name = feature.id
+        if feature.featuretype == 'gene':
+            # For genes, prefer a common name
+            display_name = feature.attributes.get('gene_name', 
+                          feature.attributes.get('Name', [feature.id]))[0]
         
         # Choose color based on impact
         impact_color = {
@@ -705,8 +692,8 @@ class ImpactAnalyzer:
         }.get(result['impact'], '')
 
         # Print main feature line
-        print(f"{prefix}{self.colors['BOLD']}├─ {feature['type']}{self.colors['ENDC']} "
-              f"'{display_name}' [{feature['chrom']}:{feature['start']:,}-{feature['end']:,}]")
+        print(f"{prefix}{self.colors['BOLD']}├─ {feature.featuretype}{self.colors['ENDC']} "
+              f"'{display_name}' [{feature.seqid}:{feature.start:,}-{feature.end:,}]")
         print(f"{prefix}│  {self.colors['BOLD']}Status:{self.colors['ENDC']} "
               f"{impact_color}{result['impact']}{self.colors['ENDC']}")
         
@@ -743,7 +730,7 @@ class ImpactAnalyzer:
                   f"{result['duplications']} times{self.colors['ENDC']}")
         
         # Show alignment visualization if requested
-        if self.show_alignments and result.get('alignment') and feature['type'] in ['CDS', 'exon']:
+        if self.show_alignments and result.get('alignment') and feature.featuretype in ['CDS', 'exon']:
             print(f"{prefix}│  {self.colors['BOLD']}Alignment:{self.colors['ENDC']}")
             viz = self._get_alignment_visualization(feature_id, result['alignment'])
             for line in viz.split('\n'):
@@ -752,14 +739,12 @@ class ImpactAnalyzer:
         print(f"{prefix}│")
         
         # Process children
-        child_ids = self.gff.get_children(feature_id)
-        if child_ids:
-            # Sort children by position
-            sorted_children = sorted(child_ids, key=lambda c: self.gff.get_feature(c)['start'])
-            for i, child_id in enumerate(sorted_children):
-                if child_id in self.results[path_name]:
-                    is_last = (i == len(sorted_children) - 1)
-                    self._print_feature_summary(child_id, path_name, indent + 1)
+        child_features = self.gff.get_children(feature_id)
+        if child_features:
+            # Children are already sorted by start position from get_children
+            for i, child_feature in enumerate(child_features):
+                if child_feature.id in self.results[path_name]:
+                    self._print_feature_summary(child_feature.id, path_name, indent + 1)
 
 
 def main():
