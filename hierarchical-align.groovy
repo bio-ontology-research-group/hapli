@@ -8,6 +8,9 @@ import groovy.transform.Field
 @Field def roots = []
 @Field def threads
 @Field def pafFile = null
+@Field def refSeq
+@Field def refSeq
+@Field def refSeq
 
 def cli = new CliBuilder(usage: 'hierarchical_align.groovy [options]')
 cli.with {
@@ -143,7 +146,7 @@ referenceFastaFile.eachLine { line ->
         refSeqBuilder.append(line.trim())
     }
 }
-def refSeq = refSeqBuilder.toString()
+refSeq = refSeqBuilder.toString()
 
 if (refSeq.length() == 0) {
     System.err.println "Error: Chromosome '${chromosome}' not found or has no sequence in reference FASTA file ${referenceFastaFile.name}"
