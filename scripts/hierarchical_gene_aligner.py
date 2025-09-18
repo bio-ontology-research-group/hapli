@@ -7,9 +7,18 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
+import logging
+import re
+import subprocess
+import sys
+import tempfile
+from collections import defaultdict
+from pathlib import Path
+from typing import Any, Dict, Iterator, List, Optional, Tuple
+
 import gffutils
 import pysam
-from Bio import pairwise2
+from tqdm import tqdm
 
 # --- Setup ---
 
@@ -26,17 +35,17 @@ def setup_logging(verbose: bool = False):
 
 class AlignmentResult:
     """Stores the result of a single alignment."""
-    def __init__(self, feature_id: str, feature_type: str, score: int, target_start: int, target_end: int, identity: float):
+    def __init__(self, feature_id: str, feature_type: str, mapq: int, target_start: int, target_end: int, identity: float):
         self.feature_id = feature_id
         self.feature_type = feature_type
-        self.score = score
+        self.mapq = mapq
         self.target_start = target_start
         self.target_end = target_end
         self.identity = identity
         self.children: List[AlignmentResult] = []
 
     def __repr__(self) -> str:
-        return f"AlignmentResult(id={self.feature_id}, type={self.feature_type}, score={self.score})"
+        return f"AlignmentResult(id={self.feature_id}, type={self.feature_type}, mapq={self.mapq})"
 
 # --- Core Classes ---
 
@@ -99,102 +108,129 @@ class SequenceExtractor:
 
 
 class HierarchicalAligner:
-    """Performs hierarchical alignment of features against target sequences."""
-    def __init__(self, gff_proc: GFFProcessor, seq_ext: SequenceExtractor):
+    """Performs hierarchical alignment of features against target sequences using minimap2."""
+    def __init__(self, gff_proc: GFFProcessor, seq_ext: SequenceExtractor, threads: int = 1):
         self.gff = gff_proc
         self.seq = seq_ext
-        # Alignment parameters for pairwise2.align.localms:
-        # (match, mismatch, open_gap, extend_gap)
-        self.align_params = (5, -4, -7, -2)
+        self.threads = threads
+
+    def _get_all_features_recursive(self, feature: gffutils.Feature, feature_list: List[gffutils.Feature]):
+        """Recursively gather a feature and all its descendants."""
+        feature_list.append(feature)
+        for child in self.gff.get_children(feature):
+            self._get_all_features_recursive(child, feature_list)
+
+    def _run_minimap2(self, target_fasta: Path, query_fasta: Path) -> Dict[str, List[Dict[str, Any]]]:
+        """Runs minimap2 and parses PAF output."""
+        logging.info(f"Running minimap2 with {self.threads} threads...")
+        cmd = [
+            "minimap2",
+            "-x", "asm20",  # Preset for accurate assembly-to-assembly alignment
+            "-c",           # Output CIGAR string in PAF
+            "--paf-no-hit", # Suppress output for sequences with no hits
+            "-t", str(self.threads),
+            str(target_fasta),
+            str(query_fasta)
+        ]
+            
+        try:
+            process = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            logging.error(f"minimap2 execution failed: {e}")
+            if isinstance(e, subprocess.CalledProcessError):
+                logging.error(f"minimap2 stderr:\n{e.stderr}")
+            sys.exit(1)
+
+        alignments = defaultdict(list)
+        for line in process.stdout.strip().split('\n'):
+            if not line:
+                continue
+            parts = line.split('\t')
+            if len(parts) < 12:
+                continue
+                
+            paf_record = {
+                "query_name": parts[0],
+                "target_name": parts[5],
+                "target_start": int(parts[7]),
+                "target_end": int(parts[8]),
+                "matches": int(parts[9]),
+                "align_len": int(parts[10]),
+                "mapq": int(parts[11]),
+            }
+            alignments[paf_record["target_name"]].append(paf_record)
+        return alignments
 
     def align_gene_to_haplotypes(self, gene: gffutils.Feature, haplotypes_fasta: Path) -> Dict[str, AlignmentResult]:
         """Aligns a gene and its sub-features to all sequences in a multi-sample FASTA."""
-        gene_seq = self.seq.get_sequence(gene)
-        if not gene_seq:
-            logging.error(f"Could not extract sequence for gene '{gene.id}'. Aborting.")
-            return {}
+        # 1. Gather all features and their sequences
+        all_features = []
+        self._get_all_features_recursive(gene, all_features)
+            
+        logging.info(f"Extracted {len(all_features)} features (gene and descendants) to align.")
 
+        with tempfile.NamedTemporaryFile(mode='w+', delete=True, suffix=".fa") as query_fasta:
+            for feature in tqdm(all_features, desc="Extracting feature sequences"):
+                seq = self.seq.get_sequence(feature)
+                if seq:
+                    query_fasta.write(f">{feature.id}\n{seq}\n")
+            query_fasta.flush()
+
+            # 2. Run minimap2 to get all alignments at once
+            all_alignments = self._run_minimap2(haplotypes_fasta, Path(query_fasta.name))
+
+        # 3. Build hierarchical results from flat alignment list
         results = {}
-        with pysam.FastaFile(str(haplotypes_fasta)) as multi_fasta:
-            for hap_name in multi_fasta.references:
-                logging.info(f"--- Aligning to haplotype: {hap_name} ---")
-                hap_seq = multi_fasta.fetch(hap_name)
+        hap_names = list(all_alignments.keys())
+        for hap_name in tqdm(hap_names, desc="Building hierarchical results"):
+            alignments_for_hap = {aln['query_name']: aln for aln in all_alignments[hap_name]}
                 
-                # 1. Align the parent gene
-                # Use local alignment to find the best match for the gene sequence in the haplotype
-                alignments = pairwise2.align.localms(hap_seq, gene_seq, *self.align_params)
-                
-                if not alignments:
-                    logging.warning(f"Gene '{gene.id}' did not align to haplotype '{hap_name}'.")
-                    continue
-                
-                # Take the best alignment
-                best_aln = alignments[0]
-                aligned_hap_seq, aligned_gene_seq, score, target_start, target_end = best_aln
+            # Find the top-level gene alignment
+            gene_aln_data = alignments_for_hap.get(gene.id)
+            if not gene_aln_data:
+                continue
 
-                # Calculate identity
-                matches = sum(1 for a, b in zip(aligned_hap_seq, aligned_gene_seq) if a == b)
-                align_len = len(aligned_hap_seq)
-                identity = matches / align_len if align_len > 0 else 0
+            identity = gene_aln_data['matches'] / gene_aln_data['align_len'] if gene_aln_data['align_len'] > 0 else 0
+            gene_result = AlignmentResult(
+                feature_id=gene.id,
+                feature_type=gene.featuretype,
+                mapq=gene_aln_data['mapq'],
+                target_start=gene_aln_data['target_start'],
+                target_end=gene_aln_data['target_end'],
+                identity=identity
+            )
 
-                gene_result = AlignmentResult(
-                    feature_id=gene.id,
-                    feature_type=gene.featuretype,
-                    score=score,
-                    target_start=target_start,
-                    target_end=target_end,
-                    identity=identity
-                )
+            # Recursively build the tree for children
+            self._build_result_tree(gene, gene_result, alignments_for_hap)
+            results[hap_name] = gene_result
                 
-                # 2. Recursively align children within the parent's aligned region
-                hap_region_seq = hap_seq[target_start:target_end]
-                
-                for child_feature in self.gff.get_children(gene):
-                    child_result = self._align_feature_recursively(child_feature, hap_region_seq, offset=target_start)
-                    if child_result:
-                        gene_result.children.append(child_result)
-                
-                results[hap_name] = gene_result
         return results
 
-    def _align_feature_recursively(self, feature: gffutils.Feature, target_region_seq: str, offset: int) -> Optional[AlignmentResult]:
-        """Aligns a feature and its children within a constrained target region."""
-        feature_seq = self.seq.get_sequence(feature)
-        if not feature_seq:
-            return None
+    def _build_result_tree(self, parent_feature: gffutils.Feature, parent_result: AlignmentResult, alignments: Dict[str, Dict]):
+        """Recursively constructs the alignment result tree, applying hierarchical constraints."""
+        for child_feature in self.gff.get_children(parent_feature):
+            child_aln_data = alignments.get(child_feature.id)
+            if not child_aln_data:
+                continue
 
-        # Use local alignment to find the feature within the parent's region
-        alignments = pairwise2.align.localms(target_region_seq, feature_seq, *self.align_params)
+            # Hierarchical constraint: child must be within parent's aligned region
+            if not (child_aln_data['target_start'] >= parent_result.target_start and child_aln_data['target_end'] <= parent_result.target_end):
+                logging.debug(f"Skipping child {child_feature.id} as its alignment is outside parent {parent_feature.id}'s region.")
+                continue
 
-        if not alignments:
-            logging.debug(f"Feature '{feature.id}' did not align within parent region.")
-            return None
-
-        best_aln = alignments[0]
-        aligned_target_seq, aligned_feature_seq, score, start, end = best_aln
-
-        identity = sum(1 for a, b in zip(aligned_target_seq, aligned_feature_seq) if a == b) / len(aligned_target_seq) if len(aligned_target_seq) > 0 else 0
-        
-        target_start = start
-        target_end = end
-
-        result = AlignmentResult(
-            feature_id=feature.id,
-            feature_type=feature.featuretype,
-            score=score,
-            target_start=target_start + offset,
-            target_end=target_end + offset,
-            identity=identity
-        )
-        
-        # Recursively align children
-        child_target_region = target_region_seq[target_start:target_end]
-        for child_feature in self.gff.get_children(feature):
-            child_result = self._align_feature_recursively(child_feature, child_target_region, offset=offset + target_start)
-            if child_result:
-                result.children.append(child_result)
-        
-        return result
+            identity = child_aln_data['matches'] / child_aln_data['align_len'] if child_aln_data['align_len'] > 0 else 0
+            child_result = AlignmentResult(
+                feature_id=child_feature.id,
+                feature_type=child_feature.featuretype,
+                mapq=child_aln_data['mapq'],
+                target_start=child_aln_data['target_start'],
+                target_end=child_aln_data['target_end'],
+                identity=identity
+            )
+            parent_result.children.append(child_result)
+                
+            # Recurse
+            self._build_result_tree(child_feature, child_result, alignments)
 
 # --- Output ---
 
@@ -213,7 +249,7 @@ def _print_result_recursively(result: AlignmentResult, indent: int):
     prefix = "  " * indent
     print(f"{prefix}- {result.feature_type} '{result.feature_id}':")
     print(f"{prefix}  - Aligned to region: {result.target_start}-{result.target_end}")
-    print(f"{prefix}  - Score: {result.score}, Identity: {result.identity:.2%}")
+    print(f"{prefix}  - MAPQ: {result.mapq}, Identity: {result.identity:.2%}")
 
     # Sort children by their start position for logical output
     sorted_children = sorted(result.children, key=lambda r: r.target_start)
@@ -229,6 +265,7 @@ def main():
     parser.add_argument("--gff", required=True, type=Path, help="GFF3 annotation file.")
     parser.add_argument("--reference", required=True, type=Path, help="Reference genome FASTA file.")
     parser.add_argument("--gene", required=True, type=str, help="Name or ID of the gene to align.")
+    parser.add_argument("--threads", type=int, default=4, help="Number of threads for minimap2.")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging.")
     args = parser.parse_args()
 
@@ -238,7 +275,7 @@ def main():
         # 1. Initialize tools
         gff_processor = GFFProcessor(args.gff)
         seq_extractor = SequenceExtractor(args.reference)
-        aligner = HierarchicalAligner(gff_processor, seq_extractor)
+        aligner = HierarchicalAligner(gff_processor, seq_extractor, threads=args.threads)
 
         # 2. Find the gene
         gene_feature = gff_processor.find_gene(args.gene)
