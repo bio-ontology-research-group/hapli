@@ -57,16 +57,18 @@ class GFFProcessor:
     def find_gene(self, gene_identifier: str) -> Optional[gffutils.Feature]:
         """Finds a gene by its ID or Name attribute."""
         try:
-            # Try fetching by ID first
-            gene = self.db[gene_identifier]
-            if gene.featuretype == 'gene':
-                return gene
+            # Try fetching by ID first. This is the most reliable way.
+            feature = self.db[gene_identifier]
+            if feature.featuretype == 'gene':
+                return feature
+            # If an ID matches but it's not a gene, we'll proceed to search by Name.
         except gffutils.exceptions.FeatureNotFoundError:
-            pass
+            pass  # Not found by ID, will search by Name below.
 
-        # If not found by ID, search by Name
+        # If not found by ID, or if the ID matched a non-gene feature, search by Name.
         for gene in self.db.features_of_type('gene'):
-            if gene.attributes.get('Name', [None])[0] == gene_identifier:
+            # The 'Name' attribute can be a list of names.
+            if gene_identifier in gene.attributes.get('Name', []):
                 return gene
         
         logging.error(f"Gene '{gene_identifier}' not found in GFF file.")
@@ -177,8 +179,17 @@ class HierarchicalAligner:
         results = {}
         hap_names = list(all_alignments.keys())
         for hap_name in tqdm(hap_names, desc="Building hierarchical results"):
-            alignments_for_hap = {aln['query_name']: aln for aln in all_alignments[hap_name]}
-                
+            # Group alignments by query name and select the best one (highest MAPQ)
+            # This handles cases where a feature aligns to multiple places on a haplotype.
+            grouped_by_query = defaultdict(list)
+            for aln in all_alignments[hap_name]:
+                grouped_by_query[aln['query_name']].append(aln)
+            
+            alignments_for_hap = {}
+            for query_name, aln_list in grouped_by_query.items():
+                if aln_list:
+                    alignments_for_hap[query_name] = max(aln_list, key=lambda x: x['mapq'])
+
             # Find the top-level gene alignment
             gene_aln_data = alignments_for_hap.get(gene.id)
             if not gene_aln_data:
