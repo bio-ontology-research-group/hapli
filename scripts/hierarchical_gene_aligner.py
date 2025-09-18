@@ -259,6 +259,7 @@ class HierarchicalAligner:
         self.gff = gff_proc
         self.seq = seq_ext
         self.threads = threads
+        self.raw_paf_lines = []  # Store raw PAF output
 
     def _get_all_features_recursive(self, feature: gffutils.Feature, feature_list: List[gffutils.Feature]):
         """Recursively gather a feature and all its descendants."""
@@ -298,9 +299,16 @@ class HierarchicalAligner:
         
         logging.info(f"Parsing {len(lines)} alignment records from minimap2...")
         
+        # Store raw PAF lines for later saving
+        self.raw_paf_lines = []
+        
         for line in lines:
             if not line:
                 continue
+            
+            # Store the raw line
+            self.raw_paf_lines.append(line)
+            
             parts = line.split('\t')
             if len(parts) < 12:
                 continue
@@ -435,6 +443,10 @@ class HierarchicalAligner:
                 
             # Recurse
             self._build_result_tree(child_feature, child_result, alignments)
+    
+    def get_raw_paf_lines(self) -> List[str]:
+        """Returns the raw PAF output lines from the last alignment."""
+        return self.raw_paf_lines
 
 # --- Output ---
 
@@ -478,6 +490,48 @@ def save_results(results: Dict[str, AlignmentResult], output_path: Path):
     
     logging.info(f"Results saved to {output_path}")
 
+def save_paf_alignments(paf_lines: List[str], output_path: Path):
+    """Save raw PAF alignment data to file."""
+    with open(output_path, 'w') as f:
+        for line in paf_lines:
+            f.write(line + '\n')
+    
+    logging.info(f"PAF alignments saved to {output_path}")
+
+def save_alignments_with_metadata(paf_lines: List[str], gff_processor: GFFProcessor, output_path: Path):
+    """Save PAF alignments with additional metadata about features."""
+    with open(output_path, 'w') as f:
+        # Write header
+        f.write("# PAF alignments with feature metadata\n")
+        f.write("# Additional columns: feature_type, parent_id, gene_name\n")
+        
+        for line in paf_lines:
+            if not line:
+                continue
+            
+            parts = line.split('\t')
+            if len(parts) < 12:
+                f.write(line + '\n')
+                continue
+            
+            query_name = parts[0]
+            
+            # Get feature metadata
+            feature = gff_processor.features_by_id.get(query_name)
+            if feature:
+                feature_type = feature.featuretype
+                parent_ids = feature.attributes.get('Parent', [])
+                parent_id = parent_ids[0] if parent_ids else 'NA'
+                gene_name = feature.attributes.get('gene_name', ['NA'])[0]
+                
+                # Add metadata as additional columns
+                extended_line = f"{line}\tft:Z:{feature_type}\tpi:Z:{parent_id}\tgn:Z:{gene_name}"
+                f.write(extended_line + '\n')
+            else:
+                f.write(line + '\n')
+    
+    logging.info(f"Extended PAF alignments saved to {output_path}")
+
 # --- Main Execution ---
 
 def main():
@@ -489,6 +543,8 @@ def main():
     parser.add_argument("--gene", required=True, type=str, help="Name or ID of the gene to align.")
     parser.add_argument("--threads", type=int, default=4, help="Number of threads for minimap2.")
     parser.add_argument("--output", type=Path, help="Output JSON file for alignment results.")
+    parser.add_argument("--paf-output", type=Path, help="Output PAF file for raw alignments.")
+    parser.add_argument("--extended-paf", type=Path, help="Output PAF file with feature metadata.")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging.")
     args = parser.parse_args()
 
@@ -532,6 +588,22 @@ def main():
         
         if args.output:
             save_results(alignment_results, args.output)
+        
+        # 5. Save raw PAF alignments if requested
+        if args.paf_output:
+            paf_lines = aligner.get_raw_paf_lines()
+            if paf_lines:
+                save_paf_alignments(paf_lines, args.paf_output)
+            else:
+                logging.warning("No PAF alignments to save.")
+        
+        # 6. Save extended PAF with metadata if requested
+        if args.extended_paf:
+            paf_lines = aligner.get_raw_paf_lines()
+            if paf_lines:
+                save_alignments_with_metadata(paf_lines, gff_processor, args.extended_paf)
+            else:
+                logging.warning("No PAF alignments to save.")
 
     except FileNotFoundError as e:
         logging.error(f"Error: Input file not found - {e}")
