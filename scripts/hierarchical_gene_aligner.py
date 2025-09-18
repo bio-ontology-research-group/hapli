@@ -299,7 +299,7 @@ def main():
         logging.error(f"Error: Input file not found - {e}")
         sys.exit(1)
     except Exception as e:
-        logging.error(f"An unexpected error occurred: {e}", exc_info=args.verbose)
+        logging.error(f"An unexpected error occurred: {e}", exc_info=True)
         sys.exit(1)
 
 if __name__ == "__main__":
