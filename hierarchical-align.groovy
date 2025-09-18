@@ -12,7 +12,7 @@ import groovy.transform.Field
 def cli = new CliBuilder(usage: 'hierarchical_align.groovy [options]')
 cli.with {
     g(longOpt: 'gff', args: 1, argName: 'file', required: true, 'GFF3 annotation file')
-    f(longOpt: 'features', args: 1, argName: 'file', required: true, 'Features FASTA file')
+    r(longOpt: 'reference-fasta', args: 1, argName: 'file', required: true, 'Reference genome FASTA file')
     p(longOpt: 'paths', args: 1, argName: 'file', required: true, 'Paths FASTA file')
     o(longOpt: 'output', args: 1, argName: 'file', required: false, 'Output file (default: hierarchical_alignments.txt)')
     s(longOpt: 'start', args: 1, argName: 'int', required: true, 'Region start coordinate')
@@ -32,7 +32,7 @@ if (!options || options.h) {
 }
 
 def gffFile = new File(options.g)
-def fastaFile = new File(options.f)
+def referenceFastaFile = new File(options.r)
 def pathsFile = new File(options.p)
 def outputFile = new File(options.o ?: 'hierarchical_alignments.txt')
 def regionStart = options.s as Integer
@@ -125,37 +125,62 @@ children.each { parentId, childIds ->
 
 println "Found ${roots.size()} root features and ${features.size()} total features"
 
-// Load feature sequences
-sequences = [:]
-def currentId = null
-def currentSeq = new StringBuilder()
-
-fastaFile.eachLine { line ->
+// Load reference sequence for the target chromosome
+println "Loading reference sequence for chromosome ${chromosome}..."
+def refSeqBuilder = new StringBuilder()
+def currentChrId = null
+def readingChr = false
+referenceFastaFile.eachLine { line ->
     if (line.startsWith('>')) {
-        if (currentId) {
-            sequences[currentId] = currentSeq.toString()
+        if (readingChr) {
+            readingChr = false // Stop reading on next chromosome
         }
-        currentId = line.substring(1)
-        currentSeq = new StringBuilder()
-    } else {
-        currentSeq.append(line)
+        currentChrId = line.substring(1).split()[0]
+        if (currentChrId == chromosome) {
+            readingChr = true
+        }
+    } else if (readingChr) {
+        refSeqBuilder.append(line.trim())
     }
 }
-if (currentId) {
-    sequences[currentId] = currentSeq.toString()
-}
+def refSeq = refSeqBuilder.toString()
 
-println "Loaded ${sequences.size()} feature sequences"
+if (refSeq.length() == 0) {
+    System.err.println "Error: Chromosome '${chromosome}' not found or has no sequence in reference FASTA file ${referenceFastaFile.name}"
+    return
+}
+println "Loaded reference sequence for ${chromosome} (${refSeq.length()} bp)"
+
+// Sequence extraction function
+def getFeatureSequence(feature, referenceSequence) {
+    if (!feature) return null
+    // GFF is 1-based, substring is 0-based exclusive end
+    def start = feature.origStart - 1
+    def end = feature.origEnd
+    
+    if (start < 0 || end > referenceSequence.length() || start >= end) {
+        System.err.println "Warning: Feature ${feature.id} coordinates (${feature.origStart}-${feature.origEnd}) are invalid or out of bounds for reference."
+        return null
+    }
+    
+    def seq = referenceSequence.substring(start, end)
+    
+    if (feature.strand == '-') {
+        seq = seq.reverse().tr('ACGTNacgtn', 'TGCANtgcan')
+    }
+    return seq
+}
 
 // Alignment function
 def alignFeature(featureId, pathFile, numThreads, parentRegion = null) {
     def feature = features[featureId]
     if (!feature) return null
     
-    def seqKey = sequences.keySet().find { it.contains(featureId) }
-    if (!seqKey) return null
-    
-    def seq = sequences[seqKey]
+    def seq = getFeatureSequence(feature, refSeq)
+    if (!seq) {
+        System.err.println "Warning: Could not extract sequence for feature ${featureId}, skipping alignment."
+        return []
+    }
     def seqLen = seq.length()
     def results = []
     

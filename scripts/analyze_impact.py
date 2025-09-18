@@ -137,7 +137,7 @@ class PAFParser:
 class ImpactAnalyzer:
     """Analyzes feature alignments to determine functional impact."""
 
-    def __init__(self, gff_parser: GFFParser, paf_parser: PAFParser, feature_fasta: Path, path_fasta: Path, target_genes: List[str], use_color: bool, show_alignments: bool):
+    def __init__(self, gff_parser: GFFParser, paf_parser: PAFParser, reference_fasta: Path, path_fasta: Path, target_genes: List[str], use_color: bool, show_alignments: bool):
         self.gff = gff_parser
         self.paf = paf_parser
         self.target_genes = set(target_genes)
@@ -145,8 +145,8 @@ class ImpactAnalyzer:
         self.show_alignments = show_alignments
         self.results: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(lambda: defaultdict(dict))
 
-        logging.info("Loading feature sequences...")
-        self.feature_seqs = pysam.FastaFile(str(feature_fasta))
+        logging.info("Loading reference genome sequence...")
+        self.reference_genome = pysam.FastaFile(str(reference_fasta))
         logging.info("Loading path sequences...")
         self.path_seqs = pysam.FastaFile(str(path_fasta))
 
@@ -299,13 +299,39 @@ class ImpactAnalyzer:
         else:
             return {"impact": UNKNOWN, "details": ["No child impacts found"], "identity": 0.0, "mismatches": 0, "insertions": 0, "deletions": 0, "alignment": None}
 
+    @staticmethod
+    def _reverse_complement(dna: str) -> str:
+        """Returns the reverse complement of a DNA sequence."""
+        complement = str.maketrans('ATCGNRY', 'TAGCNYR')
+        return dna.upper().translate(complement)[::-1]
+
+    def get_feature_sequence(self, feature_id: str) -> Optional[str]:
+        """Extracts a feature's sequence from the reference genome."""
+        feature = self.gff.get_feature(feature_id)
+        if not feature:
+            return None
+        
+        try:
+            # GFF is 1-based, pysam is 0-based
+            seq = self.reference_genome.fetch(feature['chrom'], feature['start'] - 1, feature['end'])
+        except (KeyError, ValueError) as e:
+            logging.warning(f"Could not fetch sequence for {feature_id} ({feature['chrom']}:{feature['start']}-{feature['end']}): {e}")
+            return None
+
+        if feature['strand'] == '-':
+            return self._reverse_complement(seq)
+        return seq
+
     def _get_alignment_visualization(self, feature_id: str, aln: Dict[str, Any]) -> str:
         """Generates a colorized string showing the base-level alignment."""
+        query_full_seq = self.get_feature_sequence(aln['query_name'])
+        if not query_full_seq:
+            return f"  (Sequence for feature '{aln['query_name']}' could not be extracted, cannot display alignment)"
+
         try:
-            query_full_seq = self.feature_seqs.fetch(aln['query_name'])
             target_full_seq = self.path_seqs.fetch(aln['target_name'])
         except (KeyError, ValueError) as e:
-            return f"  (Sequence not found for {e}, cannot display alignment)"
+            return f"  (Sequence not found for path '{aln['target_name']}', cannot display alignment)"
 
         cigar_tuples = re.findall(r'(\d+)([MIDNSHPX=])', aln["cigar"])
         
@@ -430,7 +456,7 @@ def main():
     parser = argparse.ArgumentParser(description="Analyze functional impact of variants from a PAF file.")
     parser.add_argument("--paf", required=True, type=Path, help="Input PAF file from minimap2.")
     parser.add_argument("--gff", required=True, type=Path, help="GFF3 annotation file used for alignment.")
-    parser.add_argument("--feature-fasta", required=True, type=Path, help="FASTA file for feature sequences.")
+    parser.add_argument("--reference-fasta", required=True, type=Path, help="Reference genome FASTA file.")
     parser.add_argument("--path-fasta", required=True, type=Path, help="FASTA file for path sequences (haplotypes).")
     parser.add_argument("--genes", type=str, help="Comma-separated list of gene names to analyze.")
     parser.add_argument("--show-alignments", action="store_true", help="Show detailed base-level alignments.")
@@ -449,7 +475,7 @@ def main():
         analyzer = ImpactAnalyzer(
             gff_parser,
             paf_parser,
-            args.feature_fasta,
+            args.reference_fasta,
             args.path_fasta,
             target_genes,
             use_color=not args.no_color,
