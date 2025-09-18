@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import gffutils
-import parasail
 import pysam
+from Bio import pairwise2
 
 # --- Setup ---
 
@@ -103,7 +103,9 @@ class HierarchicalAligner:
     def __init__(self, gff_proc: GFFProcessor, seq_ext: SequenceExtractor):
         self.gff = gff_proc
         self.seq = seq_ext
-        self.matrix = parasail.matrix_create("ACGT", 5, -4)
+        # Alignment parameters for pairwise2.align.localms:
+        # (match, mismatch, open_gap, extend_gap)
+        self.align_params = (5, -4, -7, -2)
 
     def align_gene_to_haplotypes(self, gene: gffutils.Feature, haplotypes_fasta: Path) -> Dict[str, AlignmentResult]:
         """Aligns a gene and its sub-features to all sequences in a multi-sample FASTA."""
@@ -119,24 +121,26 @@ class HierarchicalAligner:
                 hap_seq = multi_fasta.fetch(hap_name)
                 
                 # 1. Align the parent gene
-                # Use semi-global alignment to find the best match for the gene sequence in the haplotype
-                gene_alignment = parasail.sg_trace_scan_16(gene_seq, hap_seq, 5, 2, self.matrix)
+                # Use local alignment to find the best match for the gene sequence in the haplotype
+                alignments = pairwise2.align.localms(hap_seq, gene_seq, *self.align_params)
                 
-                if gene_alignment.score <= 0:
-                    logging.warning(f"Gene '{gene.id}' did not align well to haplotype '{hap_name}'.")
+                if not alignments:
+                    logging.warning(f"Gene '{gene.id}' did not align to haplotype '{hap_name}'.")
                     continue
-
-                identity = gene_alignment.matches / gene_alignment.length if gene_alignment.length > 0 else 0
                 
-                # The end of the alignment on the reference (haplotype) is 0-based and inclusive.
-                # parasail's end_ref is the last aligned base index.
-                target_start = gene_alignment.end_ref - (gene_alignment.length - 1)
-                target_end = gene_alignment.end_ref + 1
+                # Take the best alignment
+                best_aln = alignments[0]
+                aligned_hap_seq, aligned_gene_seq, score, target_start, target_end = best_aln
+
+                # Calculate identity
+                matches = sum(1 for a, b in zip(aligned_hap_seq, aligned_gene_seq) if a == b)
+                align_len = len(aligned_hap_seq)
+                identity = matches / align_len if align_len > 0 else 0
 
                 gene_result = AlignmentResult(
                     feature_id=gene.id,
                     feature_type=gene.featuretype,
-                    score=gene_alignment.score,
+                    score=score,
                     target_start=target_start,
                     target_end=target_end,
                     identity=identity
@@ -160,21 +164,24 @@ class HierarchicalAligner:
             return None
 
         # Use local alignment to find the feature within the parent's region
-        alignment = parasail.sw_trace_scan_16(feature_seq, target_region_seq, 5, 2, self.matrix)
+        alignments = pairwise2.align.localms(target_region_seq, feature_seq, *self.align_params)
 
-        if alignment.score <= 0:
+        if not alignments:
             logging.debug(f"Feature '{feature.id}' did not align within parent region.")
             return None
 
-        identity = alignment.matches / alignment.length if alignment.length > 0 else 0
+        best_aln = alignments[0]
+        aligned_target_seq, aligned_feature_seq, score, start, end = best_aln
+
+        identity = sum(1 for a, b in zip(aligned_target_seq, aligned_feature_seq) if a == b) / len(aligned_target_seq) if len(aligned_target_seq) > 0 else 0
         
-        target_start = alignment.end_ref - (alignment.length - 1)
-        target_end = alignment.end_ref + 1
+        target_start = start
+        target_end = end
 
         result = AlignmentResult(
             feature_id=feature.id,
             feature_type=feature.featuretype,
-            score=alignment.score,
+            score=score,
             target_start=target_start + offset,
             target_end=target_end + offset,
             identity=identity
