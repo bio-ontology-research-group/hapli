@@ -269,17 +269,53 @@ class HierarchicalAligner:
         for child in self.gff.get_children(feature):
             self._get_all_features_recursive(child, feature_list)
 
+    def _try_exact_match(self, feature_seq: str, target_fasta: Path, feature_id: str) -> Optional[Dict[str, Any]]:
+        """Try to find exact matches for a feature sequence in the target FASTA."""
+        # For very small features, try direct string matching
+        if len(feature_seq) <= 10:
+            logging.debug(f"Trying exact match for small feature {feature_id} ({len(feature_seq)}bp)")
+            
+            # Load target sequences and search for exact matches
+            target_seqs = pysam.FastaFile(str(target_fasta))
+            results = []
+            
+            for ref_name in target_seqs.references:
+                ref_seq = target_seqs.fetch(ref_name)
+                # Search for exact match
+                pos = ref_seq.find(feature_seq.upper())
+                if pos != -1:
+                    results.append({
+                        "query_name": feature_id,
+                        "query_len": len(feature_seq),
+                        "target_name": ref_name,
+                        "target_start": pos,
+                        "target_end": pos + len(feature_seq),
+                        "matches": len(feature_seq),
+                        "align_len": len(feature_seq),
+                        "mapq": 60,  # High quality for exact match
+                        "cigar": f"{len(feature_seq)}M"
+                    })
+                    logging.debug(f"Found exact match for {feature_id} in {ref_name} at position {pos}")
+            
+            target_seqs.close()
+            return results if results else None
+        return None
+
     def _choose_minimap2_preset(self, feature_length: int) -> Tuple[str, List[str]]:
         """Choose appropriate minimap2 preset based on feature length."""
-        if feature_length < 50:
-            # For very small features like start/stop codons, use most sensitive settings
-            return "sr", ["-k", "7", "-w", "1", "--score-N", "0", "-A", "2", "-B", "4"]
+        if feature_length < 20:
+            # For very small features like start/stop codons (3bp), use extremely sensitive settings
+            # Use map-ont preset which is more sensitive for short sequences
+            return "map-ont", ["-k", "5", "-w", "1", "--min-dp-score", "1", "-m", "1", "-n", "1", "--secondary=yes"]
+        elif feature_length < 50:
+            # For small features, use very sensitive settings
+            return "sr", ["-k", "7", "-w", "1", "--score-N", "0", "-A", "2", "-B", "4", "--secondary=yes"]
         elif feature_length < 200:
             # For small exons/UTRs
-            return "sr", ["-k", "11", "-w", "3"]
+            return "sr", ["-k", "11", "-w", "3", "--secondary=yes"]
         elif feature_length < 1000:
             # For medium features
-            return "splice", []
+            return "splice", ["--secondary=yes"]
         else:
             # For large features
             return "asm20", []
@@ -288,6 +324,27 @@ class HierarchicalAligner:
         """Run minimap2 with different settings for different feature sizes."""
         all_alignments = defaultdict(list)
         all_paf_lines = []
+        
+        # First, try exact matching for very small features
+        exact_match_features = []
+        for size_category, features in features_by_size.items():
+            if size_category == "tiny":
+                for feature, seq in features:
+                    exact_matches = self._try_exact_match(seq, target_fasta, feature.id)
+                    if exact_matches:
+                        for match in exact_matches:
+                            all_alignments[match["target_name"]].append(match)
+                            # Create PAF line for exact match
+                            paf_line = f"{match['query_name']}\t{match['query_len']}\t0\t{match['query_len']}\t+\t"
+                            paf_line += f"{match['target_name']}\t0\t{match['target_start']}\t{match['target_end']}\t"
+                            paf_line += f"{match['matches']}\t{match['align_len']}\t{match['mapq']}\tcg:Z:{match['cigar']}"
+                            all_paf_lines.append(paf_line)
+                        exact_match_features.append(feature.id)
+        
+        # Remove exact matched features from further processing
+        for size_category in features_by_size:
+            features_by_size[size_category] = [(f, s) for f, s in features_by_size[size_category] 
+                                              if f.id not in exact_match_features]
         
         for size_category, features in features_by_size.items():
             if not features:
@@ -305,26 +362,30 @@ class HierarchicalAligner:
                 query_fasta.flush()
                 
                 # Get appropriate preset
-                avg_length = sum(len(seq) for _, seq in features) / len(features)
+                avg_length = sum(len(seq) for _, seq in features) / len(features) if features else 0
                 preset, extra_args = self._choose_minimap2_preset(int(avg_length))
                 
-                logging.info(f"Running minimap2 for {len(features)} {size_category} features (preset: {preset})...")
+                logging.info(f"Running minimap2 for {len(features)} {size_category} features (preset: {preset}, avg length: {avg_length:.0f}bp)...")
                 
                 cmd = [
                     "minimap2",
                     "-x", preset,
                     "-c",  # Output CIGAR
-                    "--paf-no-hit",
                     "-t", str(self.threads),
                 ] + extra_args + [
                     str(target_fasta),
                     str(query_path)
                 ]
                 
+                # Remove --paf-no-hit for small features to see all attempts
+                if size_category not in ["tiny", "small"]:
+                    cmd.insert(3, "--paf-no-hit")
+                
                 try:
                     process = subprocess.run(cmd, capture_output=True, text=True, check=True)
                     
                     lines = process.stdout.strip().split('\n')
+                    alignment_count = 0
                     for line in lines:
                         if not line:
                             continue
@@ -353,6 +414,9 @@ class HierarchicalAligner:
                             "cigar": cigar
                         }
                         all_alignments[paf_record["target_name"]].append(paf_record)
+                        alignment_count += 1
+                    
+                    logging.info(f"Found {alignment_count} alignments for {size_category} features")
                         
                 except subprocess.CalledProcessError as e:
                     logging.warning(f"minimap2 failed for {size_category} features: {e.stderr}")
@@ -379,8 +443,8 @@ class HierarchicalAligner:
         
         # Categorize features by size for appropriate alignment strategies
         features_by_size = {
-            "tiny": [],      # < 50bp (start/stop codons)
-            "small": [],     # 50-200bp (small exons, UTRs)
+            "tiny": [],      # < 20bp (start/stop codons)
+            "small": [],     # 20-200bp (small exons, UTRs)
             "medium": [],    # 200-1000bp
             "large": []      # > 1000bp
         }
@@ -390,7 +454,7 @@ class HierarchicalAligner:
             seq = self.seq.get_sequence(feature)
             if seq and len(seq) > 0:
                 length = len(seq)
-                if length < 50:
+                if length < 20:
                     features_by_size["tiny"].append((feature, seq))
                 elif length < 200:
                     features_by_size["small"].append((feature, seq))
@@ -436,8 +500,17 @@ class HierarchicalAligner:
             alignments_for_hap = {}
             for query_name, aln_list in grouped_by_query.items():
                 if aln_list:
-                    # Select best alignment based on MAPQ, then identity
-                    best_aln = max(aln_list, key=lambda x: (x['mapq'], x['matches']/x['align_len'] if x['align_len'] > 0 else 0))
+                    # For reference path, prefer exact matches (MAPQ 60)
+                    # Otherwise select best alignment based on MAPQ, then identity
+                    if "grch38" in hap_name.lower() or "hg38" in hap_name.lower():
+                        # For reference, prioritize exact matches
+                        exact_matches = [a for a in aln_list if a['mapq'] == 60]
+                        if exact_matches:
+                            best_aln = exact_matches[0]
+                        else:
+                            best_aln = max(aln_list, key=lambda x: (x['mapq'], x['matches']/x['align_len'] if x['align_len'] > 0 else 0))
+                    else:
+                        best_aln = max(aln_list, key=lambda x: (x['mapq'], x['matches']/x['align_len'] if x['align_len'] > 0 else 0))
                     alignments_for_hap[query_name] = best_aln
             
             # Find the top-level gene alignment
@@ -472,12 +545,17 @@ class HierarchicalAligner:
         for child_feature in self.gff.get_children(parent_feature):
             # If parent has perfect identity, child inherits it
             if inherit_perfect:
+                # Calculate relative position within parent
+                parent_length = parent_feature.end - parent_feature.start
+                child_rel_start = child_feature.start - parent_feature.start
+                child_rel_end = child_feature.end - parent_feature.start
+                
                 child_result = AlignmentResult(
                     feature_id=child_feature.id,
                     feature_type=child_feature.featuretype,
                     mapq=60,  # High quality inherited from parent
-                    target_start=parent_result.target_start + (child_feature.start - parent_feature.start),
-                    target_end=parent_result.target_start + (child_feature.end - parent_feature.start),
+                    target_start=parent_result.target_start + child_rel_start,
+                    target_end=parent_result.target_start + child_rel_end,
                     identity=1.0,
                     cigar=None  # Inherited, not directly aligned
                 )
@@ -488,10 +566,13 @@ class HierarchicalAligner:
             
             child_aln_data = alignments.get(child_feature.id)
             if not child_aln_data:
+                # If no alignment found but parent has good alignment, mark as likely present
+                if parent_result.identity >= 0.95:
+                    logging.debug(f"No alignment for {child_feature.id}, but parent has {parent_result.identity:.1%} identity")
                 continue
             
             # Hierarchical constraint: child must be within parent's aligned region (with small tolerance)
-            tolerance = 10  # Allow 10bp tolerance for alignment boundaries
+            tolerance = 50  # Increase tolerance for small features
             if not (child_aln_data['target_start'] >= parent_result.target_start - tolerance and 
                     child_aln_data['target_end'] <= parent_result.target_end + tolerance):
                 logging.debug(f"Skipping child {child_feature.id} as its alignment [{child_aln_data['target_start']}-{child_aln_data['target_end']}] "
