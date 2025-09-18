@@ -10,8 +10,6 @@ import groovy.transform.Field
 @Field def pafFile = null
 @Field def refSeq
 @Field def getFeatureSequence
-@Field def getFeatureSequence
-@Field def getFeatureSequence
 
 def cli = new CliBuilder(usage: 'hierarchical_align.groovy [options]')
 cli.with {
