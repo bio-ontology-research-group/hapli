@@ -269,7 +269,7 @@ class HierarchicalAligner:
         for child in self.gff.get_children(feature):
             self._get_all_features_recursive(child, feature_list)
 
-    def _try_exact_match(self, feature_seq: str, target_fasta: Path, feature_id: str) -> Optional[Dict[str, Any]]:
+    def _try_exact_match(self, feature: gffutils.Feature, feature_seq: str, target_fasta: Path, feature_id: str) -> Optional[List[Dict[str, Any]]]:
         """Try to find exact matches for a feature sequence in the target FASTA."""
         # For very small features, try direct string matching
         if len(feature_seq) <= 10:
@@ -280,22 +280,51 @@ class HierarchicalAligner:
             results = []
             
             for ref_name in target_seqs.references:
-                ref_seq = target_seqs.fetch(ref_name)
-                # Search for exact match
-                pos = ref_seq.find(feature_seq.upper())
-                if pos != -1:
-                    results.append({
-                        "query_name": feature_id,
-                        "query_len": len(feature_seq),
-                        "target_name": ref_name,
-                        "target_start": pos,
-                        "target_end": pos + len(feature_seq),
-                        "matches": len(feature_seq),
-                        "align_len": len(feature_seq),
-                        "mapq": 60,  # High quality for exact match
-                        "cigar": f"{len(feature_seq)}M"
-                    })
-                    logging.debug(f"Found exact match for {feature_id} in {ref_name} at position {pos}")
+                # For reference path, we expect to find the feature at its original position
+                is_reference = "grch38" in ref_name.lower() or "hg38" in ref_name.lower()
+                
+                if is_reference:
+                    # For reference, check the exact expected position first
+                    try:
+                        # Get the sequence at the expected position
+                        expected_seq = target_seqs.fetch(ref_name, feature.start - 1, feature.end)
+                        if feature.strand == '-':
+                            expected_seq = self.seq._reverse_complement(expected_seq)
+                        
+                        if expected_seq.upper() == feature_seq.upper():
+                            results.append({
+                                "query_name": feature_id,
+                                "query_len": len(feature_seq),
+                                "target_name": ref_name,
+                                "target_start": feature.start - 1,  # Convert to 0-based
+                                "target_end": feature.end,
+                                "matches": len(feature_seq),
+                                "align_len": len(feature_seq),
+                                "mapq": 60,  # High quality for exact match
+                                "cigar": f"{len(feature_seq)}M"
+                            })
+                            logging.debug(f"Found exact match for {feature_id} in {ref_name} at expected position {feature.start - 1}")
+                            # For reference, only take the expected position
+                            break
+                    except Exception as e:
+                        logging.debug(f"Could not check expected position for {feature_id}: {e}")
+                else:
+                    # For non-reference paths, search the entire sequence
+                    ref_seq = target_seqs.fetch(ref_name)
+                    pos = ref_seq.upper().find(feature_seq.upper())
+                    if pos != -1:
+                        results.append({
+                            "query_name": feature_id,
+                            "query_len": len(feature_seq),
+                            "target_name": ref_name,
+                            "target_start": pos,
+                            "target_end": pos + len(feature_seq),
+                            "matches": len(feature_seq),
+                            "align_len": len(feature_seq),
+                            "mapq": 60,  # High quality for exact match
+                            "cigar": f"{len(feature_seq)}M"
+                        })
+                        logging.debug(f"Found exact match for {feature_id} in {ref_name} at position {pos}")
             
             target_seqs.close()
             return results if results else None
@@ -305,17 +334,16 @@ class HierarchicalAligner:
         """Choose appropriate minimap2 preset based on feature length."""
         if feature_length < 20:
             # For very small features like start/stop codons (3bp), use extremely sensitive settings
-            # Use map-ont preset which is more sensitive for short sequences
-            return "map-ont", ["-k", "5", "-w", "1", "--min-dp-score", "1", "-m", "1", "-n", "1", "--secondary=yes"]
+            return "sr", ["-k", "3", "-w", "1", "--min-dp-score", "1", "-m", "1", "-n", "1", "-A", "2", "-B", "2", "-O", "4,2", "-E", "2,1", "--score-N", "0"]
         elif feature_length < 50:
             # For small features, use very sensitive settings
-            return "sr", ["-k", "7", "-w", "1", "--score-N", "0", "-A", "2", "-B", "4", "--secondary=yes"]
+            return "sr", ["-k", "7", "-w", "1", "--score-N", "0", "-A", "2", "-B", "4"]
         elif feature_length < 200:
             # For small exons/UTRs
-            return "sr", ["-k", "11", "-w", "3", "--secondary=yes"]
+            return "sr", ["-k", "11", "-w", "3"]
         elif feature_length < 1000:
             # For medium features
-            return "splice", ["--secondary=yes"]
+            return "splice", []
         else:
             # For large features
             return "asm20", []
@@ -326,11 +354,11 @@ class HierarchicalAligner:
         all_paf_lines = []
         
         # First, try exact matching for very small features
-        exact_match_features = []
+        exact_match_features = set()
         for size_category, features in features_by_size.items():
             if size_category == "tiny":
                 for feature, seq in features:
-                    exact_matches = self._try_exact_match(seq, target_fasta, feature.id)
+                    exact_matches = self._try_exact_match(feature, seq, target_fasta, feature.id)
                     if exact_matches:
                         for match in exact_matches:
                             all_alignments[match["target_name"]].append(match)
@@ -339,7 +367,7 @@ class HierarchicalAligner:
                             paf_line += f"{match['target_name']}\t0\t{match['target_start']}\t{match['target_end']}\t"
                             paf_line += f"{match['matches']}\t{match['align_len']}\t{match['mapq']}\tcg:Z:{match['cigar']}"
                             all_paf_lines.append(paf_line)
-                        exact_match_features.append(feature.id)
+                        exact_match_features.add(feature.id)
         
         # Remove exact matched features from further processing
         for size_category in features_by_size:
@@ -377,7 +405,7 @@ class HierarchicalAligner:
                     str(query_path)
                 ]
                 
-                # Remove --paf-no-hit for small features to see all attempts
+                # For tiny and small features, don't suppress no-hit output
                 if size_category not in ["tiny", "small"]:
                     cmd.insert(3, "--paf-no-hit")
                 
@@ -492,7 +520,9 @@ class HierarchicalAligner:
         logging.info(f"Building hierarchical alignment results for {len(hap_names)} haplotypes...")
         
         for hap_name in tqdm(hap_names, desc="Building hierarchical results", unit=" haplotypes"):
-            # Group alignments by query name and select the best one
+            is_reference = "grch38" in hap_name.lower() or "hg38" in hap_name.lower()
+            
+            # Group alignments by query name
             grouped_by_query = defaultdict(list)
             for aln in all_alignments[hap_name]:
                 grouped_by_query[aln['query_name']].append(aln)
@@ -500,18 +530,15 @@ class HierarchicalAligner:
             alignments_for_hap = {}
             for query_name, aln_list in grouped_by_query.items():
                 if aln_list:
-                    # For reference path, prefer exact matches (MAPQ 60)
-                    # Otherwise select best alignment based on MAPQ, then identity
-                    if "grch38" in hap_name.lower() or "hg38" in hap_name.lower():
-                        # For reference, prioritize exact matches
-                        exact_matches = [a for a in aln_list if a['mapq'] == 60]
-                        if exact_matches:
-                            best_aln = exact_matches[0]
-                        else:
-                            best_aln = max(aln_list, key=lambda x: (x['mapq'], x['matches']/x['align_len'] if x['align_len'] > 0 else 0))
-                    else:
+                    if is_reference:
+                        # For reference, prefer exact matches and avoid duplicates
+                        # Take only the best alignment (highest MAPQ, then identity)
                         best_aln = max(aln_list, key=lambda x: (x['mapq'], x['matches']/x['align_len'] if x['align_len'] > 0 else 0))
-                    alignments_for_hap[query_name] = best_aln
+                        alignments_for_hap[query_name] = best_aln
+                    else:
+                        # For non-reference, select best alignment
+                        best_aln = max(aln_list, key=lambda x: (x['mapq'], x['matches']/x['align_len'] if x['align_len'] > 0 else 0))
+                        alignments_for_hap[query_name] = best_aln
             
             # Find the top-level gene alignment
             gene_aln_data = alignments_for_hap.get(gene.id)
@@ -533,7 +560,7 @@ class HierarchicalAligner:
             # Recursively build the tree for children
             # Pass perfect identity info down if parent has 100% identity
             self._build_result_tree(gene, gene_result, alignments_for_hap, 
-                                  inherit_perfect=(identity >= 0.999))
+                                  inherit_perfect=(identity >= 0.999 and is_reference))
             results[hap_name] = gene_result
         
         logging.info(f"Successfully built alignment results for {len(results)} haplotypes")
@@ -543,7 +570,7 @@ class HierarchicalAligner:
                           alignments: Dict[str, Dict], inherit_perfect: bool = False):
         """Recursively constructs the alignment result tree, applying hierarchical constraints."""
         for child_feature in self.gff.get_children(parent_feature):
-            # If parent has perfect identity, child inherits it
+            # If parent has perfect identity on reference, child inherits it
             if inherit_perfect:
                 # Calculate relative position within parent
                 parent_length = parent_feature.end - parent_feature.start
@@ -571,8 +598,8 @@ class HierarchicalAligner:
                     logging.debug(f"No alignment for {child_feature.id}, but parent has {parent_result.identity:.1%} identity")
                 continue
             
-            # Hierarchical constraint: child must be within parent's aligned region (with small tolerance)
-            tolerance = 50  # Increase tolerance for small features
+            # Hierarchical constraint: child must be within parent's aligned region (with tolerance)
+            tolerance = 100  # Increase tolerance for small features
             if not (child_aln_data['target_start'] >= parent_result.target_start - tolerance and 
                     child_aln_data['target_end'] <= parent_result.target_end + tolerance):
                 logging.debug(f"Skipping child {child_feature.id} as its alignment [{child_aln_data['target_start']}-{child_aln_data['target_end']}] "
