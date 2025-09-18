@@ -301,13 +301,15 @@ class HierarchicalAligner:
                                 "matches": len(feature_seq),
                                 "align_len": len(feature_seq),
                                 "mapq": 60,  # High quality for exact match
-                                "cigar": f"{len(feature_seq)}M"
+                                "cigar": f"{len(feature_seq)}M",
+                                "is_exact": True
                             })
                             logging.debug(f"Found exact match for {feature_id} in {ref_name} at expected position {feature.start - 1}")
-                            # For reference, only take the expected position
-                            break
+                            # For reference, only take the expected position, so continue to next haplotype
+                            continue
                     except Exception as e:
                         logging.debug(f"Could not check expected position for {feature_id}: {e}")
+                    # If not found at exact position on reference, let minimap2 handle it.
                 else:
                     # For non-reference paths, search the entire sequence
                     ref_seq = target_seqs.fetch(ref_name)
@@ -322,7 +324,8 @@ class HierarchicalAligner:
                             "matches": len(feature_seq),
                             "align_len": len(feature_seq),
                             "mapq": 60,  # High quality for exact match
-                            "cigar": f"{len(feature_seq)}M"
+                            "cigar": f"{len(feature_seq)}M",
+                            "is_exact": True
                         })
                         logging.debug(f"Found exact match for {feature_id} in {ref_name} at position {pos}")
             
@@ -369,10 +372,13 @@ class HierarchicalAligner:
                             all_paf_lines.append(paf_line)
                         exact_match_features.add(feature.id)
         
-        # Remove exact matched features from further processing
-        for size_category in features_by_size:
-            features_by_size[size_category] = [(f, s) for f, s in features_by_size[size_category] 
-                                              if f.id not in exact_match_features]
+        # We now run minimap2 on all features and intelligently merge the results later.
+        # This prevents an exact match on one haplotype from blocking alignment on others.
+        #
+        # # Remove exact matched features from further processing
+        # for size_category in features_by_size:
+        #     features_by_size[size_category] = [(f, s) for f, s in features_by_size[size_category] 
+        #                                       if f.id not in exact_match_features]
         
         for size_category, features in features_by_size.items():
             if not features:
@@ -399,6 +405,7 @@ class HierarchicalAligner:
                     "minimap2",
                     "-x", preset,
                     "-c",  # Output CIGAR
+                    "-N", "1", # Report at most 1 secondary alignment to reduce noise
                     "-t", str(self.threads),
                 ] + extra_args + [
                     str(target_fasta),
@@ -531,12 +538,31 @@ class HierarchicalAligner:
             for query_name, aln_list in grouped_by_query.items():
                 if aln_list:
                     if is_reference:
-                        # For reference, prefer exact matches and avoid duplicates
-                        # Take only the best alignment (highest MAPQ, then identity)
-                        best_aln = max(aln_list, key=lambda x: (x['mapq'], x['matches']/x['align_len'] if x['align_len'] > 0 else 0))
-                        alignments_for_hap[query_name] = best_aln
+                        # For reference, be very strict. Prioritize an exact match at the original location.
+                        feature = self.gff.features_by_id.get(query_name)
+                        if not feature: continue
+
+                        # 1. Look for our own exact match at the precise original location.
+                        exact_alns = [a for a in aln_list if a.get("is_exact") and a['target_start'] == feature.start - 1]
+                        if exact_alns:
+                            alignments_for_hap[query_name] = exact_alns[0]
+                            continue
+
+                        # 2. If not found, look for a high-quality minimap2 alignment at the original location.
+                        candidate_alns = [
+                            aln for aln in aln_list 
+                            if aln['target_start'] < feature.end and aln['target_end'] > feature.start - 1
+                        ]
+                        if candidate_alns:
+                            best_aln = max(candidate_alns, key=lambda x: (x['mapq'], x['matches']/x['align_len'] if x['align_len'] > 0 else 0))
+                            alignments_for_hap[query_name] = best_aln
+                        else:
+                            # 3. Fallback: if no alignment is at the original location (e.g., large SV), take the best one anywhere.
+                            best_aln = max(aln_list, key=lambda x: (x['mapq'], x['matches']/x['align_len'] if x['align_len'] > 0 else 0))
+                            alignments_for_hap[query_name] = best_aln
                     else:
-                        # For non-reference, select best alignment
+                        # For non-reference, we are more lenient. Just take the best alignment found.
+                        # Multiple alignments for the same feature are handled as duplications downstream.
                         best_aln = max(aln_list, key=lambda x: (x['mapq'], x['matches']/x['align_len'] if x['align_len'] > 0 else 0))
                         alignments_for_hap[query_name] = best_aln
             
