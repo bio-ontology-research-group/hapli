@@ -2,11 +2,98 @@
 
 import argparse
 import json
-from pathlib import Path
-from collections import defaultdict
+import re
 import sys
+from collections import defaultdict
+from pathlib import Path
 
-def analyze_paf(paf_file: Path):
+import pysam
+
+# Color codes for terminal output
+COLORS = {
+    "RED": '\033[91m',
+    "GREEN": '\033[92m',
+    "YELLOW": '\033[93m',
+    "BLUE": '\033[94m',
+    "ENDC": '\033[0m'
+}
+
+def _reverse_complement(dna: str) -> str:
+    """Returns the reverse complement of a DNA sequence."""
+    complement = str.maketrans('ATCGNRY', 'TAGCNYR')
+    return dna.upper().translate(complement)[::-1]
+
+def get_alignment_visualization(feature: dict, aln: dict, ref_genome: pysam.FastaFile, path_seqs: pysam.FastaFile, use_color: bool) -> str:
+    """Generates a colorized string showing the base-level alignment."""
+    colors = COLORS if use_color else {k: '' for k in COLORS}
+    if not aln or not aln.get('cigar'):
+        return "  (No CIGAR string available for visualization)"
+
+    # Get sequences
+    try:
+        ref_seq = ref_genome.fetch(feature['chrom'], feature['start'] - 1, feature['end'])
+        if feature['strand'] == '-':
+            ref_seq = _reverse_complement(ref_seq)
+    except Exception as e:
+        return f"  (Could not fetch reference sequence: {e})"
+
+    try:
+        target_seq = path_seqs.fetch(aln['target_name'], aln['target_start'], aln['target_end'])
+    except Exception as e:
+        return f"  (Could not fetch target sequence: {e})"
+
+    # Parse CIGAR and build visualization
+    cigar_tuples = re.findall(r'(\d+)([MIDNSHPX=])', aln['cigar'])
+    query_pos, target_pos = 0, 0
+    query_line, match_line, target_line = "", "", ""
+
+    for length_str, op in cigar_tuples:
+        length = int(length_str)
+        if op in ['M', '=', 'X']:
+            for _ in range(length):
+                if query_pos < len(ref_seq) and target_pos < len(target_seq):
+                    q_base, t_base = ref_seq[query_pos], target_seq[target_pos]
+                    if q_base.upper() == t_base.upper():
+                        query_line += q_base
+                        match_line += "|"
+                        target_line += t_base
+                    else:
+                        query_line += f"{colors['RED']}{q_base}{colors['ENDC']}"
+                        match_line += f"{colors['YELLOW']}X{colors['ENDC']}"
+                        target_line += f"{colors['RED']}{t_base}{colors['ENDC']}"
+                query_pos += 1
+                target_pos += 1
+        elif op == 'I':
+            for _ in range(length):
+                if query_pos < len(ref_seq):
+                    query_line += f"{colors['GREEN']}{ref_seq[query_pos]}{colors['ENDC']}"
+                    match_line += f"{colors['GREEN']}+{colors['ENDC']}"
+                    target_line += f"{colors['GREEN']}-{colors['ENDC']}"
+                    query_pos += 1
+        elif op == 'D':
+            for _ in range(length):
+                if target_pos < len(target_seq):
+                    query_line += f"{colors['BLUE']}-{colors['ENDC']}"
+                    match_line += f"{colors['BLUE']}-{colors['ENDC']}"
+                    target_line += f"{colors['BLUE']}{target_seq[target_pos]}{colors['ENDC']}"
+                    target_pos += 1
+        elif op == 'S':
+            query_pos += length
+
+    # Format output in chunks
+    chunk_size = 80
+    result_lines = []
+    for i in range(0, len(query_line), chunk_size):
+        chunk_end = min(i + chunk_size, len(query_line))
+        result_lines.append(f"        Ref:    {query_line[i:chunk_end]}")
+        result_lines.append(f"                {' ' * len('Ref:    ')}{match_line[i:chunk_end]}")
+        result_lines.append(f"        Target: {target_line[i:chunk_end]}")
+        result_lines.append("")
+    
+    return "\n".join(result_lines)
+
+
+def analyze_paf(paf_file: Path, gff_file: Path, reference_fasta: Path, path_fasta: Path):
     """Analyze PAF file to understand alignment patterns."""
     
     # Track alignments per feature per target
@@ -35,6 +122,12 @@ def analyze_paf(paf_file: Path):
             align_len = int(parts[10])
             mapq = int(parts[11])
             
+            cigar = None
+            for tag in parts[12:]:
+                if tag.startswith("cg:Z:"):
+                    cigar = tag[5:]
+                    break
+
             features_seen.add(query_name)
             targets_seen.add(target_name)
             
@@ -43,11 +136,13 @@ def analyze_paf(paf_file: Path):
             
             alignments[target_name][query_name].append({
                 'line': line_num,
+                'target_name': target_name,
                 'target_start': target_start,
                 'target_end': target_end,
                 'identity': identity,
                 'coverage': coverage,
-                'mapq': mapq
+                'mapq': mapq,
+                'cigar': cigar
             })
     
     print(f"Total features: {len(features_seen)}")
@@ -78,6 +173,14 @@ def analyze_paf(paf_file: Path):
                 print(f"    - {feat}: {count} alignments")
                 if is_reference:
                     print(f"      WARNING: Reference should not have duplications!")
+                
+                # Visualize the different alignments for duplicated features
+                if can_visualize and feat in gff_features:
+                    feature_data = gff_features[feat]
+                    for i, aln in enumerate(alignments[target][feat]):
+                        print(f"      Alignment #{i+1} (MAPQ: {aln['mapq']}, Target: {aln['target_start']}-{aln['target_end']}):")
+                        viz = get_alignment_visualization(feature_data, aln, ref_genome, path_seqs, True)
+                        print(viz)
         
         # Check for critical missing features
         critical_patterns = ['start_codon', 'stop_codon', 'UTR', 'exon']
@@ -174,6 +277,9 @@ def main():
     parser = argparse.ArgumentParser(description="Debug alignment issues")
     parser.add_argument("--paf", type=Path, help="PAF file to analyze")
     parser.add_argument("--json", type=Path, help="JSON file from hierarchical aligner")
+    parser.add_argument("--gff", type=Path, help="GFF3 file (for visualization)")
+    parser.add_argument("--reference-fasta", type=Path, help="Reference FASTA (for visualization)")
+    parser.add_argument("--path-fasta", type=Path, help="Path FASTA (for visualization)")
     args = parser.parse_args()
     
     if not args.paf and not args.json:
@@ -181,7 +287,7 @@ def main():
         sys.exit(1)
     
     if args.paf and args.paf.exists():
-        analyze_paf(args.paf)
+        analyze_paf(args.paf, args.gff, args.reference_fasta, args.path_fasta)
     
     if args.json and args.json.exists():
         analyze_json(args.json)

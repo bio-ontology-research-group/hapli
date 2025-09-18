@@ -271,12 +271,10 @@ class HierarchicalAligner:
 
     def _try_exact_match(self, feature: gffutils.Feature, feature_seq: str, target_fasta: Path, feature_id: str) -> Optional[List[Dict[str, Any]]]:
         """Try to find exact matches for a feature sequence in the target FASTA."""
-        # For very small features, try direct string matching
-        if len(feature_seq) <= 10:
-            logging.debug(f"Trying exact match for small feature {feature_id} ({len(feature_seq)}bp)")
-            
-            # Load target sequences and search for exact matches
-            target_seqs = pysam.FastaFile(str(target_fasta))
+        logging.debug(f"Trying exact match for feature {feature_id} ({len(feature_seq)}bp)")
+        
+        # Load target sequences and search for exact matches
+        target_seqs = pysam.FastaFile(str(target_fasta))
             results = []
             
             for ref_name in target_seqs.references:
@@ -287,6 +285,7 @@ class HierarchicalAligner:
                     # For reference, check the exact expected position first
                     try:
                         # Get the sequence at the expected position
+                        target_len = target_seqs.get_reference_length(ref_name)
                         expected_seq = target_seqs.fetch(ref_name, feature.start - 1, feature.end)
                         if feature.strand == '-':
                             expected_seq = self.seq._reverse_complement(expected_seq)
@@ -296,6 +295,7 @@ class HierarchicalAligner:
                                 "query_name": feature_id,
                                 "query_len": len(feature_seq),
                                 "target_name": ref_name,
+                                "target_len": target_len,
                                 "target_start": feature.start - 1,  # Convert to 0-based
                                 "target_end": feature.end,
                                 "matches": len(feature_seq),
@@ -313,12 +313,14 @@ class HierarchicalAligner:
                 else:
                     # For non-reference paths, search the entire sequence
                     ref_seq = target_seqs.fetch(ref_name)
+                    target_len = len(ref_seq)
                     pos = ref_seq.upper().find(feature_seq.upper())
                     if pos != -1:
                         results.append({
                             "query_name": feature_id,
                             "query_len": len(feature_seq),
                             "target_name": ref_name,
+                            "target_len": target_len,
                             "target_start": pos,
                             "target_end": pos + len(feature_seq),
                             "matches": len(feature_seq),
@@ -331,7 +333,6 @@ class HierarchicalAligner:
             
             target_seqs.close()
             return results if results else None
-        return None
 
     def _choose_minimap2_preset(self, feature_length: int) -> Tuple[str, List[str]]:
         """Choose appropriate minimap2 preset based on feature length."""
@@ -356,32 +357,23 @@ class HierarchicalAligner:
         all_alignments = defaultdict(list)
         all_paf_lines = []
         
-        # First, try exact matching for very small features
-        exact_match_features = set()
+        # 1. Handle features with exact matching
+        if "exact" in features_by_size and features_by_size["exact"]:
+            logging.info(f"Running exact match for {len(features_by_size['exact'])} features (<=50bp)...")
+            for feature, seq in tqdm(features_by_size["exact"], desc="Exact matching", unit=" features"):
+                exact_matches = self._try_exact_match(feature, seq, target_fasta, feature.id)
+                if exact_matches:
+                    for match in exact_matches:
+                        all_alignments[match["target_name"]].append(match)
+                        # Create PAF line for exact match
+                        paf_line = f"{match['query_name']}\t{match['query_len']}\t0\t{match['query_len']}\t+\t"
+                        paf_line += f"{match['target_name']}\t{match['target_len']}\t{match['target_start']}\t{match['target_end']}\t"
+                        paf_line += f"{match['matches']}\t{match['align_len']}\t{match['mapq']}\tcg:Z:{match['cigar']}"
+                        all_paf_lines.append(paf_line)
+
+        # 2. Run minimap2 on the other categories
         for size_category, features in features_by_size.items():
-            if size_category == "tiny":
-                for feature, seq in features:
-                    exact_matches = self._try_exact_match(feature, seq, target_fasta, feature.id)
-                    if exact_matches:
-                        for match in exact_matches:
-                            all_alignments[match["target_name"]].append(match)
-                            # Create PAF line for exact match
-                            paf_line = f"{match['query_name']}\t{match['query_len']}\t0\t{match['query_len']}\t+\t"
-                            paf_line += f"{match['target_name']}\t0\t{match['target_start']}\t{match['target_end']}\t"
-                            paf_line += f"{match['matches']}\t{match['align_len']}\t{match['mapq']}\tcg:Z:{match['cigar']}"
-                            all_paf_lines.append(paf_line)
-                        exact_match_features.add(feature.id)
-        
-        # We now run minimap2 on all features and intelligently merge the results later.
-        # This prevents an exact match on one haplotype from blocking alignment on others.
-        #
-        # # Remove exact matched features from further processing
-        # for size_category in features_by_size:
-        #     features_by_size[size_category] = [(f, s) for f, s in features_by_size[size_category] 
-        #                                       if f.id not in exact_match_features]
-        
-        for size_category, features in features_by_size.items():
-            if not features:
+            if size_category == "exact" or not features:
                 continue
                 
             # Create temp file for this batch
@@ -478,8 +470,8 @@ class HierarchicalAligner:
         
         # Categorize features by size for appropriate alignment strategies
         features_by_size = {
-            "tiny": [],      # < 20bp (start/stop codons)
-            "small": [],     # 20-200bp (small exons, UTRs)
+            "exact": [],     # <= 50bp
+            "small": [],     # 51-200bp
             "medium": [],    # 200-1000bp
             "large": []      # > 1000bp
         }
@@ -489,8 +481,8 @@ class HierarchicalAligner:
             seq = self.seq.get_sequence(feature)
             if seq and len(seq) > 0:
                 length = len(seq)
-                if length < 20:
-                    features_by_size["tiny"].append((feature, seq))
+                if length <= 50:
+                    features_by_size["exact"].append((feature, seq))
                 elif length < 200:
                     features_by_size["small"].append((feature, seq))
                 elif length < 1000:
@@ -509,7 +501,7 @@ class HierarchicalAligner:
             logging.error("No feature sequences could be extracted.")
             return {}
         
-        logging.info(f"Feature size distribution: tiny={len(features_by_size['tiny'])}, "
+        logging.info(f"Feature size distribution: exact={len(features_by_size['exact'])}, "
                     f"small={len(features_by_size['small'])}, medium={len(features_by_size['medium'])}, "
                     f"large={len(features_by_size['large'])}")
         
