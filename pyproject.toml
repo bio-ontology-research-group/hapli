@@ -8,8 +8,11 @@ dependencies = [
     "biopython>=1.86",
     "gffutils>=0.13",
     "pysam>=0.23.3",
+    "rich>=14.2.0",
     "snakemake>=7.32.4",
+    "textual>=6.9.0",
     "tqdm>=4.67.1",
+    "typer>=0.20.0",
 ]
 
 [dependency-groups]

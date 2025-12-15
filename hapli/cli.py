@@ -1,12 +1,21 @@
-import argparse
+import typer
 import logging
-import sys
-import json
 from pathlib import Path
+from typing import Optional
+from typing_extensions import Annotated
+import sys
 
 from hapli.core.io import GFFProcessor, SequenceExtractor
 from hapli.alignment.hierarchical import HierarchicalAligner
 from hapli.variation.haplotype import HaplotypeGenerator
+from hapli.tui import HapliExplorer
+
+app = typer.Typer(
+    name="hapli",
+    help="Genotype-centric pangenome variant analysis toolkit.",
+    add_completion=False,
+    no_args_is_help=True
+)
 
 def setup_logging(verbose: bool):
     logging.basicConfig(
@@ -15,75 +24,93 @@ def setup_logging(verbose: bool):
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-def main():
-    parser = argparse.ArgumentParser(description="Hapli: Genotype-centric analysis tool.")
-    subparsers = parser.add_subparsers(dest="command", help="Command to run")
-
-    # Command: generate-haplotypes
-    gen_parser = subparsers.add_parser("generate-haplotypes", help="Generate haplotype sequences from VCF")
-    gen_parser.add_argument("--vcf", required=True, type=Path, help="Phased VCF file")
-    gen_parser.add_argument("--reference", required=True, type=Path, help="Reference FASTA")
-    gen_parser.add_argument("--region", required=True, help="Region (chr:start-end)")
-    gen_parser.add_argument("--sample", required=True, help="Sample name")
-    gen_parser.add_argument("--output", required=True, type=Path, help="Output FASTA file")
-
-    # Command: align-gene
-    align_parser = subparsers.add_parser("align-gene", help="Align a gene hierarchically to haplotypes")
-    align_parser.add_argument("--haplotypes", required=True, type=Path, help="Haplotype FASTA")
-    align_parser.add_argument("--gff", required=True, type=Path, help="GFF3 file")
-    align_parser.add_argument("--reference", required=True, type=Path, help="Reference FASTA (for feature extraction)")
-    align_parser.add_argument("--gene", required=True, help="Gene Name/ID")
-    align_parser.add_argument("--output", required=True, type=Path, help="Output JSON")
-    align_parser.add_argument("--threads", type=int, default=4)
-
-    args = parser.parse_args()
-    setup_logging(True)
-
-    if args.command == "generate-haplotypes":
-        chrom, pos_str = args.region.split(':')
+@app.command()
+def generate(
+    vcf: Annotated[Path, typer.Option(..., help="Phased VCF file")],
+    reference: Annotated[Path, typer.Option(..., help="Reference FASTA")],
+    region: Annotated[str, typer.Option(..., help="Region (chr:start-end)")],
+    sample: Annotated[str, typer.Option(..., help="Sample name")],
+    output: Annotated[Path, typer.Option(..., help="Output FASTA file")],
+    verbose: bool = False
+):
+    """Generate haplotype sequences from VCF."""
+    setup_logging(verbose)
+    
+    try:
+        chrom, pos_str = region.split(':')
         start, end = map(int, pos_str.split('-'))
-        
-        generator = HaplotypeGenerator(args.reference, args.vcf)
-        # Clear output file first
-        if args.output.exists():
-            args.output.unlink()
-            
-        generator.generate_haplotypes_for_region(chrom, start, end, args.sample, args.output)
-        logging.info(f"Haplotypes generated at {args.output}")
+    except ValueError:
+        typer.echo("Error: Region must be in format chr:start-end", err=True)
+        raise typer.Exit(code=1)
 
-    elif args.command == "align-gene":
-        gff_proc = GFFProcessor(args.gff, target_gene=args.gene)
-        seq_ext = SequenceExtractor(args.reference)
-        aligner = HierarchicalAligner(gff_proc, seq_ext, threads=args.threads)
+    generator = HaplotypeGenerator(reference, vcf)
+    if output.exists():
+        output.unlink()
         
-        gene_feature = None
-        for feat in gff_proc.features_by_id.values():
-             if feat.featuretype == 'gene': # This might be weak if multiple genes loaded
-                 # But GFFProcessor with target_gene only loads one gene hierarchy essentially
-                 if feat.id == args.gene or feat.attributes.get('Name', [''])[0] == args.gene:
-                     gene_feature = feat
-                     break
-        
-        # Fallback if ID didn't match exactly but we loaded it
-        if not gene_feature:
-             # Find ANY gene
-             for feat in gff_proc.features_by_id.values():
-                 if feat.featuretype == 'gene':
-                     gene_feature = feat
-                     break
-        
-        if not gene_feature:
-            logging.error(f"Gene {args.gene} not found in loaded features.")
-            sys.exit(1)
-            
-        results = aligner.align_gene(gene_feature, args.haplotypes)
-        
-        with open(args.output, 'w') as f:
-            json.dump({k: v.to_dict() for k, v in results.items()}, f, indent=2)
-        logging.info(f"Alignment results saved to {args.output}")
+    generator.generate_haplotypes_for_region(chrom, start, end, sample, output)
+    typer.echo(f"Haplotypes generated at {output}")
 
-    else:
-        parser.print_help()
+@app.command()
+def align(
+    haplotypes: Annotated[Path, typer.Option(..., help="Haplotype FASTA")],
+    gff: Annotated[Path, typer.Option(..., help="GFF3 file")],
+    reference: Annotated[Path, typer.Option(..., help="Reference FASTA")],
+    gene: Annotated[str, typer.Option(..., help="Gene Name/ID")],
+    output: Annotated[Path, typer.Option(..., help="Output JSON")],
+    threads: int = 4,
+    verbose: bool = False
+):
+    """Align a gene hierarchically to haplotypes."""
+    setup_logging(verbose)
+    
+    import json
+    
+    gff_proc = GFFProcessor(gff, target_gene=gene)
+    seq_ext = SequenceExtractor(reference)
+    aligner = HierarchicalAligner(gff_proc, seq_ext, threads=threads)
+    
+    # Find the gene object
+    gene_feature = None
+    for feat in gff_proc.features_by_id.values():
+         if feat.featuretype == 'gene':
+             # Check ID, Name, gene_name
+             attrs = feat.attributes
+             names = [feat.id] + attrs.get('Name', []) + attrs.get('gene_name', [])
+             if gene in names:
+                 gene_feature = feat
+                 break
+    
+    # Fallback: if only one gene loaded, use it
+    if not gene_feature:
+        genes = [f for f in gff_proc.features_by_id.values() if f.featuretype == 'gene']
+        if len(genes) == 1:
+            gene_feature = genes[0]
+            logging.info(f"Exact match not found, using loaded gene: {gene_feature.id}")
+
+    if not gene_feature:
+        typer.echo(f"Error: Gene {gene} not found in loaded features.", err=True)
+        raise typer.Exit(code=1)
+        
+    results = aligner.align_gene(gene_feature, haplotypes)
+    
+    with open(output, 'w') as f:
+        json.dump({k: v.to_dict() for k, v in results.items()}, f, indent=2)
+    typer.echo(f"Alignment results saved to {output}")
+
+@app.command()
+def explore(
+    result_json: Annotated[Path, typer.Argument(help="JSON alignment result file to explore")]
+):
+    """Explore alignment results interactively."""
+    if not result_json.exists():
+        typer.echo(f"Error: File {result_json} does not exist.", err=True)
+        raise typer.Exit(code=1)
+        
+    tui = HapliExplorer(result_json)
+    tui.run()
+
+def main():
+    app()
 
 if __name__ == "__main__":
     main()
