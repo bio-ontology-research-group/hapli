@@ -1,22 +1,16 @@
 """
-Hapli: Pangenome variant impact analysis toolkit.
-
-This package provides tools for analyzing the impact of structural variations
-on genomic features using pangenome graphs.
+Hapli: Genotype-centric variant analysis.
 """
 
-__version__ = "0.1.0"
-__author__ = "Hapli Development Team"
+__version__ = "0.2.0"
 
-# Import main classes for convenience
-from .gff_alignment import GFFAligner
-from .gam_parser import GAMParser
-from .impact_detector import ImpactDetector
-from .diploid_analyzer import DiploidAnalyzer
+from .core.io import GFFProcessor, SequenceExtractor
+from .alignment.hierarchical import HierarchicalAligner
+from .variation.haplotype import HaplotypeGenerator
 
 __all__ = [
-    "GFFAligner",
-    "GAMParser", 
-    "ImpactDetector",
-    "DiploidAnalyzer"
+    "GFFProcessor",
+    "SequenceExtractor",
+    "HierarchicalAligner",
+    "HaplotypeGenerator"
 ]

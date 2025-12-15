@@ -1,0 +1,12 @@
+reference: "data/hg38/hg38.fa"
+gff: "data/gff/genome_features.gff3"
+vcf: "data/large_test/vcf_output/all_samples.vcf.gz"
+
+samples:
+  - "sample_000"
+  - "sample_001"
+
+genes:
+  # Format: GeneID: "chr:start-end"
+  # Note: Regions should cover the gene + margin
+  "HRNR": "chr1:152207076-152229193"
