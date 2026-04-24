@@ -48,39 +48,84 @@ uv run main.py assess --gene <GENE> --sample <HGxxx> \
 and the aggregator `hapli aggregate` collapses the per-sample JSONs into
 per-gene allele-frequency + compound-het-LoF TSVs.
 
-## Protocol (pseudocode)
+## Scripts
 
-```
-# One-time setup
-aws s3 sync s3://human-pangenomics/working/HPRC_R2/assemblies/ assemblies/
-download_grch38 + gencode_v45
+| file | purpose |
+|---|---|
+| [`sample_list.tsv`](sample_list.tsv) | Curated 20-sample HPRC R2 manifest (hap1/hap2 URLs + population labels). Replace with the full-cohort manifest via `fetch.py --refresh-manifest` for the 200+ sample run |
+| [`fetch.py`](fetch.py) | Downloads + unzips + faidx's hap1/hap2 FASTAs for selected samples; emits a YAML `haps:` block for Snakemake config |
+| [`config.template.yaml`](config.template.yaml) | Mode B Snakemake config template — copy, fill `haps:` from `fetch.py --print-config`, run |
+| [`run.sh`](run.sh) | Orchestrator: `smoke` or `full` |
+| [`analyze.py`](analyze.py) | Post-aggregation: per-gene presence distribution + per-(gene, super-population) LoF allele frequency |
+| [`smoke_test.py`](smoke_test.py) | End-to-end validation on a 3-sample synthetic Mode B fixture (HG_A / HG_B / HG_C across AFR / EAS / EUR) |
 
-# Per sample × haplotype — parallelisable via Snakemake
-for sample in hprc_samples:
-    for hap_idx in 1, 2:
-        liftoff_out=lifted/{sample}.hap{hap_idx}.gff3
-        liftoff -g anno/gencode.v45.gff3 -o $liftoff_out \
-            --copies --polish assemblies/{sample}.hap{hap_idx}.fa ref/grch38.fa
+## Running
 
-        # Per-gene protein extraction + diff vs. reference protein
-        python3 -m hapli.core.protein ... 
+### Smoke test first
 
-# Aggregate
-python3 aggregate_per_gene.py \
-    lifted/ protein_diffs/ \
-    --out hprc_gene_lof_counts.tsv
-
-# Compare to gnomAD
-python3 compare_gnomad.py hprc_gene_lof_counts.tsv gnomad_v4_constraint.tsv \
-    --out hprc_vs_gnomad.tsv
+```bash
+./benchmarks/hprc/run.sh smoke
 ```
 
-## Scripts to write (none yet exist)
+Builds 3 synthetic "assembled" haplotype pairs (HG_A carries a whole-gene
+deletion of a toy GACMG1 on hap1; HG_B reference-identical; HG_C a single
+SNV), runs Mode B Snakemake → `hapli aggregate` → analyze.py, and asserts
+that the Axis-1 SV-presence signal reaches Table A. Runs in <30 s; run
+before committing.
 
-- `fetch_hprc.sh`         — AWS S3 sync with resume
-- `run_sample.smk`        — Snakemake rule for one sample
-- `aggregate_per_gene.py` — population-level LoF count per gene
-- `compare_gnomad.py`     — correlation HPRC LoF freq vs. gnomAD LoF freq
+### Full run (real HPRC data)
+
+```bash
+# 1. Refresh the manifest from the canonical HPRC index (optional):
+uv run python3 benchmarks/hprc/fetch.py --refresh-manifest \
+    --out-manifest benchmarks/hprc/sample_list.tsv
+
+# 2. Fetch assemblies. Start with 20 samples (~24 GB) for a proof-of-concept;
+#    scale to the full manifest for the paper:
+uv run python3 benchmarks/hprc/fetch.py \
+    --manifest benchmarks/hprc/sample_list.tsv \
+    --out-dir data/hprc/assemblies/ \
+    --print-config > benchmarks/hprc/haps_block.yaml
+
+# 3. Download GRCh38 reference + GENCODE v45 GFF3 (see 1000g_acmg/README).
+
+# 4. Copy config template, paste haps block, fill paths:
+cp benchmarks/hprc/config.template.yaml benchmarks/hprc/config.yaml
+# edit reference, gff, (optional) gnomad_constraint; replace `haps:` block
+# with the output from step 2.
+
+# 5. Run (Liftoff is the dominant cost; target 16+ cores):
+CORES=32 ./benchmarks/hprc/run.sh full
+```
+
+Expected runtime: ~30 min per haplotype per gene-panel run (Liftoff
+dominates). For 20 samples × 2 haplotypes × 79 genes ≈ 24 h on 32 cores
+if genes are fanned out per invocation. Snakemake parallelises
+`(sample, gene)` wildcards naturally.
+
+## Expected outputs
+
+Under `results/hprc/`:
+
+```
+results/hprc/
+├── <SAMPLE>_<GENE>_analysis.json
+├── <SAMPLE>_<GENE>_hap{1,2}.pep.fa
+├── <SAMPLE>_<GENE>_hap{1,2}.lifted.gff3
+├── ...
+└── aggregate/
+    ├── per_sample.tsv
+    └── per_gene.tsv
+```
+
+`analyze.py` reads those and writes:
+
+```
+benchmarks/hprc/results/
+├── per_gene_presence.tsv               (per-gene × status counts — paper Table 3)
+├── per_gene_per_superpop_lof_af.tsv    (per-(gene, super-pop) LoF AF)
+└── tally.json                          (paper abstract numbers)
+```
 
 ## Success criteria
 

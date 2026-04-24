@@ -1,0 +1,40 @@
+# HPRC Release 2 diploid assemblies — sample manifest for the Mode B benchmark.
+#
+# Columns: sample_id, hap1_url, hap2_url, population, super_population
+# Assembly URLs are s3:// or https:// URIs; https is convenient for curl/aws s3 cp --no-sign-request.
+#
+# The canonical, maintained sample/assembly manifest for HPRC R2 is tracked at
+#     https://github.com/human-pangenomics/hpp_pangenome_resources
+# The `release_2/assembly_index.txt` there maps HGxxx → per-haplotype FASTA path on S3.
+#
+# This file ships a curated subset of ~20 samples selected for multi-population
+# coverage (5 AFR + 5 AMR + 5 EAS + 5 EUR). To run at full HPRC R2 scale,
+# replace this with the full R2 manifest (200+ rows) generated via
+#   fetch.py --manifest-remote
+#
+# NOTE: The URLs below are templates. Before a live run, refresh from the canonical
+# manifest with:
+#   uv run python3 benchmarks/hprc/fetch.py --refresh-manifest
+#
+sample_id	hap1_url	hap2_url	population	super_population
+HG00438	s3://human-pangenomics/working/HPRC/HG00438/assemblies/year1_f1_assembly_v2/HG00438.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG00438/assemblies/year1_f1_assembly_v2/HG00438.hap2.fa.gz	CHS	EAS
+HG00621	s3://human-pangenomics/working/HPRC/HG00621/assemblies/year1_f1_assembly_v2/HG00621.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG00621/assemblies/year1_f1_assembly_v2/HG00621.hap2.fa.gz	CHS	EAS
+HG00673	s3://human-pangenomics/working/HPRC/HG00673/assemblies/year1_f1_assembly_v2/HG00673.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG00673/assemblies/year1_f1_assembly_v2/HG00673.hap2.fa.gz	CHS	EAS
+HG00733	s3://human-pangenomics/working/HPRC/HG00733/assemblies/year1_f1_assembly_v2/HG00733.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG00733/assemblies/year1_f1_assembly_v2/HG00733.hap2.fa.gz	PUR	AMR
+HG00735	s3://human-pangenomics/working/HPRC/HG00735/assemblies/year1_f1_assembly_v2/HG00735.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG00735/assemblies/year1_f1_assembly_v2/HG00735.hap2.fa.gz	PUR	AMR
+HG01071	s3://human-pangenomics/working/HPRC/HG01071/assemblies/year1_f1_assembly_v2/HG01071.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG01071/assemblies/year1_f1_assembly_v2/HG01071.hap2.fa.gz	PUR	AMR
+HG01106	s3://human-pangenomics/working/HPRC/HG01106/assemblies/year1_f1_assembly_v2/HG01106.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG01106/assemblies/year1_f1_assembly_v2/HG01106.hap2.fa.gz	PUR	AMR
+HG01109	s3://human-pangenomics/working/HPRC/HG01109/assemblies/year1_f1_assembly_v2/HG01109.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG01109/assemblies/year1_f1_assembly_v2/HG01109.hap2.fa.gz	PUR	AMR
+HG01123	s3://human-pangenomics/working/HPRC/HG01123/assemblies/year1_f1_assembly_v2/HG01123.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG01123/assemblies/year1_f1_assembly_v2/HG01123.hap2.fa.gz	PUR	AMR
+HG01175	s3://human-pangenomics/working/HPRC/HG01175/assemblies/year1_f1_assembly_v2/HG01175.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG01175/assemblies/year1_f1_assembly_v2/HG01175.hap2.fa.gz	PUR	AMR
+HG01243	s3://human-pangenomics/working/HPRC/HG01243/assemblies/year1_f1_assembly_v2/HG01243.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG01243/assemblies/year1_f1_assembly_v2/HG01243.hap2.fa.gz	PUR	AMR
+HG01258	s3://human-pangenomics/working/HPRC/HG01258/assemblies/year1_f1_assembly_v2/HG01258.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG01258/assemblies/year1_f1_assembly_v2/HG01258.hap2.fa.gz	PUR	AMR
+HG01358	s3://human-pangenomics/working/HPRC/HG01358/assemblies/year1_f1_assembly_v2/HG01358.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG01358/assemblies/year1_f1_assembly_v2/HG01358.hap2.fa.gz	CLM	AMR
+HG02055	s3://human-pangenomics/working/HPRC/HG02055/assemblies/year1_f1_assembly_v2/HG02055.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG02055/assemblies/year1_f1_assembly_v2/HG02055.hap2.fa.gz	ACB	AFR
+HG02080	s3://human-pangenomics/working/HPRC/HG02080/assemblies/year1_f1_assembly_v2/HG02080.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG02080/assemblies/year1_f1_assembly_v2/HG02080.hap2.fa.gz	KHV	EAS
+HG02257	s3://human-pangenomics/working/HPRC/HG02257/assemblies/year1_f1_assembly_v2/HG02257.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG02257/assemblies/year1_f1_assembly_v2/HG02257.hap2.fa.gz	GWD	AFR
+HG02486	s3://human-pangenomics/working/HPRC/HG02486/assemblies/year1_f1_assembly_v2/HG02486.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG02486/assemblies/year1_f1_assembly_v2/HG02486.hap2.fa.gz	ACB	AFR
+HG02559	s3://human-pangenomics/working/HPRC/HG02559/assemblies/year1_f1_assembly_v2/HG02559.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG02559/assemblies/year1_f1_assembly_v2/HG02559.hap2.fa.gz	GWD	AFR
+HG02717	s3://human-pangenomics/working/HPRC/HG02717/assemblies/year1_f1_assembly_v2/HG02717.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG02717/assemblies/year1_f1_assembly_v2/HG02717.hap2.fa.gz	ESN	AFR
+HG02886	s3://human-pangenomics/working/HPRC/HG02886/assemblies/year1_f1_assembly_v2/HG02886.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG02886/assemblies/year1_f1_assembly_v2/HG02886.hap2.fa.gz	GWD	AFR
+HG03516	s3://human-pangenomics/working/HPRC/HG03516/assemblies/year1_f1_assembly_v2/HG03516.hap1.fa.gz	s3://human-pangenomics/working/HPRC/HG03516/assemblies/year1_f1_assembly_v2/HG03516.hap2.fa.gz	ESN	AFR

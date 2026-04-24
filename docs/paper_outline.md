@@ -461,8 +461,23 @@ are where the paper actually lives.
 
 ### 4.3 Future directions
 
-- **HPRC scale demo** [pending]: Snakefile is ready (`mode: B` config); needs
-  a 200-sample assembly fetch + ~24h on the cluster.
+- **Population-scale Axis-2 validation on 1000 Genomes Phase 3** [runbook ready,
+  cluster-pending]: `benchmarks/1000g_acmg/` runs the full Mode A pipeline on
+  2 504 NYGC-phased individuals × 79 ACMG SF v3.2 genes, with a working smoke
+  test (`tests/test_benchmark_smokes.py::test_1000g_acmg_smoke`) that validates
+  the end-to-end path on a synthetic fixture. Expected output: N cohort-level
+  compound-het-LoF calls (Axis 2), M SV-presence records (Axis 1). Public,
+  no dbGaP required.
+- **HPRC Release 2 scale demo (Mode B)** [runbook ready, cluster-pending]:
+  `benchmarks/hprc/` runs the Mode B pipeline on 20+ HPRC R2 phased diploid
+  assemblies (scalable to the full 200+ cohort) with a working smoke test
+  (`tests/test_benchmark_smokes.py::test_hprc_smoke`). Emits per-gene presence
+  distribution and per-(gene, super-population) LoF allele frequency. Data
+  public via AWS Open Data.
+- **UDN clinical validation (dbGaP phs001489)** [dbGaP application pending]:
+  ~3 000 probands with diagnosed Mendelian disorders. Positive-control
+  benchmark: does hapli's `compound_het_lof=True` recover the known recessive
+  diagnosis when given only the proband VCF?
 - **gnomAD compound-het flip reproduction** [pending]: full Danecek 2017
   protocol on 1000G Phase 3 (~80 GB download) — Danecek reported that
   phasing-aware consequence calling flipped **501 / 5019** compound-variant
