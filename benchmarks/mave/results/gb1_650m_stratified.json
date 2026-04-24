@@ -1,0 +1,50 @@
+{
+  "scored_file": "/home/leechuck/Public/software/hapli/data/mave/gb1.esm_650m_full.csv",
+  "total_rows": 464408,
+  "distance_bins": [
+    "1-1",
+    "2-5",
+    "6-10",
+    "11-30",
+    "31-200",
+    ">200"
+  ],
+  "per_bin": {
+    "2-5": {
+      "n": 66025,
+      "mean_abs_residual": 11.311513810935251,
+      "std_residual": 3.245023707939192,
+      "spearman_residual_vs_mave": 0.014506710298179798,
+      "spearman_s_joint_vs_mave": 0.2655664069928513,
+      "spearman_s_additive_vs_mave": 0.3071730118708533
+    },
+    "6-10": {
+      "n": 77964,
+      "mean_abs_residual": 11.006946648247908,
+      "std_residual": 2.9519330875782392,
+      "spearman_residual_vs_mave": -0.02452442316704064,
+      "spearman_s_joint_vs_mave": 0.24016693400501762,
+      "spearman_s_additive_vs_mave": 0.31460081445018734
+    },
+    "11-30": {
+      "n": 231284,
+      "mean_abs_residual": 10.911774584428668,
+      "std_residual": 3.0465507082346086,
+      "spearman_residual_vs_mave": 0.006495547961338749,
+      "spearman_s_joint_vs_mave": 0.27169691549148317,
+      "spearman_s_additive_vs_mave": 0.31904914640161125
+    },
+    "31-200": {
+      "n": 89135,
+      "mean_abs_residual": 10.843524805306558,
+      "std_residual": 3.175623746613549,
+      "spearman_residual_vs_mave": 0.09639309718521451,
+      "spearman_s_joint_vs_mave": 0.28173039318232174,
+      "spearman_s_additive_vs_mave": 0.2294175872485166
+    }
+  },
+  "distance_range": {
+    "min": 2,
+    "max": 53
+  }
+}

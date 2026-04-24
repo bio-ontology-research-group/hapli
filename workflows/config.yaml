@@ -1,12 +1,36 @@
-reference: "data/hg38/hg38.fa"
-gff: "data/gff/genome_features.gff3"
-vcf: "data/large_test/vcf_output/all_samples.vcf.gz"
+# Hapli workflow configuration. Pick Mode A (VCF input) OR Mode B (assembly input).
+# This default points at the small data/test fixture; copy & edit for real runs.
 
+mode: A
+output_dir: results/workflow_output
+
+reference: data/test/reference.fa
+gff:       data/test/annotation.gff3
+
+# ─── Mode A — phased VCF + sample list ───
+vcf:       data/test/variants.vcf.gz
 samples:
-  - "sample_000"
-  - "sample_001"
+  - sample_001
 
+# ─── Mode B — pre-assembled haplotype FASTAs (one entry per sample) ───
+# (uncomment + set `mode: B` above)
+# haps:
+#   HG002:
+#     hap1: assemblies/HG002.hap1.fa
+#     hap2: assemblies/HG002.hap2.fa
+#   HG003:
+#     hap1: assemblies/HG003.hap1.fa
+#     hap2: assemblies/HG003.hap2.fa
+
+# ─── Genes ───
+# Explicit list (overrides auto-discovery), or omit/empty to scan the GFF.
 genes:
-  # Format: GeneID: "chr:start-end"
-  # Note: Regions should cover the gene + margin
-  "HRNR": "chr1:152207076-152229193"
+  - GENE00001
+
+# ─── Optional ───
+with_esm: false
+esm_model: esm2_t6_8M_UR50D
+# gnomad_constraint: data/gnomad_v4_constraint.tsv
+# clingen_dosage:    data/clingen_dosage.tsv
+threads_per_gene: 1
+mem_mb_per_gene: 4000

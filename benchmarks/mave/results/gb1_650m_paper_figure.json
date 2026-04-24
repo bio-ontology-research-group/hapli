@@ -1,0 +1,23 @@
+{
+  "scored_file": "/home/leechuck/Public/software/hapli/data/mave/gb1.esm_650m_full.csv",
+  "scores_file": "/home/leechuck/Public/software/hapli/data/mave/urn_mavedb_00000105-a-1.scores.csv",
+  "n_rows": 464408,
+  "lof_threshold": 0.1,
+  "auroc": {
+    "S_additive": 0.6590332489873083,
+    "S_joint": 0.6483168426258842,
+    "residual": 0.5236764762740738,
+    "\u0394AUROC_joint_minus_additive": -0.010716406361424125
+  },
+  "spearman_vs_E_exp": {
+    "S_additive": -0.02594901063433892,
+    "S_joint": -0.007529292957265152,
+    "residual": 0.010625274134820025,
+    "ratio_residual_over_additive": 0.4094674083935731
+  },
+  "spearman_S_joint_vs_mave": -0.2695913075635847,
+  "residual_distribution": {
+    "mean_abs": 10.971483575556407,
+    "n_with_abs_gt_3": 459530
+  }
+}

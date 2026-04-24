@@ -1,0 +1,23 @@
+{
+  "scored_file": "data/mave/gb1.esm_2000.csv",
+  "scores_file": "data/mave/urn_mavedb_00000105-a-1.scores.csv",
+  "n_rows": 2000,
+  "lof_threshold": 0.1,
+  "auroc": {
+    "S_additive": 0.6329592068880157,
+    "S_joint": 0.7573108997776088,
+    "residual": 0.7552282993131828,
+    "\u0394AUROC_joint_minus_additive": 0.12435169288959314
+  },
+  "spearman_vs_E_exp": {
+    "S_additive": -0.20220684495336635,
+    "S_joint": -0.4215136113784029,
+    "residual": -0.4401098270274567,
+    "ratio_residual_over_additive": 2.1765327831951304
+  },
+  "spearman_S_joint_vs_mave": -0.4476443259367692,
+  "residual_distribution": {
+    "mean_abs": 11.803602759000002,
+    "n_with_abs_gt_3": 2000
+  }
+}

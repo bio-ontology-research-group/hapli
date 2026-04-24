@@ -1,0 +1,49 @@
+{
+  "scored_file": "/home/leechuck/Public/software/hapli/data/mave/gb1.esm_650m_full.csv",
+  "category": "missense_multi",
+  "n_rows": 464408,
+  "n_lof": 210120,
+  "n_functional": 254288,
+  "lof_threshold": 0.1,
+  "lof_is": "low",
+  "correlations": [
+    {
+      "predictor": "S_additive",
+      "spearman": -0.3005008551264259,
+      "spearman_p": 0.0,
+      "pearson": -0.22039557309611374,
+      "pearson_p": 0.0
+    },
+    {
+      "predictor": "S_joint",
+      "spearman": -0.2695913075635847,
+      "spearman_p": 0.0,
+      "pearson": -0.16177497596795312,
+      "pearson_p": 0.0
+    },
+    {
+      "predictor": "residual",
+      "spearman": -0.020900307168874775,
+      "spearman_p": 4.846488733511748e-46,
+      "pearson": 0.025838057926316126,
+      "pearson_p": 2.0326154483063574e-69
+    },
+    {
+      "predictor": "hapli_heuristic",
+      "spearman": NaN,
+      "spearman_p": NaN,
+      "pearson": NaN,
+      "pearson_p": NaN
+    }
+  ],
+  "auroc": {
+    "S_additive": 0.6590332489873083,
+    "S_joint": 0.6483168426258842,
+    "residual": 0.5236764762740738,
+    "abs_residual": 0.47632517042931866
+  },
+  "joint_vs_additive_delta": {
+    "spearman_gain": 0.0309095475628412,
+    "mean_abs_residual": 10.971483575556407
+  }
+}

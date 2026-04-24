@@ -1,0 +1,307 @@
+{
+  "n_cases": 12,
+  "tally": {
+    "hapli_compound_het_lof_calls": 1,
+    "hapli_epistasis_flagged_calls": 2,
+    "csq_lof_haplotype_records": 3
+  },
+  "rows": [
+    {
+      "case": "01_synonymous_pair",
+      "gene": "G1",
+      "sample": "S1",
+      "csq": {
+        "1": {
+          "consequences": [
+            "synonymous"
+          ],
+          "lof_class": false,
+          "n_records": 1,
+          "compound_ids": [],
+          "transcripts": [
+            "T1"
+          ]
+        },
+        "2": {
+          "consequences": [
+            "synonymous"
+          ],
+          "lof_class": false,
+          "n_records": 1,
+          "compound_ids": [],
+          "transcripts": [
+            "T1"
+          ]
+        }
+      },
+      "hapli": {
+        "presence_hap1": "intact",
+        "presence_hap2": "intact",
+        "hap1_score": 1.0,
+        "hap2_score": 1.0,
+        "compound_het_lof": false,
+        "epistasis_flagged": false
+      },
+      "hapli_only_signals": []
+    },
+    {
+      "case": "02_single_benign_missense",
+      "gene": "G1",
+      "sample": "S1",
+      "csq": {
+        "1": {
+          "consequences": [
+            "missense"
+          ],
+          "lof_class": false,
+          "n_records": 1,
+          "compound_ids": [],
+          "transcripts": [
+            "T1"
+          ]
+        }
+      },
+      "hapli": {
+        "presence_hap1": "intact",
+        "presence_hap2": "intact",
+        "hap1_score": 0.98989898989899,
+        "hap2_score": 1.0,
+        "compound_het_lof": false,
+        "epistasis_flagged": false
+      },
+      "hapli_only_signals": []
+    },
+    {
+      "case": "03_single_stop_gain",
+      "gene": "G1",
+      "sample": "S1",
+      "csq": {
+        "1": {
+          "consequences": [
+            "stop_gained"
+          ],
+          "lof_class": true,
+          "n_records": 1,
+          "compound_ids": [],
+          "transcripts": [
+            "T1"
+          ]
+        }
+      },
+      "hapli": {
+        "presence_hap1": "uncertain",
+        "presence_hap2": "intact",
+        "hap1_score": 0.19997959391898787,
+        "hap2_score": 1.0,
+        "compound_het_lof": false,
+        "epistasis_flagged": false
+      },
+      "hapli_only_signals": []
+    },
+    {
+      "case": "04_compound_het_lof",
+      "gene": "G1",
+      "sample": "S1",
+      "csq": {
+        "1": {
+          "consequences": [
+            "stop_gained"
+          ],
+          "lof_class": true,
+          "n_records": 1,
+          "compound_ids": [],
+          "transcripts": [
+            "T1"
+          ]
+        },
+        "2": {
+          "consequences": [
+            "frameshift"
+          ],
+          "lof_class": true,
+          "n_records": 1,
+          "compound_ids": [],
+          "transcripts": [
+            "T1"
+          ]
+        }
+      },
+      "hapli": {
+        "presence_hap1": "uncertain",
+        "presence_hap2": "uncertain",
+        "hap1_score": 0.0,
+        "hap2_score": 0.49,
+        "compound_het_lof": true,
+        "epistasis_flagged": false
+      },
+      "hapli_only_signals": [
+        "compound_het_lof_only_in_hapli"
+      ]
+    },
+    {
+      "case": "05_frameshift_rescue",
+      "gene": "G1",
+      "sample": "S1",
+      "csq": {
+        "1": {
+          "consequences": [
+            "inframe_altering",
+            "missense"
+          ],
+          "lof_class": false,
+          "n_records": 4,
+          "compound_ids": [
+            "1012T>TC+1029CT>C"
+          ],
+          "transcripts": [
+            "T1"
+          ]
+        }
+      },
+      "hapli": {
+        "presence_hap1": "intact",
+        "presence_hap2": "intact",
+        "hap1_score": 0.8461538461538461,
+        "hap2_score": 1.0,
+        "compound_het_lof": false,
+        "epistasis_flagged": true
+      },
+      "hapli_only_signals": [
+        "epistasis_only_in_hapli"
+      ]
+    },
+    {
+      "case": "06_compound_missense_pocket",
+      "gene": "G1",
+      "sample": "S1",
+      "csq": {
+        "1": {
+          "consequences": [
+            "missense"
+          ],
+          "lof_class": false,
+          "n_records": 2,
+          "compound_ids": [],
+          "transcripts": [
+            "T1"
+          ]
+        }
+      },
+      "hapli": {
+        "presence_hap1": "intact",
+        "presence_hap2": "intact",
+        "hap1_score": 0.96,
+        "hap2_score": 1.0,
+        "compound_het_lof": false,
+        "epistasis_flagged": true
+      },
+      "hapli_only_signals": [
+        "epistasis_only_in_hapli"
+      ]
+    },
+    {
+      "case": "07_splice_donor_cryptic",
+      "gene": "G1",
+      "sample": "S1",
+      "csq": {},
+      "hapli": {
+        "presence_hap1": "uncertain",
+        "presence_hap2": "uncertain",
+        "hap1_score": 1.0,
+        "hap2_score": 1.0,
+        "compound_het_lof": false,
+        "epistasis_flagged": false
+      },
+      "hapli_only_signals": []
+    },
+    {
+      "case": "08_symbolic_del_whole_gene",
+      "gene": "G1",
+      "sample": "S1",
+      "csq": {},
+      "hapli": {
+        "presence_hap1": "deleted",
+        "presence_hap2": "intact",
+        "hap1_score": 0.0,
+        "hap2_score": 1.0,
+        "compound_het_lof": false,
+        "epistasis_flagged": false
+      },
+      "hapli_only_signals": [
+        "presence_hap1=deleted_only_in_hapli"
+      ]
+    },
+    {
+      "case": "09_upstream_del_shift",
+      "gene": "G1",
+      "sample": "S1",
+      "csq": {},
+      "hapli": {
+        "presence_hap1": "intact",
+        "presence_hap2": "intact",
+        "hap1_score": 1.0,
+        "hap2_score": 1.0,
+        "compound_het_lof": false,
+        "epistasis_flagged": false
+      },
+      "hapli_only_signals": []
+    },
+    {
+      "case": "10_inversion_body",
+      "gene": "G1",
+      "sample": "S1",
+      "csq": {},
+      "hapli": {
+        "presence_hap1": "low_identity",
+        "presence_hap2": "intact",
+        "hap1_score": 0.89,
+        "hap2_score": 1.0,
+        "compound_het_lof": false,
+        "epistasis_flagged": false
+      },
+      "hapli_only_signals": []
+    },
+    {
+      "case": "11_tandem_dup_small_gene",
+      "gene": "G1",
+      "sample": "S1",
+      "csq": {},
+      "hapli": {
+        "presence_hap1": "duplicated",
+        "presence_hap2": "intact",
+        "hap1_score": 1.0,
+        "hap2_score": 1.0,
+        "compound_het_lof": false,
+        "epistasis_flagged": false
+      },
+      "hapli_only_signals": []
+    },
+    {
+      "case": "12_inframe_domain_indel",
+      "gene": "G1",
+      "sample": "S1",
+      "csq": {
+        "1": {
+          "consequences": [
+            "inframe_deletion"
+          ],
+          "lof_class": false,
+          "n_records": 1,
+          "compound_ids": [],
+          "transcripts": [
+            "T1"
+          ]
+        }
+      },
+      "hapli": {
+        "presence_hap1": "intact",
+        "presence_hap2": "intact",
+        "hap1_score": 0.98989898989899,
+        "hap2_score": 1.0,
+        "compound_het_lof": false,
+        "epistasis_flagged": false
+      },
+      "hapli_only_signals": []
+    }
+  ]
+}

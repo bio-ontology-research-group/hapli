@@ -1,0 +1,96 @@
+OK    sota/Haplosaurus_McLaren_2018_NatCommun.pdf (1274852 bytes)
+OK    sota/VEP_McLaren_2016_GenomeBiol.pdf (1291931 bytes)
+curl: (22) The requested URL returned error: 403
+FAIL  sota/BCFtools-csq_Danecek_2017_Bioinformatics.pdf <- https://academic.oup.com/bioinformatics/article-pdf/33/13/2037/25155524/btx100.pdf
+OK    sota/PRESCOTT_Tekpinar_2025_GenomeBiol.pdf (8265716 bytes)
+OK    sota/gnomAD-constraint_Karczewski_2020_Nature.pdf (3338287 bytes)
+curl: (22) The requested URL returned error: 403
+FAIL  sota/AlphaMissense_Cheng_2023_biorxiv.pdf <- https://www.biorxiv.org/content/10.1101/2023.08.29.555570v1.full.pdf
+HTML  sota/CompensatoryFrameshift_PMC8935012.pdf (1817 bytes, likely paywall/redirect; deleted)
+curl: (22) The requested URL returned error: 403
+FAIL  sota/ProteinDynamicsEpistasis_2023_PNAS.pdf <- https://www.pnas.org/doi/pdf/10.1073/pnas.2313099121
+OK    sota/LoFTK_2023_BioDataMining.pdf (1107615 bytes)
+curl: (22) The requested URL returned error: 403
+FAIL  sota/OpenCRAVAT_Pagel_2020_JAMIA.pdf <- https://academic.oup.com/jamia/article-pdf/27/11/1794/34224586/ocaa164.pdf
+curl: (22) The requested URL returned error: 403
+FAIL  algorithms/minimap2_Li_2018_Bioinformatics.pdf <- https://academic.oup.com/bioinformatics/article-pdf/34/18/3094/25731859/bty191.pdf
+curl: (22) The requested URL returned error: 403
+FAIL  algorithms/samtools-bcftools_Danecek_2021_GigaScience.pdf <- https://academic.oup.com/gigascience/article-pdf/10/2/giab008/36332246/giab008.pdf
+curl: (22) The requested URL returned error: 403
+FAIL  algorithms/SpliceAI_Jaganathan_2019_Cell.pdf <- https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf
+curl: (22) The requested URL returned error: 403
+FAIL  algorithms/TOGA_Kirilenko_2023_Science.pdf <- https://www.science.org/doi/pdf/10.1126/science.abn3107
+curl: (22) The requested URL returned error: 403
+FAIL  algorithms/Liftoff_Shumate_2021_Bioinformatics.pdf <- https://academic.oup.com/bioinformatics/article-pdf/37/12/1639/39344866/btaa1016.pdf
+curl: (22) The requested URL returned error: 403
+FAIL  algorithms/miniprot_Li_2023_Bioinformatics.pdf <- https://academic.oup.com/bioinformatics/article-pdf/39/1/btad014/49003112/btad014.pdf
+OK    algorithms/hifiasm_Cheng_2021_NatMethods.pdf (3725839 bytes)
+OK    algorithms/Verkko_Rautiainen_2023_NatBiotechnol.pdf (7960931 bytes)
+OK    algorithms/WhatsHap_Martin_2016_GenomeRes.pdf (816142 bytes)
+curl: (22) The requested URL returned error: 403
+FAIL  algorithms/ESM1v_Meier_2021_NeurIPS_biorxiv.pdf <- https://www.biorxiv.org/content/10.1101/2021.07.09.450648v1.full.pdf
+curl: (22) The requested URL returned error: 403
+FAIL  algorithms/ESM2_Lin_2023_Science.pdf <- https://www.science.org/doi/pdf/10.1126/science.ade2574
+curl: (22) The requested URL returned error: 403
+FAIL  algorithms/ESM-IF1_Hsu_2022_biorxiv.pdf <- https://www.biorxiv.org/content/10.1101/2022.04.10.487779v2.full.pdf
+OK    algorithms/SaProt_Su_2024_ICLR.pdf (4933295 bytes)
+OK    algorithms/EVE_Frazer_2021_Nature.pdf (8055106 bytes)
+OK    algorithms/AlphaFold2_Jumper_2021_Nature.pdf (3651992 bytes)
+OK    algorithms/AlphaFold3_Abramson_2024_Nature.pdf (8602339 bytes)
+OK    algorithms/HPRC_Liao_2023_Nature.pdf (26984481 bytes)
+OK    algorithms/Minigraph-Cactus_Hickey_2023_NatBiotechnol.pdf (4149604 bytes)
+OK    algorithms/PanGenie_Ebler_2022_NatGenet.pdf (9189050 bytes)
+curl: (22) The requested URL returned error: 403
+FAIL  algorithms/ProteinGym_Notin_2023_NeurIPS_biorxiv.pdf <- https://www.biorxiv.org/content/10.1101/2023.12.07.570727v1.full.pdf
+OK    algorithms/MaveDB_Esposito_2019_GenomeBiol.pdf (909999 bytes)
+curl: (22) The requested URL returned error: 403
+FAIL  algorithms/TM-align_Zhang_2005_NAR.pdf <- https://academic.oup.com/nar/article-pdf/33/7/2302/7155478/gki524.pdf
+OK    algorithms/SpliceTransformer_2024_NatCommun.pdf (3626437 bytes)
+OK    algorithms/Enformer_Avsec_2021_NatMethods.pdf (19069801 bytes)
+
+=== Summary ===
+OK:   18
+SKIP: 0
+FAIL: 16
+
+Failures need manual retrieval:
+FAIL  sota/BCFtools-csq_Danecek_2017_Bioinformatics.pdf <- https://academic.oup.com/bioinformatics/article-pdf/33/13/2037/25155524/btx100.pdf
+FAIL  sota/AlphaMissense_Cheng_2023_biorxiv.pdf <- https://www.biorxiv.org/content/10.1101/2023.08.29.555570v1.full.pdf
+HTML  sota/CompensatoryFrameshift_PMC8935012.pdf (1817 bytes, likely paywall/redirect; deleted)
+FAIL  sota/ProteinDynamicsEpistasis_2023_PNAS.pdf <- https://www.pnas.org/doi/pdf/10.1073/pnas.2313099121
+FAIL  sota/OpenCRAVAT_Pagel_2020_JAMIA.pdf <- https://academic.oup.com/jamia/article-pdf/27/11/1794/34224586/ocaa164.pdf
+FAIL  algorithms/minimap2_Li_2018_Bioinformatics.pdf <- https://academic.oup.com/bioinformatics/article-pdf/34/18/3094/25731859/bty191.pdf
+FAIL  algorithms/samtools-bcftools_Danecek_2021_GigaScience.pdf <- https://academic.oup.com/gigascience/article-pdf/10/2/giab008/36332246/giab008.pdf
+FAIL  algorithms/SpliceAI_Jaganathan_2019_Cell.pdf <- https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf
+FAIL  algorithms/TOGA_Kirilenko_2023_Science.pdf <- https://www.science.org/doi/pdf/10.1126/science.abn3107
+FAIL  algorithms/Liftoff_Shumate_2021_Bioinformatics.pdf <- https://academic.oup.com/bioinformatics/article-pdf/37/12/1639/39344866/btaa1016.pdf
+FAIL  algorithms/miniprot_Li_2023_Bioinformatics.pdf <- https://academic.oup.com/bioinformatics/article-pdf/39/1/btad014/49003112/btad014.pdf
+FAIL  algorithms/ESM1v_Meier_2021_NeurIPS_biorxiv.pdf <- https://www.biorxiv.org/content/10.1101/2021.07.09.450648v1.full.pdf
+FAIL  algorithms/ESM2_Lin_2023_Science.pdf <- https://www.science.org/doi/pdf/10.1126/science.ade2574
+FAIL  algorithms/ESM-IF1_Hsu_2022_biorxiv.pdf <- https://www.biorxiv.org/content/10.1101/2022.04.10.487779v2.full.pdf
+FAIL  algorithms/ProteinGym_Notin_2023_NeurIPS_biorxiv.pdf <- https://www.biorxiv.org/content/10.1101/2023.12.07.570727v1.full.pdf
+FAIL  algorithms/TM-align_Zhang_2005_NAR.pdf <- https://academic.oup.com/nar/article-pdf/33/7/2302/7155478/gki524.pdf
+FAIL: 16
+OK    sota/BCFtools-csq_Danecek_2017_Bioinformatics.pdf (28533 bytes, retry)
+OK    algorithms/minimap2_Li_2018_Bioinformatics.pdf (28533 bytes, retry)
+OK    algorithms/Liftoff_Shumate_2021_Bioinformatics.pdf (28533 bytes, retry)
+OK    algorithms/miniprot_Li_2023_Bioinformatics.pdf (28533 bytes, retry)
+OK    algorithms/samtools-bcftools_Danecek_2021_GigaScience.pdf (28533 bytes, retry)
+HTML  algorithms/SpliceAI_Jaganathan_2019_Cell.pdf (1817 bytes; deleted)
+HTML  sota/CompensatoryFrameshift_PMC8935012.pdf (1817 bytes; deleted)
+HTML  sota/OpenCRAVAT_Pagel_2020_JAMIA.pdf (1814 bytes; deleted)
+OK    algorithms/minimap2_Li_2018_arxiv.pdf (322629 bytes, retry)
+OK    algorithms/ESM2_Lin_2022_arxiv.pdf (1191703 bytes, retry)
+OK    algorithms/ESM1v_Meier_2021_arxiv.pdf (572277 bytes, retry)
+OK    algorithms/ESM-IF1_Hsu_2022_arxiv.pdf (478775 bytes, retry)
+curl: (28) Operation timed out after 60000 milliseconds with 2392650 out of 2655265 bytes received
+FAIL-retry  algorithms/ProteinGym_Notin_2023_arxiv.pdf <- https://arxiv.org/pdf/2312.14222
+curl: (22) The requested URL returned error: 403
+FAIL-retry  algorithms/SaProt_Su_2024_biorxiv.pdf <- https://www.biorxiv.org/content/10.1101/2023.09.20.558629v2.full.pdf
+curl: (22) The requested URL returned error: 404
+FAIL-retry  algorithms/TM-align_Zhang_2005_NAR.pdf <- https://zhanggroup.org/TM-align/TM-align.pdf
+curl: (22) The requested URL returned error: 403
+FAIL-retry  algorithms/TOGA_Kirilenko_2023_biorxiv.pdf <- https://www.biorxiv.org/content/10.1101/2022.09.08.507143v1.full.pdf
+curl: (22) The requested URL returned error: 404
+FAIL-retry  sota/AlphaMissense_Cheng_2023.pdf <- https://storage.googleapis.com/dm_alphamissense/AlphaMissense_paper.pdf
+=== Retry summary: OK=9 FAIL=5 ===

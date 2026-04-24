@@ -1,46 +1,223 @@
+"""
+Hapli Snakemake workflow.
+
+Fans out hapli per (sample, gene) and aggregates the per-sample JSONs into
+population TSVs at the end. Supports both Mode A (phased VCF input) and
+Mode B (pre-assembled haplotype FASTAs).
+
+Configure via `workflows/config.yaml`. Minimum settings:
+
+  output_dir: results/run/
+  reference:  ref.fa
+  gff:        anno.gff3
+
+  # Mode A: VCF + sample list
+  mode: A
+  vcf:        phased.vcf.gz
+  samples:    [sample_001, sample_002]
+
+  # Mode B: per-sample haplotype FASTAs
+  # mode: B
+  # haps:
+  #   sample_001:
+  #     hap1: HG002.hap1.fa
+  #     hap2: HG002.hap2.fa
+  #   ...
+
+  # Genes: explicit list, or omit/empty to auto-discover from the GFF
+  # genes: [BRCA1, TP53]
+
+  # Optional knobs
+  with_esm: true
+  esm_model: esm2_t6_8M_UR50D
+  gnomad_constraint: data/gnomad_v4_constraint.tsv
+  clingen_dosage:    data/clingen_dosage.tsv
+  threads_per_gene: 1
+  mem_mb_per_gene: 4000
+
+Run with:
+  snakemake -s workflows/Snakefile --configfile workflows/config.yaml --cores 16
+
+  # Whole-genome dry run:
+  snakemake -s workflows/Snakefile --configfile workflows/config.yaml -n
+"""
+
+import re
+from pathlib import Path
+
 configfile: "workflows/config.yaml"
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sample list
+# ─────────────────────────────────────────────────────────────────────────────
+MODE = config.get("mode", "A").upper()
+if MODE == "A":
+    SAMPLES = list(config.get("samples", []))
+    if not SAMPLES:
+        raise ValueError("Mode A requires non-empty `samples` in config.")
+elif MODE == "B":
+    HAPS = config.get("haps", {}) or {}
+    SAMPLES = list(HAPS.keys())
+    if not SAMPLES:
+        raise ValueError("Mode B requires non-empty `haps` mapping in config.")
+else:
+    raise ValueError(f"Unknown mode {MODE!r}; use 'A' or 'B'.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gene list — explicit from config, else auto-discovered from GFF.
+# ─────────────────────────────────────────────────────────────────────────────
+def _discover_genes(gff_path: str) -> list[str]:
+    """One-pass scan of the GFF for `gene` features. Returns the value of the
+    `Name` attribute (or `ID` as fallback). Cached on disk so repeat invocations
+    are fast."""
+    gff = Path(gff_path)
+    cache = gff.with_suffix(gff.suffix + ".genes.txt")
+    if cache.exists() and cache.stat().st_mtime >= gff.stat().st_mtime:
+        return [g.strip() for g in cache.read_text().splitlines() if g.strip()]
+    names: list[str] = []
+    with gff.open() as f:
+        for line in f:
+            if line.startswith("#") or not line.strip():
+                continue
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 9 or parts[2] != "gene":
+                continue
+            attrs = {}
+            for kv in parts[8].rstrip(";").split(";"):
+                if "=" in kv:
+                    k, v = kv.split("=", 1)
+                    attrs[k.strip()] = v.strip()
+            name = attrs.get("Name") or attrs.get("ID")
+            if name:
+                names.append(name)
+    cache.write_text("\n".join(names) + "\n")
+    return names
+
+
+GENES = list(config.get("genes") or [])
+if not GENES:
+    GENES = _discover_genes(config["gff"])
+
+print(f"hapli workflow: mode={MODE}  samples={len(SAMPLES)}  genes={len(GENES)}", flush=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Common knobs
+# ─────────────────────────────────────────────────────────────────────────────
+WITH_ESM   = bool(config.get("with_esm", False))
+ESM_MODEL  = config.get("esm_model", "esm2_t6_8M_UR50D")
+GNOMAD     = config.get("gnomad_constraint")
+CLINGEN    = config.get("clingen_dosage")
+THREADS    = int(config.get("threads_per_gene", 1))
+MEM_MB     = int(config.get("mem_mb_per_gene", 4000))
+OUT_DIR    = config["output_dir"]
+
+
+def _common_opts() -> str:
+    parts = []
+    if WITH_ESM:
+        parts.append(f"--with-esm --esm-model {ESM_MODEL}")
+    if GNOMAD:
+        parts.append(f"--gnomad-constraint {GNOMAD}")
+    if CLINGEN:
+        parts.append(f"--clingen-dosage {CLINGEN}")
+    return " ".join(parts)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rules
+# ─────────────────────────────────────────────────────────────────────────────
 rule all:
     input:
-        expand("results/{sample}_{gene}.json", sample=config["samples"], gene=config["genes"].keys())
+        per_sample = OUT_DIR + "/aggregate/per_sample.tsv",
+        per_gene   = OUT_DIR + "/aggregate/per_gene.tsv",
 
-rule generate_haplotypes:
+
+if MODE == "A":
+    rule analyze_gene:
+        """Mode A — phased VCF input."""
+        input:
+            ref = config["reference"],
+            vcf = config["vcf"],
+            gff = config["gff"],
+        output:
+            json = OUT_DIR + "/{sample}_{gene}_analysis.json",
+        log:
+            OUT_DIR + "/logs/{sample}_{gene}.log",
+        benchmark:
+            OUT_DIR + "/benchmarks/{sample}_{gene}.tsv"
+        threads: THREADS
+        resources:
+            mem_mb = MEM_MB,
+            runtime = 120,
+        params:
+            out_dir = OUT_DIR,
+            extra = _common_opts(),
+        shell:
+            """
+            uv run main.py analyze \
+                --gene {wildcards.gene} --sample {wildcards.sample} \
+                --vcf {input.vcf} --reference {input.ref} --gff {input.gff} \
+                --output-dir {params.out_dir} {params.extra} \
+                > {log} 2>&1
+            """
+else:
+    def _hap_path(sample: str, hap: str) -> str:
+        return HAPS[sample][hap]
+
+    rule assess_gene:
+        """Mode B — pre-assembled haplotype FASTAs."""
+        input:
+            ref  = config["reference"],
+            gff  = config["gff"],
+            hap1 = lambda w: _hap_path(w.sample, "hap1"),
+            hap2 = lambda w: _hap_path(w.sample, "hap2"),
+        output:
+            json = OUT_DIR + "/{sample}_{gene}_analysis.json",
+        log:
+            OUT_DIR + "/logs/{sample}_{gene}.log",
+        benchmark:
+            OUT_DIR + "/benchmarks/{sample}_{gene}.tsv"
+        threads: THREADS
+        resources:
+            mem_mb = MEM_MB,
+            runtime = 120,
+        params:
+            out_dir = OUT_DIR,
+            extra = _common_opts(),
+        shell:
+            """
+            uv run main.py assess \
+                --gene {wildcards.gene} --sample {wildcards.sample} \
+                --hap1 {input.hap1} --hap2 {input.hap2} \
+                --reference {input.ref} --gff {input.gff} \
+                --output-dir {params.out_dir} {params.extra} \
+                > {log} 2>&1
+            """
+
+
+rule aggregate:
+    """Population-level aggregation — per-sample TSV + per-gene TSV."""
     input:
-        ref = config["reference"],
-        vcf = config["vcf"]
+        expand(OUT_DIR + "/{sample}_{gene}_analysis.json",
+               sample=SAMPLES, gene=GENES),
     output:
-        "haplotypes/{sample}_{gene}.fa"
+        per_sample = OUT_DIR + "/aggregate/per_sample.tsv",
+        per_gene   = OUT_DIR + "/aggregate/per_gene.tsv",
+    log:
+        OUT_DIR + "/logs/aggregate.log",
+    threads: 1
+    resources:
+        mem_mb = 2000,
+        runtime = 30,
     params:
-        region = lambda wildcards: config["genes"][wildcards.gene],
-        script = "main.py"
+        out_dir = OUT_DIR,
     shell:
         """
-        python {params.script} generate-haplotypes \
-            --vcf {input.vcf} \
-            --reference {input.ref} \
-            --region {params.region} \
-            --sample {wildcards.sample} \
-            --output {output}
-        """
-
-rule align_gene:
-    input:
-        haplotypes = "haplotypes/{sample}_{gene}.fa",
-        gff = config["gff"],
-        ref = config["reference"]
-    output:
-        "results/{sample}_{gene}.json"
-    params:
-        script = "main.py",
-        gene = lambda wildcards: wildcards.gene
-    threads: 4
-    shell:
-        """
-        python {params.script} align-gene \
-            --haplotypes {input.haplotypes} \
-            --gff {input.gff} \
-            --reference {input.ref} \
-            --gene {params.gene} \
-            --output {output} \
-            --threads {threads}
+        uv run main.py aggregate '{params.out_dir}/*_analysis.json' \
+            --per-sample {output.per_sample} \
+            --per-gene {output.per_gene} \
+            > {log} 2>&1
         """

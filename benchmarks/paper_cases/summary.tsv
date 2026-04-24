@@ -1,0 +1,13 @@
+case	status	hap1_presence	hap2_presence	hap1_score	hap2_score	compound_het_lof	hap1_identity	hap2_identity	hap1_ptc	hap2_ptc	frameshift_restored	n_consequences	hap1_categories	hap2_categories	joint_residual	flagged_epistasis
+01_synonymous_pair	ok	intact	intact	1.0	1.0	False	1.0	1.0			False	2	synonymous	synonymous		False
+02_single_benign_missense	ok	intact	intact	0.98989898989899	1.0	False	0.98989898989899	1.0			False	1	missense	-		False
+03_single_stop_gain	ok	uncertain	intact	0.19997959391898787	1.0	False	0.98989898989899	1.0	20		False	1	stop_gained	-		False
+04_compound_het_lof	ok	uncertain	uncertain	0.0	0.49	True	0.98989898989899	0.49	4		False	2	stop_gained	frameshift		False
+05_frameshift_rescue	ok	intact	intact	0.8461538461538461	1.0	False	0.8461538461538461	1.0			True	4	inframe_altering,missense	-		False
+06_compound_missense_pocket	ok	intact	intact	0.96	1.0	False	0.96	1.0			False	2	missense	-		False
+07_splice_donor_cryptic	ok	uncertain	uncertain	1.0	1.0	False	1.0	1.0			False	0	-	-		False
+08_symbolic_del_whole_gene	ok	deleted	intact	0.0	1.0	False		1.0			False	0	-	-		False
+09_upstream_del_shift	ok	intact	intact	1.0	1.0	False	1.0	1.0			False	0	-	-		False
+10_inversion_body	ok	low_identity	intact	0.89	1.0	False	1.0	1.0			False	0	-	-		False
+11_tandem_dup_small_gene	ok	duplicated	intact	1.0	1.0	False	1.0	1.0			False	0	-	-		False
+12_inframe_domain_indel	ok	intact	intact	0.98989898989899	1.0	False	0.98989898989899	1.0			False	1	inframe_deletion	-		False

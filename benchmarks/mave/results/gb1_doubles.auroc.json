@@ -1,0 +1,49 @@
+{
+  "scored_file": "data/mave/gb1.esm_2000.csv",
+  "category": "missense_multi",
+  "n_rows": 2000,
+  "n_lof": 953,
+  "n_functional": 1047,
+  "lof_threshold": 0.1,
+  "lof_is": "low",
+  "correlations": [
+    {
+      "predictor": "S_additive",
+      "spearman": -0.2228934677213287,
+      "spearman_p": 6.176570366285277e-24,
+      "pearson": -0.19524855536385619,
+      "pearson_p": 1.2375318005580425e-18
+    },
+    {
+      "predictor": "S_joint",
+      "spearman": -0.4476443259367692,
+      "spearman_p": 3.780977414615998e-99,
+      "pearson": -0.3546988423508741,
+      "pearson_p": 2.311164960628476e-60
+    },
+    {
+      "predictor": "residual",
+      "spearman": -0.4526152568418988,
+      "spearman_p": 1.3736195034895798e-101,
+      "pearson": -0.3679411022843615,
+      "pearson_p": 3.7372928056443146e-65
+    },
+    {
+      "predictor": "hapli_heuristic",
+      "spearman": NaN,
+      "spearman_p": NaN,
+      "pearson": NaN,
+      "pearson_p": NaN
+    }
+  ],
+  "auroc": {
+    "S_additive": 0.6329592068880157,
+    "S_joint": 0.7573108997776088,
+    "residual": 0.7552282993131828,
+    "abs_residual": 0.24477170068681717
+  },
+  "joint_vs_additive_delta": {
+    "spearman_gain": -0.22475085821544052,
+    "mean_abs_residual": 11.803602759000002
+  }
+}

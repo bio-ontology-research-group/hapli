@@ -1,0 +1,342 @@
+{
+  "reference_length": 50,
+  "n_cases": 12,
+  "n_assertions": 45,
+  "n_failures": 0,
+  "pass_rate": 1.0,
+  "cases": [
+    {
+      "name": "single_missense_noop",
+      "hgvs": "p.Cys16Ser",
+      "category": "missense_single",
+      "hap_length": 50,
+      "status": "PASS",
+      "checks": [
+        {
+          "check": "category",
+          "ok": true,
+          "detail": "category=missense_single expected missense_single"
+        },
+        {
+          "check": "length_changed",
+          "ok": true,
+          "detail": "length_changed=False expected False"
+        },
+        {
+          "check": "premature_stop_at",
+          "ok": true,
+          "detail": "premature_stop_at=None expected None"
+        },
+        {
+          "check": "n_missense",
+          "ok": true,
+          "detail": "n_missense=1 expected 1"
+        }
+      ]
+    },
+    {
+      "name": "synonymous",
+      "hgvs": "p.Ala4=",
+      "category": "synonymous",
+      "hap_length": 50,
+      "status": "PASS",
+      "checks": [
+        {
+          "check": "category",
+          "ok": true,
+          "detail": "category=synonymous expected synonymous"
+        },
+        {
+          "check": "hap_seq_equals_ref",
+          "ok": true,
+          "detail": "hap_seq == REF = True"
+        },
+        {
+          "check": "length_changed",
+          "ok": true,
+          "detail": "length_changed=False expected False"
+        },
+        {
+          "check": "n_synonymous",
+          "ok": true,
+          "detail": "n_synonymous=1 expected 1"
+        }
+      ]
+    },
+    {
+      "name": "early_stop_gain",
+      "hgvs": "p.Val13Ter",
+      "category": "lof",
+      "hap_length": 12,
+      "status": "PASS",
+      "checks": [
+        {
+          "check": "category",
+          "ok": true,
+          "detail": "category=lof expected lof"
+        },
+        {
+          "check": "length_changed",
+          "ok": true,
+          "detail": "length_changed=True expected True"
+        },
+        {
+          "check": "premature_stop_at",
+          "ok": true,
+          "detail": "premature_stop_at=13 expected 13"
+        },
+        {
+          "check": "hap_length",
+          "ok": true,
+          "detail": "hap_length=12 expected 12"
+        },
+        {
+          "check": "score_heuristic_max",
+          "ok": true,
+          "detail": "heuristic=0.062 <= 0.5"
+        }
+      ]
+    },
+    {
+      "name": "late_stop_gain",
+      "hgvs": "p.Trp48Ter",
+      "category": "lof",
+      "hap_length": 47,
+      "status": "PASS",
+      "checks": [
+        {
+          "check": "category",
+          "ok": true,
+          "detail": "category=lof expected lof"
+        },
+        {
+          "check": "length_changed",
+          "ok": true,
+          "detail": "length_changed=True expected True"
+        },
+        {
+          "check": "premature_stop_at",
+          "ok": true,
+          "detail": "premature_stop_at=48 expected 48"
+        },
+        {
+          "check": "hap_length",
+          "ok": true,
+          "detail": "hap_length=47 expected 47"
+        }
+      ]
+    },
+    {
+      "name": "frameshift_with_ter_offset",
+      "hgvs": "p.Thr14GlyfsTer5",
+      "category": "lof",
+      "hap_length": 18,
+      "status": "PASS",
+      "checks": [
+        {
+          "check": "category",
+          "ok": true,
+          "detail": "category=lof expected lof"
+        },
+        {
+          "check": "n_frameshift",
+          "ok": true,
+          "detail": "n_frameshift=1 expected 1"
+        },
+        {
+          "check": "premature_stop_at",
+          "ok": true,
+          "detail": "premature_stop_at=19 expected 19"
+        },
+        {
+          "check": "length_changed",
+          "ok": true,
+          "detail": "length_changed=True expected True"
+        }
+      ]
+    },
+    {
+      "name": "frameshift_minimal",
+      "hgvs": "p.Thr14fs",
+      "category": "lof",
+      "hap_length": 13,
+      "status": "PASS",
+      "checks": [
+        {
+          "check": "category",
+          "ok": true,
+          "detail": "category=lof expected lof"
+        },
+        {
+          "check": "n_frameshift",
+          "ok": true,
+          "detail": "n_frameshift=1 expected 1"
+        },
+        {
+          "check": "length_changed",
+          "ok": true,
+          "detail": "length_changed=True expected True"
+        }
+      ]
+    },
+    {
+      "name": "single_residue_del",
+      "hgvs": "p.Ala4del",
+      "category": "indel",
+      "hap_length": 49,
+      "status": "PASS",
+      "checks": [
+        {
+          "check": "category",
+          "ok": true,
+          "detail": "category=indel expected indel"
+        },
+        {
+          "check": "n_indel",
+          "ok": true,
+          "detail": "n_indel=1 expected 1"
+        },
+        {
+          "check": "length_changed",
+          "ok": true,
+          "detail": "length_changed=True expected True"
+        },
+        {
+          "check": "hap_length",
+          "ok": true,
+          "detail": "hap_length=49 expected 49"
+        }
+      ]
+    },
+    {
+      "name": "range_del_small",
+      "hgvs": "p.Arg11_Cys16del",
+      "category": "indel",
+      "hap_length": 44,
+      "status": "PASS",
+      "checks": [
+        {
+          "check": "category",
+          "ok": true,
+          "detail": "category=indel expected indel"
+        },
+        {
+          "check": "n_indel",
+          "ok": true,
+          "detail": "n_indel=1 expected 1"
+        },
+        {
+          "check": "length_changed",
+          "ok": true,
+          "detail": "length_changed=True expected True"
+        },
+        {
+          "check": "hap_length",
+          "ok": true,
+          "detail": "hap_length=44 expected 44"
+        },
+        {
+          "check": "score_heuristic_max",
+          "ok": true,
+          "detail": "heuristic=0.880 <= 0.95"
+        }
+      ]
+    },
+    {
+      "name": "range_del_large_nterm_like_sv_whole_gene_loss",
+      "hgvs": "p.Met1_Ala10del",
+      "category": "indel",
+      "hap_length": 40,
+      "status": "PASS",
+      "checks": [
+        {
+          "check": "category",
+          "ok": true,
+          "detail": "category=indel expected indel"
+        },
+        {
+          "check": "hap_length",
+          "ok": true,
+          "detail": "hap_length=40 expected 40"
+        },
+        {
+          "check": "length_changed",
+          "ok": true,
+          "detail": "length_changed=True expected True"
+        },
+        {
+          "check": "score_heuristic_max",
+          "ok": true,
+          "detail": "heuristic=0.800 <= 0.9"
+        }
+      ]
+    },
+    {
+      "name": "compound_lof_and_missense",
+      "hgvs": "p.[Ala5Val;Val13Ter]",
+      "category": "lof",
+      "hap_length": 12,
+      "status": "PASS",
+      "checks": [
+        {
+          "check": "category",
+          "ok": true,
+          "detail": "category=lof expected lof"
+        },
+        {
+          "check": "n_nonsense",
+          "ok": true,
+          "detail": "n_nonsense=1 expected 1"
+        },
+        {
+          "check": "n_missense",
+          "ok": true,
+          "detail": "n_missense=1 expected 1"
+        },
+        {
+          "check": "length_changed",
+          "ok": true,
+          "detail": "length_changed=True expected True"
+        },
+        {
+          "check": "premature_stop_at",
+          "ok": true,
+          "detail": "premature_stop_at=13 expected 13"
+        }
+      ]
+    },
+    {
+      "name": "out_of_range_skipped",
+      "hgvs": "p.Ala999Val",
+      "category": "unmodified",
+      "hap_length": 50,
+      "status": "PASS",
+      "checks": [
+        {
+          "check": "category",
+          "ok": true,
+          "detail": "category=unmodified expected unmodified"
+        },
+        {
+          "check": "n_skipped",
+          "ok": true,
+          "detail": "n_skipped=1 expected 1"
+        }
+      ]
+    },
+    {
+      "name": "residual_is_none_for_truncation",
+      "hgvs": "p.Val13Ter",
+      "category": "lof",
+      "hap_length": 12,
+      "status": "PASS",
+      "checks": [
+        {
+          "check": "residual_is_none",
+          "ok": true,
+          "detail": "residual=None"
+        }
+      ]
+    }
+  ]
+}

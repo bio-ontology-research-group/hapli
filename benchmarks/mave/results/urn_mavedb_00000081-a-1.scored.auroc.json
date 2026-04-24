@@ -1,0 +1,11 @@
+{
+  "scored_file": "data/mave/urn_mavedb_00000081-a-1.scored.csv",
+  "n_variants": 1055,
+  "n_lof": 59,
+  "n_functional": 996,
+  "lof_threshold": 2.0,
+  "lof_is": "high",
+  "roc_auc": 0.6946089442515827,
+  "pr_auc": 0.38687456647126073,
+  "predictor": "esm_log_odds (inverted)"
+}

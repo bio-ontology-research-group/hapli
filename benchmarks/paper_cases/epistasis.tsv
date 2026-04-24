@@ -1,0 +1,5 @@
+case	status	n_variants	S_additive	S_joint	residual	flagged	hap1_identity	hap2_identity	frameshift_restored
+05_frameshift_rescue	ok	6	-58.48424530029297	-1.430177092552185	57.054068207740784	True	0.8461538461538461	1.0	True
+06_compound_missense_pocket	ok	2	-21.90651512145996	-9.70294189453125	12.203573226928711	True	0.96	1.0	False
+07_splice_donor_cryptic	ok	0	0.0	0.0	0.0	False	1.0	1.0	False
+10_inversion_body	ok	0	0.0	0.0	0.0	False	1.0	1.0	False

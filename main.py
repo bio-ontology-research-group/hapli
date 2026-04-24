@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-import sys
-from hapli.cli import main
+from hapli.cli.main import app
 
 if __name__ == "__main__":
-    main()
+    app()

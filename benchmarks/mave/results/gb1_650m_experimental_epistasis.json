@@ -1,0 +1,53 @@
+{
+  "scores_file": "/home/leechuck/Public/software/hapli/data/mave/urn_mavedb_00000105-a-1.scores.csv",
+  "scored_file": "/home/leechuck/Public/software/hapli/data/mave/gb1.esm_650m_full.csv",
+  "n_rows": 464408,
+  "grand_mean_fitness": 0.484190584009133,
+  "n_singles_covered": 1045,
+  "headline_correlations": {
+    "residual_vs_E_exp": {
+      "name": "residual_vs_E_exp",
+      "spearman": 0.0006776701519938746,
+      "spearman_p": 0.6442147178567346,
+      "pearson": 0.0012211793167547238,
+      "pearson_p": 0.4052954499630559,
+      "n": 464408
+    },
+    "s_joint_vs_E_exp": {
+      "name": "s_joint_vs_E_exp",
+      "spearman": -0.007696461010150105,
+      "spearman_p": 1.562752648794335e-07,
+      "pearson": 0.012102732927682476,
+      "pearson_p": 1.6108325845898741e-16,
+      "n": 464408
+    },
+    "s_additive_vs_E_exp": {
+      "name": "s_additive_vs_E_exp",
+      "spearman": -0.01872430018145322,
+      "spearman_p": 2.6992484311402308e-37,
+      "pearson": 0.013989559667860234,
+      "pearson_p": 1.5137464882716359e-21,
+      "n": 464408
+    },
+    "linear_additive_vs_E_exp": {
+      "name": "linear_additive_vs_E_exp",
+      "spearman": -0.12427967938014155,
+      "spearman_p": 0.0,
+      "pearson": 0.03047001276632666,
+      "pearson_p": 8.202112128254e-96,
+      "n": 464408
+    },
+    "mave_score_vs_E_exp": {
+      "name": "mave_score_vs_E_exp",
+      "spearman": 0.19799590258763183,
+      "spearman_p": 0.0,
+      "pearson": 0.5488992227728702,
+      "pearson_p": 0.0,
+      "n": 464408
+    }
+  },
+  "residual_distribution": {
+    "mean_abs": 10.971483575556407,
+    "mean_abs_E_exp": 0.26755452383663947
+  }
+}

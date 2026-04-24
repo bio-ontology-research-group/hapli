@@ -1,12 +1,13 @@
 [project]
 name = "hapli"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.3.0"
+description = "Haplotype-level gene-function assessment with additive-vs-joint epistasis residuals."
 readme = "README.md"
 requires-python = ">=3.10.16"
 dependencies = [
     "biopython>=1.86",
-    "gffutils>=0.13",
+    "pulp==2.7.0",
+    "pydantic>=2.13.3",
     "pysam>=0.23.3",
     "rich>=14.2.0",
     "snakemake>=7.32.4",
@@ -15,7 +16,32 @@ dependencies = [
     "typer>=0.20.0",
 ]
 
+[project.optional-dependencies]
+ml = [
+    "fair-esm>=2.0.0",
+    "matplotlib>=3.10.8",
+    "scikit-learn>=1.7.2",
+    "torch>=2.11.0",
+]
+
+[project.scripts]
+hapli = "hapli.cli.main:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["hapli*"]
+exclude = ["tests*", "benchmarks*", "data*", "obsolete*", "output*", "resources*", "results*", "workflows*", "scripts*", "docs*"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
 ]
+
+[tool.pytest.ini_options]
+# `obsolete/` holds pre-refactor tests that import modules since removed from
+# the live package. Excluding it prevents import-error noise on `uv run pytest`.
+testpaths = ["tests"]
+norecursedirs = ["obsolete", ".venv", "output", "results", "data", "resources"]

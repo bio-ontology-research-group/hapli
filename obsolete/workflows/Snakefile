@@ -1,0 +1,46 @@
+configfile: "workflows/config.yaml"
+
+rule all:
+    input:
+        expand("results/{sample}_{gene}.json", sample=config["samples"], gene=config["genes"].keys())
+
+rule generate_haplotypes:
+    input:
+        ref = config["reference"],
+        vcf = config["vcf"]
+    output:
+        "haplotypes/{sample}_{gene}.fa"
+    params:
+        region = lambda wildcards: config["genes"][wildcards.gene],
+        script = "main.py"
+    shell:
+        """
+        python {params.script} generate-haplotypes \
+            --vcf {input.vcf} \
+            --reference {input.ref} \
+            --region {params.region} \
+            --sample {wildcards.sample} \
+            --output {output}
+        """
+
+rule align_gene:
+    input:
+        haplotypes = "haplotypes/{sample}_{gene}.fa",
+        gff = config["gff"],
+        ref = config["reference"]
+    output:
+        "results/{sample}_{gene}.json"
+    params:
+        script = "main.py",
+        gene = lambda wildcards: wildcards.gene
+    threads: 4
+    shell:
+        """
+        python {params.script} align-gene \
+            --haplotypes {input.haplotypes} \
+            --gff {input.gff} \
+            --reference {input.ref} \
+            --gene {params.gene} \
+            --output {output} \
+            --threads {threads}
+        """
