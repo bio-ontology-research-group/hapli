@@ -69,6 +69,20 @@ def test_gffprocessor_finds_gene_by_name_attribute(tmp_path: Path):
     assert g is not None and g.id == "ENSG0001"
 
 
+def test_gffprocessor_finds_gene_by_gencode_gene_name_attribute(tmp_path: Path):
+    """Regression: GENCODE GFF3 uses `gene_name=BRCA1` (lowercase), not `Name=BRCA1`.
+    The IBEX run on real GENCODE v45 surfaced this — old code only matched on
+    Name= and missed every gene in GENCODE.
+    """
+    gff = _write_gff(tmp_path / "anno.gff3", [
+        "chr17\tHAVANA\tgene\t1001\t2000\t.\t+\t.\tID=ENSG00000012048.25;gene_id=ENSG00000012048.25;gene_type=protein_coding;gene_name=BRCA1",
+        "chr17\tHAVANA\tmRNA\t1001\t2000\t.\t+\t.\tID=T1;Parent=ENSG00000012048.25",
+    ])
+    proc = GFFProcessor(gff, target_gene="BRCA1")
+    g = _find_gene(proc)
+    assert g is not None and g.id == "ENSG00000012048.25"
+
+
 def test_gffprocessor_missing_gene_leaves_features_empty(tmp_path: Path):
     gff = _write_gff(tmp_path / "anno.gff3", [
         "chr1\tsynth\tgene\t1001\t2000\t.\t+\t.\tID=G1;Name=G1",

@@ -74,14 +74,55 @@ def test_mid_protein_premature_stop_scales_with_position():
     assert abs(s - 0.25) < 1e-9
 
 
-def test_multi_transcript_takes_min():
-    """Conservative: gene is only as functional as its worst isoform."""
+def test_multi_transcript_uses_longest_canonical_proxy():
+    """Score by the longest reference-CDS isoform (canonical-proxy), not MIN
+    across all isoforms. Real GFFs (GENCODE) have many minor / NMD-target /
+    non-coding isoforms per gene that should not collapse the gene-level call.
+    See HG00097/RB1 case: a 109 aa minor isoform with PTC at pos 18 was
+    scoring the whole gene as LoF despite the canonical 928 aa protein
+    being intact.
+    """
+    p = PresenceCall(status="intact", source="liftoff")
+    # Equal length → still pick one deterministically; the broken minor isoform
+    # below this case has SHORTER length so the canonical wins.
+    diffs = [
+        ProteinDiff(transcript="canonical_long", haplotype=1, ref_length=928,
+                    hap_length=928, identity=1.0),
+        ProteinDiff(transcript="minor_broken", haplotype=1, ref_length=109,
+                    hap_length=109, identity=0.18, premature_stop_at=18),
+    ]
+    # Longest is the canonical one → score = 1.0 even though minor has PTC
+    assert score_haplotype(p, diffs) == 1.0
+
+
+def test_multi_transcript_principal_lof_tanks_score():
+    """If the *principal* (longest) isoform is broken, the score reflects that
+    even when shorter isoforms are intact — we don't paper over a real LoF
+    by exempting the principal."""
     p = PresenceCall(status="intact", source="liftoff")
     diffs = [
-        ProteinDiff(transcript="T1", haplotype=1, ref_length=100, hap_length=100, identity=0.99),
-        ProteinDiff(transcript="T2", haplotype=1, ref_length=100, hap_length=100, identity=0.50),
+        ProteinDiff(transcript="principal", haplotype=1, ref_length=900,
+                    hap_length=900, identity=1.0, premature_stop_at=10),  # very early PTC
+        ProteinDiff(transcript="minor_intact", haplotype=1, ref_length=200,
+                    hap_length=200, identity=1.0),
     ]
-    assert score_haplotype(p, diffs) == 0.50
+    # Principal scored at 0 (early PTC, frac 10/900 < 0.10 → 0.0)
+    assert score_haplotype(p, diffs) == 0.0
+
+
+def test_zero_ref_length_transcripts_skipped():
+    """Non-coding / pseudogene-like transcripts whose CDS extraction yielded
+    nothing (ref_length=0) must not contribute to the score; otherwise they
+    drag the per-gene MIN to 0 in the old MIN-of-all model."""
+    p = PresenceCall(status="intact", source="liftoff")
+    diffs = [
+        ProteinDiff(transcript="real", haplotype=1, ref_length=500,
+                    hap_length=500, identity=0.95),
+        ProteinDiff(transcript="empty", haplotype=1, ref_length=0,
+                    hap_length=0, identity=1.0),
+    ]
+    # Empty skipped, real wins → 0.95
+    assert score_haplotype(p, diffs) == 0.95
 
 
 def test_low_identity_presence_without_diffs_falls_back_to_sequence_id():

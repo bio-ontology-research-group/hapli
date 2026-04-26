@@ -132,10 +132,13 @@ def parse_lifted_gff(gff_path: Path) -> dict[str, PresenceCall]:
 
             gene_id = attrs.get("ID", "")
             base_id = _COPY_SUFFIX.sub("", gene_id) if gene_id else ""
+            # GENCODE/Ensembl use `gene_name`; reference GFF3s use `Name`.
+            # Register under both so downstream lookup-by-symbol works.
             name = attrs.get("Name", "")
+            gene_name = attrs.get("gene_name", "")
 
             # All identifiers under which this record may be looked up.
-            keys = {k for k in (base_id, gene_id, name) if k}
+            keys = {k for k in (base_id, gene_id, name, gene_name) if k}
 
             for key in keys:
                 if key in result:
@@ -164,8 +167,8 @@ def run_liftoff(
     out_gff: Path,
     unmapped_txt: Path | None = None,
     intermediate_dir: Path | None = None,
-    polish: bool = True,
-    copies: bool = True,
+    polish: bool = False,
+    copies: bool = False,
     extra_args: list[str] | None = None,
     liftoff_path: str = DEFAULT_LIFTOFF,
     logger: logging.Logger | None = None,

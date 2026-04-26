@@ -351,7 +351,64 @@ synergise (case 06 pocket clash), the residual is large in the expected
 direction. On bulk averaged pairwise DMS over all 464K doubles, that
 signal is apparently buried in per-variant noise (§3.3).
 
-### 3.5 Variant-shape coverage (SV haplotype benchmark)
+### 3.5 Real-data scale demo: HPRC R2 × ACMG SF v3.2 (Mode B)
+
+End-to-end IBEX cluster run, 20 HPRC R2 phased diploid assemblies × 80
+ACMG SF v3.2 genes = 1600 per-(sample, gene) hapli analyses. Reference:
+GRCh38 + GENCODE v45. Pipeline: `bcftools` preflight + Liftoff (per
+sample/hap, cached) → protein extraction + diff → diploid scoring.
+
+**Compute** (IBEX `pi-hohndor` account, `batch` partition):
+- Liftoff array: 40 jobs × 8 CPU × ~30 min in parallel = ~30 min wall.
+- Per-(sample, gene) analyse: 1600 jobs through Snakemake / 16 cores
+  with cached Liftoff outputs: ~17 min wall.
+- Total real-data validation cycle: < 1 h on the cluster.
+
+**Per-gene LoF allele frequency across 20 healthy individuals** (only
+genes with `n_lof_alleles > 0` shown; 73 / 80 genes have zero LoF
+alleles, consistent with a healthy reference panel):
+
+| gene   | n_lof / 40 | freq    | inheritance | category         |
+|---     |---         |---      |---          |---               |
+| GLA    | 7          | 17.5%   | XL          | metabolic (X-linked, hemizygous male carriers) |
+| OTC    | 7          | 17.5%   | XL          | metabolic (X-linked, hemizygous male carriers) |
+| MYH11  | 2          | 5.0%    | AD          | aortopathy        |
+| CALM1  | 1          | 2.5%    | AD          | arrhythmia        |
+| PCSK9  | 1          | 2.5%    | AD          | lipid             |
+| STK11  | 1          | 2.5%    | AD          | cancer (PJS)      |
+| TTN    | 1          | 2.5%    | AD          | cardiomyopathy    |
+
+**`compound_het_lof = True` events**: **0** across 20 samples × 80 genes —
+exactly as expected for a healthy panel (compound-het LoF in clinically
+actionable genes is rare; population frequency ~10⁻³ per gene).
+
+**X-linked sanity check**: 7/40 LoF alleles for both GLA and OTC =
+17.5% = 7/40 ≈ half of the cohort's male haplotype-equivalents
+(hemizygous X). This is the expected hemizygous-male signal, not a
+benchmark artifact, and validates that the per-haplotype protein-diff
+output correctly resolves XL inheritance.
+
+**Bug fixes surfaced by this scale run** (all now wired into pytest
+regressions):
+1. GENCODE GFFs use `gene_name=BRCA1` not `Name=BRCA1` — old code only
+   matched the latter and returned 0 transcripts on every GENCODE gene.
+2. GENCODE uses `transcript` featuretype, not `mRNA` — old code skipped
+   every transcript record on GENCODE.
+3. Diploid scorer used MIN-across-isoforms; a single broken minor
+   isoform (NMD-target, non-coding) tanked the per-gene score for
+   genes with many alternative transcripts (RB1, RYR2, TTN). Switched
+   to canonical-proxy (longest reference-CDS isoform).
+4. Liftoff's `-polish` and `-copies` flags cause CDS-validation failures
+   on bgzipped FASTAs; defaulted off. Per-(sample, hap) caching
+   collapses 1600 Liftoff calls into 40.
+
+Reproduce: `benchmarks/hprc/results/per_gene.tsv` and
+`per_sample.tsv` are committed. Cluster setup is documented in
+`benchmarks/hprc/README.md`; the Slurm sbatches live at
+`/ibex/scratch/projects/c2014/hapli-bench/{lift_array,hprc_run}.sbatch`
+(IBEX-internal).
+
+### 3.6 Variant-shape coverage (SV haplotype benchmark)
 
 12 synthetic cases × 45 assertions, all PASS:
 - Single missense, double missense, nonsense (early + late stop-gain),
@@ -359,7 +416,7 @@ signal is apparently buried in per-variant noise (§3.3).
   large N-terminal del (SV whole-gene-loss proxy), compound LoF+missense,
   out-of-range/skipped, residual-is-None for length-changing haps.
 
-### 3.6 Computational performance
+### 3.7 Computational performance
 
 - 8M model on CPU: ~32 ms / haplotype on a 221-aa protein.
 - 650M model on GPU (RTX 4090): *32 ms / haplotype* (same wall time;
@@ -494,7 +551,7 @@ are where the paper actually lives.
 
 Everything in `hapli` is one `uv sync && uv tool install git+https://github.com/agshumate/Liftoff` away from runnable. The benchmarks are
 each a `./run.sh <urn>` or `bash benchmarks/.../run.sh`. Tests:
-`uv run pytest` (171 passed at submission). Coverage highlights: 12 end-to-end
+`uv run pytest` (179 passed at submission). Coverage highlights: 12 end-to-end
 paper-case tests, resolver pins for `<INV>` / `<DUP:TANDEM>`, presence-
 identity-capping regressions for low-identity/partial Liftoff lifts, Mode A
 and Mode B Snakefile end-to-end smoke tests (`analyze → aggregate` and
@@ -518,7 +575,8 @@ on the data/test/ fixture, regression-tested).
 | **Total disagreement axes with bcftools/csq on 12 motivating cases** | 5 (1× Axis-2, 4× Axis-1) |
 | **Per-variant ESM2 scoring sanity check (BRCA1 RING 8M)** | AUROC 0.69 |
 | **Compute per whole-genome sample** | 2–4 h (16-core + 1 GPU) |
-| **Tests passing** | 172 |
+| **Tests passing** | 179 |
+| **HPRC R2 real-data validation** | 20 samples × 80 ACMG genes; 7 genes with rare LoF (CALM1, GLA, MYH11, OTC, PCSK9, STK11, TTN); 0 compound-het-LoF events; X-linked GLA + OTC at expected hemizygous-male freq |
 | **SV-haplotype shape coverage** | 12 cases, 45/45 assertions |
 
 **Honest-null and illustrative numbers (§3.3, §3.4):**

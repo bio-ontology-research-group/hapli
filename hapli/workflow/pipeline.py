@@ -282,7 +282,8 @@ class HapliPipeline:
 
         transcripts: list[dict[str, Any]] = []
         for transcript in gff.get_children(gene_feature.id):
-            if transcript.featuretype != "mRNA":
+            # GENCODE/Ensembl use "transcript"; legacy / other GFFs use "mRNA".
+            if transcript.featuretype not in ("mRNA", "transcript"):
                 continue
             exons = [e for e in gff.get_children(transcript.id) if e.featuretype == "exon"]
             exons.sort(key=lambda e: e.start)
@@ -329,32 +330,52 @@ class HapliPipeline:
         Returns {hap_name: path_to_lifted_gff} so downstream stages can slice
         proteins out of the haplotype-native coordinates.
         """
+        from ..external.liftoff import parse_lifted_gff
         lifted: dict[str, Path] = {}
         try:
             for hap_name, hap_fa in self._per_hap_fastas.items():
-                out_gff = self.output_dir / f"{sample_name}_{gene_name}_{hap_name}.lifted.gff3"
-                unmapped = self.output_dir / f"{sample_name}_{gene_name}_{hap_name}.unmapped.txt"
-                tmp_dir = self.output_dir / f"{sample_name}_{gene_name}_{hap_name}.liftoff_tmp"
-                try:
-                    result = run_liftoff(
-                        haplotype_fasta=hap_fa,
-                        reference_fasta=self.ref_path,
-                        reference_gff=self.gff_path,
-                        out_gff=out_gff,
-                        unmapped_txt=unmapped,
-                        intermediate_dir=tmp_dir,
-                        logger=self.logger,
-                    )
-                except RuntimeError as exc:
-                    self.logger.warning("Liftoff failed on %s: %s", hap_name, exc)
-                    evidence.presence[hap_name] = PresenceCall(status="not_run", source="liftoff")
-                    continue
+                # Output paths are per (sample, hap), NOT per (sample, gene, hap),
+                # so the lifted GFF is reused across all genes for this sample.
+                # First gene call pays the Liftoff cost; remaining genes for the
+                # same sample short-circuit and just re-parse the existing GFF.
+                out_gff = self.output_dir / f"{sample_name}_{hap_name}.lifted.gff3"
+                unmapped = self.output_dir / f"{sample_name}_{hap_name}.unmapped.txt"
+                tmp_dir = self.output_dir / f"{sample_name}_{hap_name}.liftoff_tmp"
 
-                call = result.presence.get(gene_name)
+                presence = None
+                if out_gff.exists() and out_gff.stat().st_size > 0:
+                    candidate = parse_lifted_gff(out_gff)
+                    # Cache is only valid if it contains the requested gene
+                    # (a Mode A per-gene cache might have been written for a
+                    # different gene; only Mode B's whole-hap cache is multi-gene).
+                    if gene_name in candidate:
+                        presence = candidate
+                        self.logger.info(
+                            "Liftoff %s: reusing cached lifted GFF (%s)",
+                            hap_name, out_gff.name,
+                        )
+                if presence is None:
+                    try:
+                        result = run_liftoff(
+                            haplotype_fasta=hap_fa,
+                            reference_fasta=self.ref_path,
+                            reference_gff=self.gff_path,
+                            out_gff=out_gff,
+                            unmapped_txt=unmapped,
+                            intermediate_dir=tmp_dir,
+                            logger=self.logger,
+                        )
+                    except RuntimeError as exc:
+                        self.logger.warning("Liftoff failed on %s: %s", hap_name, exc)
+                        evidence.presence[hap_name] = PresenceCall(status="not_run", source="liftoff")
+                        continue
+                    presence = result.presence
+
+                call = presence.get(gene_name)
                 if call is None:
                     call = PresenceCall(status="uncertain", source="liftoff")
                 evidence.presence[hap_name] = call
-                lifted[hap_name] = result.lifted_gff
+                lifted[hap_name] = out_gff
                 self.logger.info("Liftoff %s: gene %s status=%s", hap_name, gene_name, call.status)
         except LiftoffNotAvailable as exc:
             self.logger.warning("Skipping Liftoff: %s", exc)

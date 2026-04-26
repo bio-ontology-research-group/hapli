@@ -108,18 +108,22 @@ def transcripts_of_gene(records: list[GffRecord], gene_id: str) -> list[GffRecor
     import re
     gene_base = re.sub(r"_\d+$", "", gene_id)
 
-    # Find the gene record(s) — either direct ID match or base-ID match.
+    # Find the gene record(s) — direct ID match, base-ID match (Liftoff
+    # copy-suffix), or symbol match. GENCODE uses `gene_name=`; reference GFF3
+    # uses `Name=`. Match against both.
     gene_ids_here = {
         r.id for r in records
         if r.featuretype == "gene"
         and (r.id == gene_id or re.sub(r"_\d+$", "", r.id) == gene_base
-             or r.attributes.get("Name") == gene_id)
+             or r.attributes.get("Name") == gene_id
+             or r.attributes.get("gene_name") == gene_id)
     }
     if not gene_ids_here:
         return []
+    # GENCODE/Ensembl GFFs use `transcript` instead of `mRNA`; support both.
     return [
         r for r in records
-        if r.featuretype == "mRNA" and r.parent in gene_ids_here
+        if r.featuretype in ("mRNA", "transcript") and r.parent in gene_ids_here
     ]
 
 

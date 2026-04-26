@@ -116,3 +116,28 @@ def test_parse_lifted_gff_handles_partial_mapping(tmp_path: Path):
     assert call.status == "partial"
     assert call.coverage == 0.6
     assert call.flags.get("partial_mapping") == "True"
+
+
+def test_parse_lifted_gff_keys_by_gene_name_for_gencode(tmp_path: Path):
+    """Regression: when Liftoff lifts a GENCODE-style GFF, the resulting GFF
+    keeps `gene_name=BRCA1` (lowercase) but no `Name=` attribute. The pipeline
+    looks up presence by symbol → must register under gene_name as well as ID.
+    First HPRC IBEX run hit this: every PresenceCall.get("BRCA1") returned
+    None and the diploid scorer fell back to "uncertain → 0.5" for every gene.
+    """
+    g = tmp_path / "gencode_lift.gff3"
+    g.write_text(
+        "##gff-version 3\n"
+        "chr17\tLiftoff\tgene\t43044295\t43170245\t.\t-\t.\t"
+        "ID=ENSG00000012048.25;gene_id=ENSG00000012048.25;"
+        "gene_type=protein_coding;gene_name=BRCA1;"
+        "coverage=1.0;sequence_ID=0.999;valid_ORFs=3;extra_copy_number=0\n"
+    )
+    out = parse_lifted_gff(g)
+    # Lookup by gene_name symbol must work
+    assert "BRCA1" in out, f"BRCA1 not in keys: {sorted(out)}"
+    # Lookup by ENSG ID must also work
+    assert "ENSG00000012048.25" in out
+    # Both keys point to the same call
+    assert out["BRCA1"].coverage == 1.0
+    assert out["BRCA1"].status == "intact"

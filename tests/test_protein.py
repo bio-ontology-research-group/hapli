@@ -221,6 +221,29 @@ def test_write_protein_fasta_handles_multiple_records(tmp_path):
     assert ">hap1.T2" in text
 
 
+def test_gencode_style_gene_lookup_via_gene_name_attr(tmp_path):
+    """Regression: GENCODE GFFs use `gene_name=BRCA1` (lowercase) for the gene
+    symbol; reference / Liftoff GFFs use `Name=BRCA1`. transcripts_of_gene
+    must match either. The IBEX HG00097/BRCA1 run surfaced this — old code
+    only matched on Name=, returning 0 transcripts on every GENCODE gene
+    and producing the spurious "No reference protein records" message for
+    every (sample, gene) pair.
+    """
+    fa = _write_fasta(tmp_path, "ref", {"chr17": "AAA" + "ATGGCTGCTTAA" + "AAA"})
+    gff = _write_gff(tmp_path, "ref", [
+        # GENCODE-style: gene_name= attribute, transcript featuretype
+        "chr17\tHAVANA\tgene\t4\t15\t.\t+\t.\tID=ENSG00000012048.25;gene_id=ENSG00000012048.25;gene_type=protein_coding;gene_name=BRCA1",
+        "chr17\tHAVANA\ttranscript\t4\t15\t.\t+\t.\tID=ENST00000357654.9;Parent=ENSG00000012048.25;transcript_type=protein_coding",
+        "chr17\tHAVANA\tCDS\t4\t15\t.\t+\t0\tID=CDS:ENST00000357654.9:1;Parent=ENST00000357654.9",
+    ])
+    # User passes the symbol "BRCA1"; lookup must resolve via gene_name.
+    proteins = extract_proteins_for_gene(fa, gff, "BRCA1")
+    assert "ENST00000357654.9" in proteins, (
+        f"GENCODE gene_name lookup failed; found transcripts: {list(proteins)}"
+    )
+    assert proteins["ENST00000357654.9"].protein == "MAA*"
+
+
 def test_liftoff_copy_suffix_gene_id_matches(tmp_path):
     """Liftoff renames gene IDs like G1 → G1_0. The extractor must still resolve
     them when the caller asks for the original name.

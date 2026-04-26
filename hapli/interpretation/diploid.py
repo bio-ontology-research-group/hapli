@@ -86,22 +86,35 @@ def score_haplotype(
             return presence.sequence_identity or 0.5
         return None
 
-    per_transcript_scores: list[float] = []
-    for diff in protein_diffs:
-        ref_len = diff.ref_length or 1
-        pts = diff.premature_stop_at
-        if pts is not None:
-            frac = pts / ref_len
-            if frac <= nterm_ptc_fraction:
-                # Very early PTC → effectively no protein → LoF.
-                per_transcript_scores.append(0.0)
-            else:
-                # Mid/late PTC: scale identity by how much of the protein is preserved.
-                per_transcript_scores.append(diff.identity * frac)
-        else:
-            per_transcript_scores.append(diff.identity)
+    # Restrict the score to the gene's *principal* transcript — the longest
+    # ref_length-bearing isoform. A naïve MIN-across-all-isoforms is too
+    # punitive: GENCODE annotates many minor / NMD-target / non-coding
+    # transcripts per gene that are not the protein's canonical product, and
+    # a single broken minor isoform should not classify the whole gene as LoF.
+    # Selecting the longest reference protein is a reasonable proxy for the
+    # canonical / MANE-Select isoform in the absence of explicit canonical
+    # annotation in the GFF.
+    coding = [d for d in protein_diffs if d.ref_length]
+    if not coding:
+        # No transcript has a reference CDS (all ref_length=0). Defer to
+        # presence-only fallback.
+        if presence.status == "intact":
+            return 1.0
+        if presence.status in ("low_identity", "partial", "uncertain"):
+            return presence.sequence_identity or 0.5
+        return None
 
-    protein_score = min(per_transcript_scores)
+    principal = max(coding, key=lambda d: d.ref_length)
+    ref_len = principal.ref_length
+    pts = principal.premature_stop_at
+    if pts is not None:
+        frac = pts / ref_len
+        if frac <= nterm_ptc_fraction:
+            protein_score = 0.0
+        else:
+            protein_score = principal.identity * frac
+    else:
+        protein_score = principal.identity
 
     # Cap by presence quality: Liftoff may report a degraded presence call
     # (low_identity, partial, uncertain) even when the protein extracted from
