@@ -339,21 +339,25 @@ class HapliPipeline:
                 # First gene call pays the Liftoff cost; remaining genes for the
                 # same sample short-circuit and just re-parse the existing GFF.
                 out_gff = self.output_dir / f"{sample_name}_{hap_name}.lifted.gff3"
+                polished_gff = out_gff.parent / (out_gff.name + "_polished")
                 unmapped = self.output_dir / f"{sample_name}_{hap_name}.unmapped.txt"
                 tmp_dir = self.output_dir / f"{sample_name}_{hap_name}.liftoff_tmp"
 
                 presence = None
-                if out_gff.exists() and out_gff.stat().st_size > 0:
-                    candidate = parse_lifted_gff(out_gff)
-                    # Cache is only valid if it contains the requested gene
-                    # (a Mode A per-gene cache might have been written for a
-                    # different gene; only Mode B's whole-hap cache is multi-gene).
+                # Prefer the polished GFF when present — it carries Liftoff's
+                # CDS-validation pass that re-classifies marginal lifts as
+                # truly partial vs. intact. Falling back to the un-polished
+                # GFF would inflate "partial" calls and tank scores spuriously.
+                cache_candidates = [p for p in (polished_gff, out_gff) if p.exists() and p.stat().st_size > 0]
+                for cache_path in cache_candidates:
+                    candidate = parse_lifted_gff(cache_path)
                     if gene_name in candidate:
                         presence = candidate
                         self.logger.info(
                             "Liftoff %s: reusing cached lifted GFF (%s)",
-                            hap_name, out_gff.name,
+                            hap_name, cache_path.name,
                         )
+                        break
                 if presence is None:
                     try:
                         result = run_liftoff(
@@ -363,6 +367,7 @@ class HapliPipeline:
                             out_gff=out_gff,
                             unmapped_txt=unmapped,
                             intermediate_dir=tmp_dir,
+                            polish=True,
                             logger=self.logger,
                         )
                     except RuntimeError as exc:
