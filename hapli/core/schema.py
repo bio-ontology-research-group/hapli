@@ -89,6 +89,29 @@ PresenceStatus = Literal[
 ]
 
 
+class CausingSVRecord(BaseModel):  # type: ignore
+    """A structural variant that contributed to a non-`intact` PresenceCall.
+
+    Populated by the pipeline whenever Liftoff reports a haplotype as
+    `deleted`/`partial`/`low_identity`/`duplicated`: we walk the input VCF
+    over the gene region (Mode A) or the Liftoff intermediate alignment
+    (Mode B) and attach every SV that overlaps the gene's CDS on the same
+    haplotype. This is the machine-readable evidence chain the SV paper's
+    head-to-head with AnnotSV/SvAnna joins on.
+    """
+    if _HAS_PYDANTIC:
+        model_config = ConfigDict(extra="allow")
+
+    chrom: str = ""
+    pos: int = 0                                     # 1-based VCF POS
+    end: int = 0                                     # INFO/END if symbolic, else POS+len(REF)-1
+    sv_type: str = ""                                # DEL / INV / DUP / INS / BND / CNV / complex
+    sv_id: Optional[str] = None                     # VCF ID column
+    length: int = 0                                  # END - POS
+    overlap_fraction: float = 0.0                    # of the gene's CDS overlapped by this SV (0..1)
+    haplotype: int = 0                               # 1 or 2 — which hap carries the ALT
+
+
 class PresenceCall(BaseModel):  # type: ignore
     """Per-haplotype Liftoff/TOGA result for one gene."""
     if _HAS_PYDANTIC:
@@ -111,6 +134,8 @@ class PresenceCall(BaseModel):  # type: ignore
     flags: dict[str, Any] = Field(default_factory=dict) if _HAS_PYDANTIC else {}
     # Per-transcript presence/ORF-validity, keyed by transcript ID.
     transcripts: dict[str, dict[str, Any]] = Field(default_factory=dict) if _HAS_PYDANTIC else {}
+    # SVs implicated in any non-`intact` status. Empty for `intact`.
+    causing_svs: list[CausingSVRecord] = Field(default_factory=list) if _HAS_PYDANTIC else []
 
 
 # ─────────────────────────────────────────────────────────────────────────────

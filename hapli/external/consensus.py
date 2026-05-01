@@ -131,6 +131,98 @@ def _svtype(rec: "pysam.VariantRecord") -> str | None:
     return t
 
 
+def find_overlapping_svs(
+    vcf_path: Path,
+    sample: str,
+    hap_idx: int,
+    region: "Region",
+    cds_intervals: "list[tuple[int, int]] | None" = None,
+) -> list[dict]:
+    """Return SV records that the given haplotype carries an ALT for and that
+    overlap the gene region (or the CDS intervals if provided).
+
+    Used to build the `causing_svs` evidence chain on non-`intact`
+    PresenceCalls so the SV story is machine-readable in downstream TSVs
+    and joinable against AnnotSV/SvAnna outputs.
+
+    `hap_idx` is 1 or 2 (matches bcftools consensus -H convention; the
+    record's GT is read at position hap_idx-1).
+    `cds_intervals` are 1-based inclusive [start, end] pairs in the same
+    chromosome as `region`; if None we fall back to gene-region overlap.
+
+    Returns a list of dicts with the CausingSVRecord field shape.
+    """
+    if hap_idx not in (1, 2):
+        raise ValueError(f"hap_idx must be 1 or 2, got {hap_idx}")
+    out: list[dict] = []
+    cds_total = sum((e - s + 1) for s, e in cds_intervals) if cds_intervals else (region.end - region.start + 1)
+    with pysam.VariantFile(str(vcf_path)) as vf:
+        if sample not in vf.header.samples:
+            raise ValueError(f"Sample {sample!r} not in VCF {vcf_path}")
+        for rec in vf.fetch(region.chrom, region.start - 1, region.end):
+            alts = rec.alts or ()
+            if not alts:
+                continue
+            sv_type = _svtype(rec) or _classify_alt_as_sv(alts[0])
+            if sv_type is None:
+                continue
+            try:
+                end = int(rec.info.get("END") or rec.stop)
+            except (ValueError, TypeError, KeyError):
+                end = rec.stop
+            pos = rec.pos
+            length = max(0, end - pos)
+            # GT for this hap
+            gt = rec.samples[sample].get("GT")
+            if gt is None or len(gt) < hap_idx:
+                continue
+            allele_idx = gt[hap_idx - 1]
+            if allele_idx is None or allele_idx == 0:
+                # Reference allele on this hap — no SV carried
+                continue
+            # CDS-overlap fraction
+            if cds_intervals:
+                overlap = 0
+                for s, e in cds_intervals:
+                    overlap += max(0, min(e, end) - max(s, pos) + 1)
+                ovf = overlap / cds_total if cds_total else 0.0
+            else:
+                overlap = max(0, min(region.end, end) - max(region.start, pos) + 1)
+                ovf = overlap / cds_total if cds_total else 0.0
+            if overlap == 0:
+                continue
+            out.append({
+                "chrom": rec.chrom,
+                "pos": pos,
+                "end": end,
+                "sv_type": sv_type,
+                "sv_id": rec.id,
+                "length": length,
+                "overlap_fraction": round(ovf, 4),
+                "haplotype": hap_idx,
+            })
+    return out
+
+
+def _classify_alt_as_sv(alt: str) -> str | None:
+    """Best-effort SVTYPE inference from an ALT string when INFO/SVTYPE is missing."""
+    if not alt:
+        return None
+    if _is_breakend_alt(alt):
+        return "BND"
+    if _is_inv_alt(alt):
+        return "INV"
+    if _is_dup_alt(alt):
+        return "DUP"
+    if alt == "<DEL>" or alt.startswith("<DEL:"):
+        return "DEL"
+    if alt.startswith("<INS"):
+        return "INS"
+    if alt == "<CNV>":
+        return "CNV"
+    return None
+
+
 def _resolve_symbolic_svs(
     vcf_path: Path,
     reference_fasta: Path,

@@ -119,6 +119,11 @@ class HapliPipeline:
             chrom=gene_feature.seqid,
             evidence=evidence,
         )
+        self._attach_sv_evidence(
+            sample_name=sample_name,
+            gene_feature=gene_feature,
+            evidence=evidence,
+        )
         self._run_csq(
             sample_name=sample_name,
             gene_name=gene_name,
@@ -424,6 +429,42 @@ class HapliPipeline:
             for hap_name in ("hap1", "hap2"):
                 evidence.presence[hap_name] = PresenceCall(status="not_run", source="liftoff")
         return lifted
+
+    def _attach_sv_evidence(self, sample_name: str, gene_feature, evidence: GeneEvidence) -> None:
+        """For non-`intact` PresenceCalls in Mode A, attach the SV records on
+        the same haplotype that overlap the gene region. Builds the
+        machine-readable evidence chain joinable against AnnotSV/SvAnna.
+
+        Mode B has no input VCF, so this no-ops there; SV evidence for
+        Mode B is recovered from the Liftoff intermediate alignment in a
+        separate pass (planned, not yet implemented).
+        """
+        if self.vcf_path is None:
+            return
+        from ..external.consensus import find_overlapping_svs, Region
+        from ..core.schema import CausingSVRecord
+        region = Region(
+            chrom=gene_feature.seqid,
+            start=max(1, gene_feature.start - BUFFER_BP),
+            end=gene_feature.end + BUFFER_BP,
+        )
+        for hap_name, hap_idx in (("hap1", 1), ("hap2", 2)):
+            call = evidence.presence.get(hap_name)
+            if call is None or call.status == "intact":
+                continue
+            if call.causing_svs:
+                continue  # already populated (Mode B path or earlier call)
+            try:
+                hits = find_overlapping_svs(self.vcf_path, sample_name, hap_idx, region)
+            except Exception as exc:  # pragma: no cover - defensive
+                self.logger.debug("find_overlapping_svs failed on %s: %s", hap_name, exc)
+                continue
+            call.causing_svs = [CausingSVRecord(**d) for d in hits]
+            if hits:
+                self.logger.info(
+                    "%s: attached %d causing SV(s) for status=%s",
+                    hap_name, len(hits), call.status,
+                )
 
     def _run_csq(self, sample_name: str, gene_name: str, evidence: GeneEvidence) -> None:
         """Run bcftools csq and pull consequences relevant to this gene's transcripts."""

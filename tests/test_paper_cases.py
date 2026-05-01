@@ -463,6 +463,19 @@ def test_symbolic_del_case_presence_says_deleted(paper_cases_dir: Path, tmp_path
     assert presence["hap2"]["status"] == "intact", (
         f"hap2 should be flagged intact by Liftoff; got {presence['hap2']}"
     )
+    # SV-evidence chain (week-1 of SV submission plan): the deleted hap
+    # must carry a CausingSVRecord pointing at the <DEL> that did it.
+    hap1_svs = presence["hap1"].get("causing_svs", [])
+    assert len(hap1_svs) >= 1, (
+        f"hap1=deleted but causing_svs is empty — SV-evidence chain not wired. presence={presence['hap1']}"
+    )
+    assert any(sv["sv_type"] == "DEL" for sv in hap1_svs), (
+        f"expected at least one DEL in hap1.causing_svs, got {hap1_svs}"
+    )
+    # hap2 (intact) must NOT carry causing_svs
+    assert not presence["hap2"].get("causing_svs"), (
+        f"hap2=intact must have empty causing_svs, got {presence['hap2'].get('causing_svs')}"
+    )
 
 
 @pytest.mark.skipif(
