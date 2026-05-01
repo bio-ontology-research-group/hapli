@@ -9,6 +9,8 @@ into the haplotype FASTA).
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import logging
 import re
 import subprocess
@@ -17,6 +19,29 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pysam
+
+
+@contextlib.contextmanager
+def _file_lock(lock_path: Path):
+    """Exclusive flock-based mutex around shared on-disk caches.
+
+    Required because Snakemake fans hapli analyses out at (sample, gene)
+    granularity but the per-haplotype consensus + Liftoff outputs are
+    keyed at (sample, hap). Without this, 16 parallel jobs for the same
+    sample race-overwrite each other's whole-hap FASTA and lifted GFF,
+    producing inconsistent per-gene calls (e.g. one job reading the
+    polished GFF while another is still writing it).
+
+    Lock files are tiny sentinels; intentionally not deleted on release
+    so they can be re-acquired on subsequent runs without re-creation.
+    """
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 _COMPLEMENT = str.maketrans("ACGTNacgtn", "TGCANtgcan")
@@ -109,7 +134,7 @@ def _svtype(rec: "pysam.VariantRecord") -> str | None:
 def _resolve_symbolic_svs(
     vcf_path: Path,
     reference_fasta: Path,
-    region: "Region",
+    region: "Region | None",
     out_dir: Path,
 ) -> Path | None:
     """If the region contains `<INV>` or `<DUP*>` records, write a copy of the VCF
@@ -130,7 +155,11 @@ def _resolve_symbolic_svs(
     records_out: list = []
     with pysam.VariantFile(str(vcf_path)) as vf:
         header = vf.header.copy()
-        for rec in vf.fetch(region.chrom, region.start - 1, region.end):
+        if region is None:
+            iterator = vf.fetch()
+        else:
+            iterator = vf.fetch(region.chrom, region.start - 1, region.end)
+        for rec in iterator:
             alts = rec.alts or ()
             if any(_is_inv_alt(a) or _is_dup_alt(a) for a in alts):
                 needs = True
@@ -288,3 +317,121 @@ def consensus_region(
 def _fasta_to_seq(fasta_text: str) -> str:
     """Concatenate all non-header lines of a single-record FASTA into one string."""
     return "".join(line for line in fasta_text.splitlines() if line and not line.startswith(">"))
+
+
+def consensus_whole_genome(
+    reference_fasta: Path,
+    vcf_path: Path,
+    sample: str,
+    output_dir: Path,
+) -> dict[str, Path]:
+    """Materialise per-haplotype whole-genome FASTAs via `bcftools consensus -f`.
+
+    Why whole-genome and not per-region: when Liftoff runs against a small
+    region FASTA, it tries to lift every reference gene onto that fragment
+    and silently produces low-confidence chimeric matches for genes that
+    don't belong there. With a whole-haplotype FASTA each gene lifts onto
+    its real chromosome and the per-(sample, hap) lift cache is correct.
+
+    Output is written to `{output_dir}/{sample}_hap{1,2}.whole.fa(.fai)`
+    and re-used on subsequent gene calls for the same (sample, hap).
+
+    Caller must have pre-filtered the VCF to drop unsupported symbolic
+    alleles (`<INS:*>`, `<BND>`, `<CNV>`, `<INV>`, `<DUP*>`, `<DEL:*>`).
+    Only `<DEL>` symbolic records and explicit-ALT records are tolerated;
+    everything else triggers UnsupportedVariantError.
+
+    Returns {'hap1': Path, 'hap2': Path}.
+    """
+    logger = logging.getLogger(__name__)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    _preflight_whole(vcf_path, sample)
+
+    # Serialize concurrent Snakemake fan-outs that all want to materialise
+    # the same {sample}.whole.fa pair. See _file_lock docstring.
+    lock_path = output_dir / f".{sample}.whole.lock"
+    with _file_lock(lock_path):
+        return _consensus_whole_genome_inner(
+            reference_fasta, vcf_path, sample, output_dir, logger
+        )
+
+
+def _consensus_whole_genome_inner(reference_fasta, vcf_path, sample, output_dir, logger):
+    # Resolve symbolic <INV>/<DUP*> ALTs into explicit REF/ALT sequences,
+    # since bcftools consensus does not handle the symbolic forms.
+    with tempfile.TemporaryDirectory(prefix="hapli_svresolve_whole_") as tmp:
+        resolved = _resolve_symbolic_svs(vcf_path, reference_fasta, None, Path(tmp))
+        effective_vcf = resolved if resolved is not None else vcf_path
+        if resolved is not None:
+            logger.info("Resolved whole-VCF symbolic <INV>/<DUP*> records → %s", resolved.name)
+
+        out: dict[str, Path] = {}
+        for hap_idx in (1, 2):
+            out_fa = output_dir / f"{sample}_hap{hap_idx}.whole.fa"
+            out_fai = Path(str(out_fa) + ".fai")
+            if out_fa.exists() and out_fa.stat().st_size > 0 and out_fai.exists():
+                logger.info("Whole-hap FASTA already cached: %s", out_fa.name)
+                out[f"hap{hap_idx}"] = out_fa
+                continue
+            logger.info("Building whole-hap FASTA for sample=%s hap=%d → %s", sample, hap_idx, out_fa.name)
+            with out_fa.open("w") as outf:
+                proc = subprocess.run(
+                    [
+                        "bcftools", "consensus",
+                        "-f", str(reference_fasta),
+                        "-s", sample,
+                        "-H", str(hap_idx),
+                        str(effective_vcf),
+                    ],
+                    stdout=outf,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+            if proc.returncode != 0:
+                out_fa.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"bcftools consensus (whole-genome) failed for sample={sample} hap={hap_idx} "
+                    f"(rc={proc.returncode}): {proc.stderr.strip()}"
+                )
+            pysam.faidx(str(out_fa))
+            out[f"hap{hap_idx}"] = out_fa
+    return out
+
+
+def _preflight_whole(vcf_path: Path, sample: str) -> None:
+    """Whole-VCF preflight — refuse if any unsupported symbolic ALT slipped through."""
+    with pysam.VariantFile(str(vcf_path)) as vf:
+        if sample not in vf.header.samples:
+            raise ValueError(
+                f"Sample {sample!r} not in VCF {vcf_path}; "
+                f"available samples: {list(vf.header.samples)[:10]}…"
+            )
+        for rec in vf.fetch():
+            for alt in rec.alts or ():
+                if _is_breakend_alt(alt):
+                    raise UnsupportedVariantError(
+                        f"Record at {rec.chrom}:{rec.pos} has breakend ALT {alt!r}. "
+                        f"Mode A cannot materialise breakends; pre-filter or use Mode B."
+                    )
+                if alt == "<CNV>":
+                    raise UnsupportedVariantError(
+                        f"Record at {rec.chrom}:{rec.pos} is <CNV>; pre-filter the VCF."
+                    )
+                if alt.startswith("<INS") and alt != "<INS>":
+                    # <INS:ME:ALU> etc.
+                    raise UnsupportedVariantError(
+                        f"Record at {rec.chrom}:{rec.pos} is symbolic mobile-element insertion {alt!r}; "
+                        f"pre-filter the VCF (e.g. `bcftools view -e 'ALT~\"<INS\"'`)."
+                    )
+                if alt == "<INS>":
+                    raise UnsupportedVariantError(
+                        f"Record at {rec.chrom}:{rec.pos} is symbolic <INS> without explicit sequence."
+                    )
+                if alt.startswith("<DEL:"):
+                    raise UnsupportedVariantError(
+                        f"Record at {rec.chrom}:{rec.pos} is parameterized symbolic deletion {alt!r}; "
+                        f"pre-filter the VCF."
+                    )
+                # <DUP*> and <INV> are tolerated: consensus_whole_genome resolves
+                # them into explicit REF/ALT sequence form before bcftools consensus.

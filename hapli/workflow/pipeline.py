@@ -44,7 +44,7 @@ from ..core.schema import (
 )
 from ..external.alphamissense import AlphaMissenseLookup
 from ..external.clinvar import ClinVarLookup
-from ..external.consensus import consensus_region
+from ..external.consensus import consensus_region, consensus_whole_genome, _file_lock
 from ..external.constraint import ConstraintLookup
 from ..external.csq import BcftoolsNotAvailable, run_csq
 from ..external.liftoff import LiftoffNotAvailable, run_liftoff
@@ -103,6 +103,12 @@ class HapliPipeline:
 
         haplotypes = self._build_haplotypes(region_str, sample_name)
         self._write_haplotypes(haplotypes, sample_name, gene_name, gene_feature.seqid)
+
+        # Whole-hap consensus for Liftoff/protein-extract. Built once per
+        # (sample, hap) and cached on disk; reused across every gene call
+        # for the same sample. The per-gene region FASTA written above is
+        # kept as a schema-v1 inspection artifact only.
+        self._ensure_whole_hap_fastas(sample_name)
 
         transcripts_v1 = self._per_transcript_alignment(gff, gene_feature, haplotypes)
 
@@ -240,6 +246,28 @@ class HapliPipeline:
             region=region_str,
         )
 
+    def _ensure_whole_hap_fastas(self, sample_name: str) -> dict[str, Path]:
+        """Build (or reuse from disk) whole-haplotype FASTAs for this sample.
+        Liftoff and protein extraction use these — running Liftoff on
+        per-gene region FASTAs lets every gene try to lift onto every
+        region, producing chimeric low-confidence matches that look like
+        spurious 'partial'/'low_identity' calls. Whole-hap FASTAs are the
+        only correct Liftoff input for Mode A.
+        """
+        if hasattr(self, "_per_hap_fastas") and self._per_hap_fastas:
+            existing_keys = set(self._per_hap_fastas.keys())
+            if {"hap1", "hap2"} <= existing_keys and all(
+                p.name.endswith(".whole.fa") for p in self._per_hap_fastas.values()
+            ):
+                return self._per_hap_fastas
+        self._per_hap_fastas = consensus_whole_genome(
+            reference_fasta=self.ref_path,
+            vcf_path=self.vcf_path,
+            sample=sample_name,
+            output_dir=self.output_dir,
+        )
+        return self._per_hap_fastas
+
     def _write_haplotypes(
         self,
         haplotypes: dict[str, str],
@@ -256,13 +284,16 @@ class HapliPipeline:
             f.write(f">hap1\n{haplotypes['hap1']}\n")
             f.write(f">hap2\n{haplotypes['hap2']}\n")
 
-        self._per_hap_fastas: dict[str, Path] = {}
+        # Per-gene region FASTAs are kept as inspection artifacts (TUI, manual
+        # debugging) but are NOT consumed by Liftoff or protein extraction —
+        # those use the whole-hap FASTAs from `_ensure_whole_hap_fastas`.
+        self._per_gene_hap_fastas: dict[str, Path] = {}
         for hap_name in ("hap1", "hap2"):
             p = self.output_dir / f"{sample_name}_{gene_name}_{hap_name}.fa"
             with p.open("w") as f:
                 f.write(f">{chrom}\n{haplotypes[hap_name]}\n")
             pysam.faidx(str(p))
-            self._per_hap_fastas[hap_name] = p
+            self._per_gene_hap_fastas[hap_name] = p
 
     def _per_transcript_alignment(
         self,
@@ -342,39 +373,45 @@ class HapliPipeline:
                 polished_gff = out_gff.parent / (out_gff.name + "_polished")
                 unmapped = self.output_dir / f"{sample_name}_{hap_name}.unmapped.txt"
                 tmp_dir = self.output_dir / f"{sample_name}_{hap_name}.liftoff_tmp"
+                # Serialize concurrent Snakemake fan-outs (16 genes ×
+                # same sample) that would otherwise race-overwrite the
+                # shared lifted GFF. Held until the cache check passes
+                # OR Liftoff finishes writing.
+                lift_lock = self.output_dir / f".{sample_name}_{hap_name}.lift.lock"
 
                 presence = None
                 # Prefer the polished GFF when present — it carries Liftoff's
                 # CDS-validation pass that re-classifies marginal lifts as
                 # truly partial vs. intact. Falling back to the un-polished
                 # GFF would inflate "partial" calls and tank scores spuriously.
-                cache_candidates = [p for p in (polished_gff, out_gff) if p.exists() and p.stat().st_size > 0]
-                for cache_path in cache_candidates:
-                    candidate = parse_lifted_gff(cache_path)
-                    if gene_name in candidate:
-                        presence = candidate
-                        self.logger.info(
-                            "Liftoff %s: reusing cached lifted GFF (%s)",
-                            hap_name, cache_path.name,
-                        )
-                        break
-                if presence is None:
-                    try:
-                        result = run_liftoff(
-                            haplotype_fasta=hap_fa,
-                            reference_fasta=self.ref_path,
-                            reference_gff=self.gff_path,
-                            out_gff=out_gff,
-                            unmapped_txt=unmapped,
-                            intermediate_dir=tmp_dir,
-                            polish=True,
-                            logger=self.logger,
-                        )
-                    except RuntimeError as exc:
-                        self.logger.warning("Liftoff failed on %s: %s", hap_name, exc)
-                        evidence.presence[hap_name] = PresenceCall(status="not_run", source="liftoff")
-                        continue
-                    presence = result.presence
+                with _file_lock(lift_lock):
+                    cache_candidates = [p for p in (polished_gff, out_gff) if p.exists() and p.stat().st_size > 0]
+                    for cache_path in cache_candidates:
+                        candidate = parse_lifted_gff(cache_path)
+                        if gene_name in candidate:
+                            presence = candidate
+                            self.logger.info(
+                                "Liftoff %s: reusing cached lifted GFF (%s)",
+                                hap_name, cache_path.name,
+                            )
+                            break
+                    if presence is None:
+                        try:
+                            result = run_liftoff(
+                                haplotype_fasta=hap_fa,
+                                reference_fasta=self.ref_path,
+                                reference_gff=self.gff_path,
+                                out_gff=out_gff,
+                                unmapped_txt=unmapped,
+                                intermediate_dir=tmp_dir,
+                                polish=True,
+                                logger=self.logger,
+                            )
+                        except RuntimeError as exc:
+                            self.logger.warning("Liftoff failed on %s: %s", hap_name, exc)
+                            evidence.presence[hap_name] = PresenceCall(status="not_run", source="liftoff")
+                            continue
+                        presence = result.presence
 
                 call = presence.get(gene_name)
                 if call is None:
